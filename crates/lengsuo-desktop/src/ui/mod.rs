@@ -32,6 +32,7 @@ pub mod tool_card;
 // 真正接到 GPUI 元素树上。分开是为了让描述层保持可测、接线层可替换。
 pub mod env_gpui;
 pub mod input_gpui;
+pub mod layout_gpui;
 pub mod org_gpui;
 pub mod palette_gpui;
 pub mod right_panel_gpui;
