@@ -1,6 +1,6 @@
 //! 组织域视图状态（对标端企业管理语义：部门 / 成员 / 角色）。
 //!
-//! 边界（对齐 reference_docs `server-contract-proposal-org.md` 与 `-permission.md`）：
+//! 边界（对齐本地对照资料 `server-contract-proposal-org.md` 与 `-permission.md`）：
 //! - **界面不判定权限**：本层只承载「服务端下发的可见性标记」，不做授权推理。
 //!   服务端权威判定见权限域 PC-07 五项校验；界面禁用 ≠ 授权。
 //! - **不缓存权威数据**：列表数据由打包时引入的客户端注入，本层只维护视图态。
