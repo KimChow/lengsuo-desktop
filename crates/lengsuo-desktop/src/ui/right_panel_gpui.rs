@@ -275,7 +275,11 @@ fn render_approval_button(
         ApprovalAction::AlwaysAllow => (theme.button_warning, theme.button_warning_foreground),
     };
     let mut element = div()
-        .id(format!("right-panel-approval-{}-{}", card.id, button.action.label()))
+        .id(format!(
+            "right-panel-approval-{}-{}",
+            card.id,
+            button.action.label()
+        ))
         .px_2()
         .py_1()
         .rounded_sm()
@@ -413,7 +417,9 @@ impl Render for RightPanelGpui {
         // 四种内容分支：外层是同一个滚动容器，内层按分支给内容。
         let body: AnyElement = match content_branch(&view.content) {
             ContentBranch::Collapsed => div().into_any_element(),
-            ContentBranch::Placeholder { text } => render_placeholder(text, theme).into_any_element(),
+            ContentBranch::Placeholder { text } => {
+                render_placeholder(text, theme).into_any_element()
+            }
             ContentBranch::Approvals { cards } => div()
                 .flex()
                 .flex_col()
@@ -528,7 +534,10 @@ mod tests {
         );
 
         let empty = RightPanelContent::Empty { text: "暂无" };
-        assert_eq!(content_branch(&empty), ContentBranch::Empty { text: "暂无" });
+        assert_eq!(
+            content_branch(&empty),
+            ContentBranch::Empty { text: "暂无" }
+        );
 
         assert_eq!(
             content_branch(&RightPanelContent::Collapsed),
