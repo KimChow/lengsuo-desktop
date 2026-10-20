@@ -76,18 +76,23 @@ python scripts/check_line_limit.py
 
 `403` / `上游模型繁忙` / `proxy or gateway` → 立即停止，报告 `STATUS: UPSTREAM_UNAVAILABLE`。
 
-## 📖 API 速查表（先看这个，别查源码）
+## 📖 黄金范例 + API 速查表（先看这两个，别查源码）
 
-**`docs/gpui-wiring-cheatsheet.md` 已把 gpui-kit / gpui-pre 的用法核实完毕。**
+**① 黄金范例（首选照抄）**：`crates/lengsuo-desktop/src/ui/env_gpui.rs`
+—— 已完整实现、已通过 `cargo check --features ui`、已过 clippy。
+**它的结构就是标准答案**：`#![cfg(feature = "ui")]` + 三个 import
+（`StyledExt` / `ActiveTheme` / `gpui_kit::*`）+ 持描述的 struct +
+`impl Render` + 每类元素一个 `fn render_xxx`。
 
-它包含：最小骨架代码、全部 flex/尺寸/间距/圆角/文本样式方法名、
-`.child()` vs `.children()` 的区别、`on_click` 签名、`Entity`/`Context` 用法、
-主题色字段清单、常见编译错误速查表。
+**② API 速查表**：`docs/gpui-wiring-cheatsheet.md`
+—— 全部样式方法名、`.child()` vs `.children()`、`on_click` 签名、
+`Entity`/`Context` 用法、主题色字段、**9 类常见编译错误速查**。
 
 **用法**：
-1. **先读这张速查表**（1-2 次 Read 足够）
-2. **直接按表写代码**，不要去 grep `~/.cargo/registry` 查 API
-3. 只有当速查表里确实没有你需要的 API 时，才允许查源码（**最多 12 次调用**）
+1. 先读 `env_gpui.rs`（1 次 Read）—— 照着它的结构写
+2. 再读速查表（1 次 Read）—— 查你要用的具体方法名
+3. **直接写代码**，不要去 grep `~/.cargo/registry` 查 API
+4. 写完最小骨架就 `cargo check`，通过后再加分支
 
 ⛔ 上一批 e4/e5/e6/e7 四张卡把 45 次预算全花在 grep registry 源码上，
 一行代码没写就撞上限，**产物被静默丢弃**。不要重复这个错误。
