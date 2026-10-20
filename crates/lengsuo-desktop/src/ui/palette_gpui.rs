@@ -245,7 +245,11 @@ pub fn palette_key_from_keystroke(keystroke: &Keystroke) -> Option<PaletteKey> {
 }
 
 /// 命令列表的一行：标题 + 快捷键提示。
-fn render_row(row: &PaletteRow, hint: Option<&str>, theme: &gpui_kit::component::Theme) -> impl IntoElement {
+fn render_row(
+    row: &PaletteRow,
+    hint: Option<&str>,
+    theme: &gpui_kit::component::Theme,
+) -> impl IntoElement {
     let mut title = div().text_sm().child(row.title);
     let mut line = div()
         .flex()
@@ -268,13 +272,21 @@ fn render_row(row: &PaletteRow, hint: Option<&str>, theme: &gpui_kit::component:
         } else {
             theme.muted_foreground
         };
-        line = line.child(div().text_xs().text_color(hint_color).child(hint.to_owned()));
+        line = line.child(
+            div()
+                .text_xs()
+                .text_color(hint_color)
+                .child(hint.to_owned()),
+        );
     }
     line
 }
 
 /// 顶部搜索框：显示当前关键词；为空时显示占位文案。
-fn render_input(view: &command_palette::CommandPaletteView, theme: &gpui_kit::component::Theme) -> impl IntoElement {
+fn render_input(
+    view: &command_palette::CommandPaletteView,
+    theme: &gpui_kit::component::Theme,
+) -> impl IntoElement {
     let text = if view.query.is_empty() {
         div()
             .text_sm()
@@ -294,12 +306,20 @@ fn render_input(view: &command_palette::CommandPaletteView, theme: &gpui_kit::co
         .py_2()
         .border_b_1()
         .border_color(theme.border)
-        .child(div().text_sm().text_color(theme.muted_foreground).child(">"))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(">"),
+        )
         .child(text)
 }
 
 /// 底部键盘提示。
-fn render_footer(view: &command_palette::CommandPaletteView, theme: &gpui_kit::component::Theme) -> impl IntoElement {
+fn render_footer(
+    view: &command_palette::CommandPaletteView,
+    theme: &gpui_kit::component::Theme,
+) -> impl IntoElement {
     div()
         .px_3()
         .py_2()
@@ -358,7 +378,10 @@ impl Render for CommandPaletteGpui {
                     .child(empty),
             );
         } else {
-            list = list.children(rows.iter().map(|(row, hint)| render_row(row, *hint, &theme)));
+            list = list.children(
+                rows.iter()
+                    .map(|(row, hint)| render_row(row, *hint, &theme)),
+            );
         }
 
         // 面板本体
@@ -402,9 +425,7 @@ impl Render for CommandPaletteGpui {
 mod tests {
     // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
     // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
-    use super::{
-        default_registry, hotkey_from_keystroke, palette_key_from_keystroke, PaletteKey,
-    };
+    use super::{default_registry, hotkey_from_keystroke, palette_key_from_keystroke, PaletteKey};
     use crate::state::hotkeys::Hotkey;
     use crate::state::palette_state::PaletteState;
     use crate::ui::command_palette;
