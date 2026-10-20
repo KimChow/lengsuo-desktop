@@ -6,9 +6,7 @@
   "max_turns": 90,
   "touches": [
     "crates/lengsuo-desktop/src/state/org_perm.rs",
-    "crates/lengsuo-desktop/src/state/mod.rs",
     "crates/lengsuo-desktop/src/ui/org_view.rs",
-    "crates/lengsuo-desktop/src/ui/mod.rs",
     "docs/org-permission-view-status.md"
   ],
   "depends_on": [],

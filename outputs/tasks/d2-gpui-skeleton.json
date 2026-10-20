@@ -7,7 +7,6 @@
   "touches": [
     "crates/lengsuo-desktop/src/ui/gpui_app.rs",
     "crates/lengsuo-desktop/src/ui/gpui_input.rs",
-    "crates/lengsuo-desktop/src/ui/mod.rs",
     "docs/gpui-skeleton-status.md"
   ],
   "depends_on": [],

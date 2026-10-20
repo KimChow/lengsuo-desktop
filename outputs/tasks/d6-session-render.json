@@ -9,7 +9,6 @@
     "crates/lengsuo-desktop/src/ui/tool_card.rs",
     "crates/lengsuo-desktop/src/ui/approval_card.rs",
     "crates/lengsuo-desktop/src/ui/input_area.rs",
-    "crates/lengsuo-desktop/src/ui/mod.rs",
     "docs/session-render-status.md"
   ],
   "depends_on": [],

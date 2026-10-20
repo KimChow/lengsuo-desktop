@@ -8,9 +8,13 @@ authors.workspace = true
 [features]
 default = []
 # 阶段二：引入 GPUI 渲染层后由此 feature 隔离；阶段一纯逻辑不依赖 gpui。
-ui = []
+ui = ["dep:gpui-kit"]
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# GPUI 基座：gpui-kit 把上游 gpui 打成 gpui-pre 重发布（官方 gpui 依赖
+# git-only 的 wgpu，无法从 registry 获取）。0.8.0 已验证在 Linux/Windows
+# 均可 fetch 与 check 通过。许可证 Apache-2.0（源码），符合 AGENTS.md §6。
+gpui-kit = { version = "0.8", optional = true }

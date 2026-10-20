@@ -8,7 +8,6 @@
     "crates/lengsuo-desktop/src/ui/layout.rs",
     "crates/lengsuo-desktop/src/ui/sidebar.rs",
     "crates/lengsuo-desktop/src/ui/right_panel.rs",
-    "crates/lengsuo-desktop/src/ui/mod.rs",
     "docs/workbench-layout-status.md"
   ],
   "depends_on": [],

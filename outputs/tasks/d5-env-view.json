@@ -6,9 +6,7 @@
   "max_turns": 80,
   "touches": [
     "crates/lengsuo-desktop/src/state/env_group.rs",
-    "crates/lengsuo-desktop/src/state/mod.rs",
     "crates/lengsuo-desktop/src/ui/env_view.rs",
-    "crates/lengsuo-desktop/src/ui/mod.rs",
     "docs/env-view-status.md"
   ],
   "depends_on": [],

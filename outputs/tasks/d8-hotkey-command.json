@@ -7,9 +7,7 @@
   "touches": [
     "crates/lengsuo-desktop/src/state/hotkeys.rs",
     "crates/lengsuo-desktop/src/state/palette_state.rs",
-    "crates/lengsuo-desktop/src/state/mod.rs",
     "crates/lengsuo-desktop/src/ui/command_palette.rs",
-    "crates/lengsuo-desktop/src/ui/mod.rs",
     "docs/hotkey-command-status.md"
   ],
   "depends_on": [],

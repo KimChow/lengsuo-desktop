@@ -1,0 +1,11 @@
+# 工具链锁定（必须）
+#
+# gpui-kit 0.8.0 依赖的 gpui-pre 0.3.9 在 src/profiler.rs 使用了
+# `std::hint::cold_path()`，该函数在 rustc 1.98 才稳定（rust-lang#136873）。
+# 低于该版本编译会报 E0658「use of unstable library feature `cold_path`」。
+#
+# 实测：1.93.0 编译失败 / 1.98.1 编译通过。
+# 修改本文件前请先在目标平台实跑 `cargo check -p lengsuo-desktop --features ui`。
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
