@@ -18,3 +18,10 @@ thiserror = { workspace = true }
 # git-only 的 wgpu，无法从 registry 获取）。0.8.0 已验证在 Linux/Windows
 # 均可 fetch 与 check 通过。许可证 Apache-2.0（源码），符合 AGENTS.md §6。
 gpui-kit = { version = "0.8", optional = true }
+
+# 桌面二进制入口：只在开 `ui` feature 时构建（否则 lib 里没有 GPUI 依赖，
+# 这个 bin 编不过）。运行 `cargo run --features ui --bin lengsuo-desktop`。
+[[bin]]
+name = "lengsuo-desktop"
+path = "src/bin/lengsuo-desktop.rs"
+required-features = ["ui"]

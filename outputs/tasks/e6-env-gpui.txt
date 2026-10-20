@@ -1,0 +1,66 @@
+# 任务书 · e6-env-gpui（环境视图接线）
+
+## 本卡定位：**把环境列表描述接到 GPUI**
+
+`ui/env_view.rs`（442 行）已有完整描述，本卡渲染它。
+
+## 现状
+
+```rust
+pub enum CardStatus { /* 环境卡片状态 */ }
+pub struct GroupLabel { /* 分组标题 */ }
+pub struct EnvCard { /* 单个环境卡 */ }
+pub struct GroupRow { /* 一组环境 */ }
+pub struct EnvView { /* 整个视图描述 */ pub fn card_count(&self) -> usize }
+pub fn render(state: &EnvGroupState) -> EnvView
+pub fn degraded_notice(state: &EnvGroupState) -> Option<String>   // 降级提示
+pub fn group_rows(state: &EnvGroupState) -> Vec<GroupRow>
+```
+
+状态层在 `state/env_group.rs`（618 行，已验收）：分组、筛选、健康态 fail-closed 三态
+（Loading/Failed/Degraded/Ready），**失败 ≠ 空集，失败态不得显示空态**。
+
+## 你要做的事
+
+在 `crates/lengsuo-desktop/src/ui/env_gpui.rs`（**已建占位**）实现：
+
+1. `pub struct EnvViewGpui { state: EnvGroupState }`，`impl Render`
+2. 渲染：
+   - 分组标题行（`GroupRow`）
+   - 环境卡片网格：名称 + `CardStatus` 状态标识（不同状态不同颜色）
+   - 「未分组」作为合法分组展示（描述层已有，不得隐藏）
+   - `degraded_notice` 有值时在顶部显示降级提示条
+   - 筛选后为空 vs 原始为空，显示**不同**文案（描述层已区分，接线别合并）
+3. 点击卡片 → 本地选中态（本卡不接真实启动逻辑）
+
+## 硬约束
+
+- **不改** `ui/env_view.rs`、`state/env_group.rs`
+- **不改** `ui/mod.rs`、`Cargo.toml`
+- **fail-closed**：数据加载失败状态必须可见，不得静默显示为空列表
+- 不接真实数据源（手工构造 `EnvGroupState`）
+- 颜色走 `cx.theme()`
+
+## 门禁
+
+```bash
+cargo fmt --all
+cargo test -p lengsuo-desktop
+cargo clippy -p lengsuo-desktop --all-targets -- -D warnings
+cargo check -p lengsuo-desktop --features ui
+python scripts/check_line_limit.py
+```
+
+## 完成标准
+
+1. `cargo check --features ui` 通过
+2. 三态（Ready / Degraded / Failed）都有可见的不同渲染（报告里逐个列出）
+3. 「筛选后空 ≠ 原始空」在界面上可区分
+4. 描述层 189 个测试未被破坏
+5. `docs/env-gpui-status.md` 记录映射表 + 缺口
+
+## ⛔ 工具调用预算：**最多 45 次**
+
+## ⛔ 上游不可用
+
+`403` / `上游模型繁忙` / `proxy or gateway` → 立即停止，报告 `STATUS: UPSTREAM_UNAVAILABLE`。

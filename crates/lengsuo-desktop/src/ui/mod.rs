@@ -1,7 +1,10 @@
 //! GPUI 渲染层（阶段二，`feature = "ui"`）。
 //!
-//! 阶段一（本批）：本模块**只有占位**，不存在任何 GPUI 依赖。
-//! 阶段二：`ui = ["dep:gpui"]` 打开后在此实现视图。
+//! 本模块分两类：
+//! - **描述层**（`sidebar` / `session_render` / `layout` / `input_area` /
+//!   `right_panel` / `command_palette` / `env_view` / `org_view` / `tool_card` /
+//!   `approval_card`）：产出纯数据的渲染描述，**不依赖 GPUI**，无窗口也能测。
+//! - **接线层**（`*_gpui` 后缀）：把描述接到 GPUI 元素树，受 `feature = "ui"` 隔离。
 //!
 //! 渲染层约束：
 //! - 数据只来自 [`crate::state`] 与 [`crate::theme`]，**不实现业务语义**。
@@ -23,3 +26,14 @@ pub mod right_panel;
 pub mod session_render;
 pub mod sidebar;
 pub mod tool_card;
+
+// === 批二：GPUI 接线层 ===
+// 上面的模块产出**渲染描述**（纯数据、无窗口可测）；下面的模块把描述
+// 真正接到 GPUI 元素树上。分开是为了让描述层保持可测、接线层可替换。
+pub mod env_gpui;
+pub mod input_gpui;
+pub mod org_gpui;
+pub mod palette_gpui;
+pub mod right_panel_gpui;
+pub mod session_gpui;
+pub mod sidebar_gpui;

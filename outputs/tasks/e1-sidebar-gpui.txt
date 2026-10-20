@@ -1,0 +1,69 @@
+# 任务书 · e1-sidebar-gpui（边栏接线）
+
+## 本卡定位：**把描述层接到 GPUI**
+
+上一批 8 张卡产出的是**渲染描述**（纯数据，可测，但不渲染）。
+本卡负责把 `ui/sidebar.rs` 的描述真正变成 GPUI 元素树。
+
+## 现状（必读，别重复造）
+
+`crates/lengsuo-desktop/src/ui/sidebar.rs`（465 行）已有完整逻辑：
+- `SidebarState`（entries / selected / show_archived）
+- `SessionEntry::new(id, title).with_pinned().with_archived().with_unread()`
+- `visible_entries() -> Vec<&SessionEntry>`（已含归档过滤）
+- `SidebarView` / `SidebarSection` / `SessionRow`（**这就是要渲染的描述结构**）
+
+**先读这个文件，照着 `SidebarView` 的字段接线。不要重写状态逻辑。**
+
+已有接线范例：`crates/lengsuo-desktop/src/ui/gpui_app.rs` 和 `gpui_input.rs`。
+**照它们的写法**（`impl Render`、`use gpui_kit::*`、`cx.theme()`）。
+
+## 你要做的事
+
+在 `crates/lengsuo-desktop/src/ui/sidebar_gpui.rs`（**已建好占位，直接改它**）实现：
+
+1. `pub struct SidebarViewGpui { state: SidebarState }`，`impl Render`
+2. 渲染 `SidebarView` 的内容：
+   - 分组标题（`SidebarSection` 的 label）
+   - 会话行：标题 + 置顶标记 + 未读徽标 + 归档标记
+   - 选中项高亮（背景色不同）
+3. 点击行 → `state.select(id)` 并刷新
+4. 「显示/隐藏归档」切换按钮 → `state.toggle_archived()`
+5. 空态：无会话时显示占位文案
+
+## 硬约束
+
+- **不改** `ui/sidebar.rs`（描述层已验收，改了会破坏测试）
+- **不改** `ui/mod.rs`（已由主理人落盘 `pub mod sidebar_gpui;`）
+- **不改** `Cargo.toml`
+- 不接真实数据源 —— 用 `SidebarState::new()` + 手工构造 `SessionEntry` 做 demo 数据
+- 颜色一律走 `cx.theme()`，不硬编码色值
+- 文本一律中文，不出现英文占位
+
+## 门禁（必须全绿）
+
+```bash
+cargo fmt --all
+cargo test -p lengsuo-desktop
+cargo clippy -p lengsuo-desktop --all-targets -- -D warnings
+cargo check -p lengsuo-desktop --features ui
+python scripts/check_line_limit.py
+```
+
+⚠️ **`cargo check --features ui` 第一次跑要 1-4 分钟**（gpui 依赖已编译好，通常 <1 分钟）。耐心等，不要重复跑。
+
+## 完成标准
+
+1. `cargo check -p lengsuo-desktop --features ui` 通过（这是唯一能证明接线成功的门禁）
+2. 描述层测试**未被破坏**（189 个测试仍全过）
+3. 代码里能看出「描述 → 元素」的映射关系（不是把 `SidebarView` 抄一遍）
+4. 在 `docs/sidebar-gpui-status.md` 记录：映射表、缺口、无法验证项（无窗口环境跑不了 GUI，如实写）
+
+## ⛔ 工具调用预算
+
+**最多 45 次。** 超了就停手，把已有成果提交 + 写报告。
+
+## ⛔ 上游不可用
+
+遇到 `403` / `Failed to authenticate` / `上游模型繁忙` / `empty or malformed response` /
+`proxy or gateway` → **立即停止**，报告 `STATUS: UPSTREAM_UNAVAILABLE` + 错误原文 + 已完成工作。

@@ -1,0 +1,11 @@
+{
+  "task": "e3-input-gpui",
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/e3-input-gpui",
+  "slot": 3,
+  "lane": "ui",
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/input_gpui.rs",
+    "docs/input-gpui-status.md"
+  ],
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e3-input-gpui.txt"
+}

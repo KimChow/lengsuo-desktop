@@ -1,0 +1,21 @@
+{
+  "task": "e8-app-shell",
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/e8-app-shell",
+  "slot": 3,
+  "lane": "ui",
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/gpui_app.rs",
+    "crates/lengsuo-desktop/src/bin/lengsuo-desktop.rs",
+    "docs/app-shell-status.md"
+  ],
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e8-app-shell.txt",
+  "depends_on": [
+    "e1-sidebar-gpui",
+    "e2-session-gpui",
+    "e3-input-gpui",
+    "e4-right-panel-gpui",
+    "e5-palette-gpui",
+    "e6-env-gpui",
+    "e7-org-gpui"
+  ]
+}

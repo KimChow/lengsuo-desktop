@@ -1,0 +1,78 @@
+# 任务书 · e8-app-shell（应用入口组装）
+
+## 本卡定位：**把所有接线层组装成可运行的应用**（最后一张，依赖 e1–e7 全部合入）
+
+上一批的 `ui/gpui_app.rs` 只有一个 `SkeletonView`（标题 + 输入框）。
+本卡把它升级成**真正的工作台**：三区布局 + 全部视图。
+
+## 你要做的事
+
+### 1. 组装根视图（改 `ui/gpui_app.rs`）
+
+根视图结构：
+
+```
+┌──────────────────────────────────────────────┐
+│ 标题栏（WINDOW_TITLE）                        │
+├──────────┬──────────────────────┬────────────┤
+│          │                      │            │
+│ Sidebar  │   SessionStream      │ RightPanel │
+│ ViewGpui │   (会话流)            │ ViewGpui   │
+│          │                      │            │
+├──────────┴──────────────────────┴────────────┤
+│ InputAreaGpui（输入区横跨中右两列下方）          │
+└──────────────────────────────────────────────┘
+```
+
+- 宽度用 `ui/layout.rs` 的 `SidebarLayout` / `RightPanelLayout`（边栏 260px 默认，可拖拽调宽可后置）
+- **命令面板**：快捷键触发，浮在最上层（`ui/palette_gpui`）
+- 环境 / 组织视图**暂不进主界面**（e1-e4 只做工作台四件），但代码要编译进去
+
+### 2. 二进制入口（改 `src/bin/lengsuo-desktop.rs`）
+
+现在是一个占位 `fn main() {}`。改成：
+
+```rust
+#![cfg(feature = "ui")]  // 或在 main 里判断，未开 feature 时打印提示退出
+fn main() {
+    // 调 ui::gpui_app::launch()（组装后的新版本）
+    // 失败时 eprintln + 非零退出码
+}
+```
+
+`Cargo.toml` 的 `[[bin]] required-features = ["ui"]` 已由主理人落好，**不要改 Cargo.toml**。
+
+### 3. Linux headless 行为
+
+47 是无显示服务器环境。`launch()` 已处理：窗口创建失败会返回 `LaunchError::Window` 而不是卡死。
+**保持这个行为**，并在报告里记录 Linux 下运行的实际输出（应为报错退出而非 panic）。
+
+## 硬约束
+
+- **不改** `Cargo.toml`、`ui/mod.rs`、`src/state/**`、`src/theme/**`
+- **不改** e1–e7 产出的 `*_gpui.rs`（它们已验收；有 bug 报告里写）
+- 根视图**不持有任何业务语义**：数据全部来自 state 层的 demo 构造
+- `gpui_app.rs` 里旧的 `SkeletonView` 相关内容（HEADING/HINT 常量、SkeletonInput 用法）可删可留，以你的组装为准；但 `launch()` 的函数签名和错误语义要保留
+
+## 门禁
+
+```bash
+cargo fmt --all
+cargo test -p lengsuo-desktop
+cargo clippy -p lengsuo-desktop --all-targets -- -D warnings
+cargo check -p lengsuo-desktop --features ui --bins
+python scripts/check_line_limit.py
+```
+
+## 完成标准
+
+1. `cargo check --features ui --bins` 通过（bin 真正能编出来）
+2. 三区 + 输入区 + 命令面板全部在根视图里组装
+3. 描述层 189 个测试未被破坏
+4. `docs/app-shell-status.md` 记录：组装结构图、各视图来源、Linux headless 实跑输出、缺口
+
+## ⛔ 工具调用预算：**最多 50 次**（组装卡稍宽）
+
+## ⛔ 上游不可用
+
+`403` / `上游模型繁忙` / `proxy or gateway` → 立即停止，报告 `STATUS: UPSTREAM_UNAVAILABLE`。

@@ -1,0 +1,68 @@
+# 任务书 · e3-input-gpui（输入区接线）
+
+## 本卡定位：**把输入区接到 GPUI（这是中文 IME 的验证载体，最重要）**
+
+`ui/input_area.rs`（描述层）已有 `InputAreaState`（草稿 / 5 模式 / 发送按钮）。
+本卡把它接到 GPUI，**并且要兼容 `gpui_input.rs` 里已有的 `SkeletonInput`**。
+
+## 现状
+
+```rust
+pub enum InputMode { /* 5 模式：quick/ask/plan/craft/expert */ }
+impl InputMode {
+    pub fn label(self) -> &'static str;   // 中文标签
+    pub fn id(self) -> &'static str;      // 稳定 id，用于持久化
+    pub fn from_id(id: &str) -> Option<Self>;
+}
+pub struct InputAreaState { /* draft / mode / busy / send_disabled */ }
+pub struct SendButton { /* enabled / label */ }
+pub struct OutgoingInput { /* 发送出去的内容 */ }
+```
+
+已有 GPUI 输入框：`ui/gpui_input.rs` 的 `SkeletonInput`（基于 `gpui_kit::component::input::{Textarea, TextareaState}`）。
+**先读它** —— 你的输入区要复用同一个 `Textarea` 组件，不要另写一个编辑器。
+
+## 你要做的事
+
+在 `crates/lengsuo-desktop/src/ui/input_gpui.rs`（**已建占位**）实现：
+
+1. `pub struct InputAreaGpui { state: InputAreaState, textarea: Entity<SkeletonInput> }`，`impl Render`
+2. 渲染：
+   - 模式切换条：5 个 `InputMode` 标签按钮，当前选中高亮，点击切换
+   - 多行输入框（复用 `SkeletonInput` / `Textarea`），草稿双向同步到 `InputAreaState`
+   - 发送按钮：`SendButton.enabled == false` 时置灰不可点
+3. 交互语义（**描述层已有，接线别违反**）：
+   - 空白草稿不可发送
+   - 等待确认期间禁止重复发送
+   - Enter 发送 / Shift+Enter 换行（若 `Textarea` 已有该行为就复用，没有就注册按键）
+4. 点击发送 → 产出 `OutgoingInput`（**只放进一个回调或公共队列字段**，不真发网络）
+
+## 硬约束
+
+- **不改** `ui/input_area.rs`、`ui/gpui_input.rs`（已验收）
+- **不改** `ui/mod.rs`、`Cargo.toml`
+- **不得声称中文输入已可用**：IME 修复未完成，`docs` 里必须如实写「中文输入在 IME 修复后才能验证」
+- 颜色走 `cx.theme()`
+
+## 门禁
+
+```bash
+cargo fmt --all
+cargo test -p lengsuo-desktop
+cargo clippy -p lengsuo-desktop --all-targets -- -D warnings
+cargo check -p lengsuo-desktop --features ui
+python scripts/check_line_limit.py
+```
+
+## 完成标准
+
+1. `cargo check --features ui` 通过
+2. 5 个模式按钮可切换且高亮正确（有测试：切换后 `state.mode()` 变化）
+3. 空白禁发 / 忙碌禁重发的测试未被破坏（描述层已有）
+4. `docs/input-gpui-status.md` 记录：按键绑定现状、`OutgoingInput` 的交付方式、IME 验证待办
+
+## ⛔ 工具调用预算：**最多 45 次**
+
+## ⛔ 上游不可用
+
+`403` / `上游模型繁忙` / `proxy or gateway` → 立即停止，报告 `STATUS: UPSTREAM_UNAVAILABLE`。

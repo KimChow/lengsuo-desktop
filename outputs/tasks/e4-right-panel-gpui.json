@@ -1,0 +1,11 @@
+{
+  "task": "e4-right-panel-gpui",
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/e4-right-panel-gpui",
+  "slot": 1,
+  "lane": "theme",
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/right_panel_gpui.rs",
+    "docs/right-panel-gpui-status.md"
+  ],
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e4-right-panel-gpui.txt"
+}

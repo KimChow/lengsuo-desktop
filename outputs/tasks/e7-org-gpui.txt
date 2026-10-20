@@ -1,0 +1,77 @@
+# 任务书 · e7-org-gpui（组织域视图接线）
+
+## 本卡定位：**把组织域描述接到 GPUI**
+
+`ui/org_view.rs`（577 行）已有完整描述，本卡渲染它。
+
+## 现状
+
+```rust
+pub enum SectionView<'a> { /* 部门 / 成员 / 角色 三个 section */ }
+pub enum ActionState { /* 操作可用性：可用 / 禁用 / 无权限 */ }
+pub struct DenialNotice { /* 无权限提示 */ }
+pub struct DepartmentNode { /* 部门节点 */ }
+pub struct MemberRow { /* 成员行 */ }
+pub struct RoleRow { /* 角色行 */ }
+pub struct OrgViewState { /* new(caps: CapabilityFlags) */ }
+impl OrgViewState {
+    pub fn caps(&self) -> &CapabilityFlags;
+    pub fn action(&self, cap: Capability) -> ActionState;
+    pub fn departments_section(&self) -> SectionView<'_>;
+    /* members / roles 同理 */
+}
+```
+
+## ⚠️ 最重要的约束：**界面不判定权限**
+
+`ActionState` 来自 `CapabilityFlags`（服务端下发的可见性标记）。接线时：
+
+- **只承载、不推理**：界面上把 `ActionState::Denied` 的按钮置灰，**仅此而已**
+- **不得**在界面层写任何「因为角色是 X 所以能 Y」的判断逻辑
+- **界面禁用 ≠ 授权**：禁用只是可见性标记，真正的权限校验在服务端 + 运行时
+
+这条写错就是安全缺陷。描述层已有此设计，你照搬即可。
+
+## 你要做的事
+
+在 `crates/lengsuo-desktop/src/ui/org_gpui.rs`（**已建占位**）实现：
+
+1. `pub struct OrgViewGpui { state: OrgViewState }`，`impl Render`
+2. 三个 section（部门树 / 成员表 / 角色表）分别渲染：
+   - 部门树：层级缩进
+   - 成员表 / 角色表：表格或列表，列对齐
+   - 每行的操作按钮按 `state.action(cap)` 决定是否置灰
+   - `DenialNotice` 有值时显示提示（如「当前角色无此权限」）
+3. section 之间切换（tab 或侧边导航）
+
+## 硬约束
+
+- **不改** `ui/org_view.rs`、`state/org_perm.rs`
+- **不改** `ui/mod.rs`、`Cargo.toml`
+- **界面对权限只读不推理**（见上）
+- 不接真实数据源（手工构造 `CapabilityFlags`）
+- 颜色走 `cx.theme()`
+
+## 门禁
+
+```bash
+cargo fmt --all
+cargo test -p lengsuo-desktop
+cargo clippy -p lengsuo-desktop --all-targets -- -D warnings
+cargo check -p lengsuo-desktop --features ui
+python scripts/check_line_limit.py
+```
+
+## 完成标准
+
+1. `cargo check --features ui` 通过
+2. 三个 section 都能渲染
+3. `ActionState` 三种状态（可用/禁用/无权限）在界面上有区别
+4. 代码里**没有任何权限推理逻辑**（报告里明说「界面只承载标记」）
+5. `docs/org-gpui-status.md` 记录映射表 + 缺口
+
+## ⛔ 工具调用预算：**最多 45 次**
+
+## ⛔ 上游不可用
+
+`403` / `上游模型繁忙` / `proxy or gateway` → 立即停止，报告 `STATUS: UPSTREAM_UNAVAILABLE`。

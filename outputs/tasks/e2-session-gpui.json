@@ -1,0 +1,11 @@
+{
+  "task": "e2-session-gpui",
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/e2-session-gpui",
+  "slot": 2,
+  "lane": "ui",
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/session_gpui.rs",
+    "docs/session-gpui-status.md"
+  ],
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e2-session-gpui.txt"
+}

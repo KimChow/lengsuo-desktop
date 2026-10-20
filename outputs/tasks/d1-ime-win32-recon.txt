@@ -1,112 +1,134 @@
-# 任务书 · d1-ime-win32-recon（IME 缺陷取证与修复方案）
+# 任务书 · d1-ime-win32-recon（IME 缺陷源码定位与修复方案）
 
-## 本卡定位：**调研卡（只读，不编码）**
+## ⚠️ 先读这段，它决定你能做什么、不能做什么
 
-产出是一份**可执行的修复方案文档**，不是代码。下一张卡（`d2-ime-fix`）才动手改。
+**本机是 headless Linux（无图形界面、无 Windows、无中文输入法）。**
+
+所以：**你无法复现任何 Windows IME 行为。不要尝试。**
+
+历史教训：上一轮有卡在这里耗了 61 轮、零产物、整轮作废 —— 因为它反复尝试编译 GUI 探针、
+在 Linux 上找 Windows 输入法、在无关目录里翻源码。
+
+**本卡唯一产出是一份 md 文档。不做实验，不跑 GUI，不编译探针。**
+只在已下载的源码里做静态阅读与定位，然后写方案。
+
+## 本卡定位：**纯静态源码分析（只读，不编码，不实验）**
 
 ## 背景
 
-本仓将用 GPUI + gpui-kit 做桌面界面。GPUI 在 Windows 上有两条已确认的中文输入法（IME）缺陷，
-是**中文产品的硬阻塞**：主界面的会话输入框、搜索框都要用中文输入。
+本仓用 GPUI + gpui-kit 做桌面界面。GPUI 在 Windows 上有一条中文输入法硬缺陷，
+是中文产品的阻塞项（主界面会话输入框必须能打中文）。
 
-已知的两条 issue：
+已知两条 Zed issue：
 
 | Issue | 症状 |
 |---|---|
 | zed-industries/zed **#56327** | `WM_KEYDOWN` 路径不检查 IME 组合态 → 汉字重复插入；另有 `direct_write.rs` 多字节切片 panic |
 | zed-industries/zed **#64850** | IME 定位只给一个点（`y = origin.y + height/2`）+ `CFS_CANDIDATEPOS` 无排除区 → 候选框盖住正在输入的字 |
 
-## 你要做的事
+## 源码在哪（直接用，别自己找）
 
-### 1. 取证：确认缺陷在本机可复现
+依赖已经拉好了，源码就在本机 registry：
 
-**必须先做这一步，不许跳过。**
+```
+~/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/
+├── gpui-pre-0.3.9/          ← 上游 gpui 的核心（协议、元素、文本系统）
+├── gpui-pre-linux-0.3.9/    ← Linux 平台层
+├── gpui-pre-platform-0.3.9/ ← 平台抽象接口
+├── gpui-base-0.8.0/         ← gpui-kit 的基础层（含 input/base/state.rs）
+├── gpui-component-0.8.0/    ← 输入框等组件
+└── gpui-kit-0.8.0/          ← 基座入口
+```
 
-1. 建一个最小 GPUI 工程（`/tmp/ime-probe`，不入仓），依赖 `gpui = "0.2.2"`（若 crates.io 拉不到就试 gpui-kit）。
-   - 若能联网：`cargo add gpui`。若被限制，记录实际报错，改用 `gpui-kit` 或 `gpui-pre` 试。
-2. 放一个多行文本输入框，编译运行。
-3. **用中文输入法实际输入**（如果你无法交互输入，就用 `SendInput` 或脚本模拟，或明确记录「无法交互验证」）。
-4. 记录：**实际观察到的行为**（崩溃？重复字符？候选框位置？），逐条与上面两条 issue 的症状对照。
+**注意**：Windows 平台层的 crate 可能**不在**上面这个目录里（Linux 上不会下载 Windows 目标）。
+先 `ls` 确认：
 
-⚠️ 若设备无法交互输入（headless），**必须如实写明「未能实测」**，并把这一项标为未验证。
-**不得**把「读 issue 描述」写成「已复现」。
+```bash
+ls ~/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/ | grep -i "gpui"
+```
 
-### 2. 定位源码：找到要改的确切位置
+- **若 Windows 平台 crate 存在**：直接读它，找 `WM_IME` / `ImmSetCandidateWindow` / `CFS_CANDIDATEPOS`。
+- **若不存在**：从 GitHub 读（**只读网页，不 clone**）：
+  `https://raw.githubusercontent.com/zed-industries/zed/<commit>/crates/gpui/src/platform/windows/`
+  gpui-kit 用的 commit 记在 `gpui-pre-0.3.9/.cargo_vcs_info.json`；若没有就查 gpui-kit README。
+- 两条路都失败 → **如实写「Windows 平台源码不可获取」并结束**，不要继续在别的目录里乱翻。
 
-在 GPUI 源码里找到：
+## 你要做的事（只有两件）
 
-- IME 消息处理：搜 `WM_IME`、`WM_KEYDOWN`、`handle_keydown_msg`、`handle_char_msg`、`parse_char_message`
-- IME 定位：搜 `ImmSetCandidateWindow`、`CFS_CANDIDATEPOS`、`update_ime_position`、`retrieve_caret_position`
-- 多字节切片：搜 `direct_write.rs` 里的 `TextRun` / `shape_line` / `layout_line`
+### 1. 源码定位（找位置，不改代码）
 
-对每一处，报告 **文件路径 + 行号 + 代码原文片段 + 它现在错在哪**。
+对下面每个关注点，找到 **文件路径 + 行号 + 代码原文片段**，并说明它现在错在哪：
 
-GPUI 源码获取方式（任选其一，记录实际用的）：
-- `cargo vendor` 后本地读
-- 从 `~/.cargo/registry/src/` 读已下载的 `gpui` / `gpui-pre` 源码
-- 若以上都不行，读 gpui-kit 仓库里的 vendored 副本
+| # | 关注点 | 搜索关键词 |
+|---|---|---|
+| 1 | `WM_KEYDOWN` 处理是否检查 IME 组合态 | `WM_KEYDOWN`、`WM_CHAR`、`handle_keydown`、`parse_char_message` |
+| 2 | IME 候选框定位用的矩形 | `ImmSetCandidateWindow`、`CFS_CANDIDATEPOS`、`CFS_EXCLUDE`、`rcArea`、`COMPOSITIONFORM` |
+| 3 | 多字节字符切片 | `direct_write`、`TextRun`、按字节切 `&str` 的地方 |
+| 4 | 应用层能否拿到 caret 矩形（决定修法可行性） | `caret`、`bounds`、`element_bounds`、`window_bounds` |
 
-### 3. 写修复方案（核心产出）
+第 4 项特别重要：**如果应用层拿不到光标矩形，那修复方案就落不了地。** 这条要明确给结论。
 
-对每条缺陷给：
+### 2. 写修复方案（核心产出）
+
+对每条缺陷给一张表：
 
 | 项 | 要求 |
 |---|---|
 | 根因 | 一句话说清「为什么会这样」，附源码位置 |
-| 修法 | 具体到改哪个函数、加什么判断。IME 定位那条的正解方向是 `CFS_EXCLUDE` + `rcArea` 传 caret 矩形（不是单点） |
+| 修法 | 具体到改哪个函数、加什么判断。IME 定位那条正解方向是 `CFS_EXCLUDE` + `rcArea` 传 caret 矩形（不是单点） |
 | 改动面 | 预计改哪些文件、多少行 |
-| 风险 | 这个改动可能影响什么（如输入法兼容性、其他平台） |
-| 验证方法 | 改完**怎么证明修好了**——要可执行、可复现的步骤 |
+| 风险 | 可能影响什么（输入法兼容性、其他平台） |
+| 验证方法 | 改完**怎么证明修好了**（可执行、可复现的步骤；在 Windows 机器上能执行） |
 
-### 4. 判断：修在哪里
-
-三条路，给推荐并说明理由：
+### 3. 判断：修在哪（三选一，给推荐 + 理由）
 
 | 选项 | 说明 |
 |---|---|
-| A. 改本地 vendored 的 gpui 源码 | 完全掌控，但跟上游脱节 |
+| A. vendored 本地 gpui 源码 | 完全掌控，但与上游脱节、升级要手工 rebase |
 | B. fork gpui-kit 并向上游 PR | 社区共享，但依赖对方合并节奏 |
-| C. 在应用层绕过（如用 WebView 承载输入框） | 不改底层，但 §1.5b 已限定 WebView 面积 |
+| C. 应用层绕过（WebView 承载输入框） | 不改底层，但 WebView 使用面积已限定 |
 
 ## 交付物
 
-`docs/ime-win32-recon-status.md`，包含：
+`docs/ime-win32-recon-status.md`，必须包含：
 
-1. 复现结果（**如实**：复现了 / 未能实测 / 部分复现）
-2. 源码定位表（文件 + 行号 + 原文 + 错在哪）
-3. 逐条修复方案（根因 / 修法 / 改动面 / 风险 / 验证方法）
+1. **验证状态声明**：开头就写「本机为 headless Linux，未做任何运行时复现；以下全部为静态源码分析」
+2. 源码定位表（路径 + 行号 + 原文 + 错在哪）
+3. 逐条修复方案（上面的五列）
 4. 修在哪里的推荐与理由
-5. 给下一张卡（`d2-ime-fix`）的具体指令清单
-6. **未验证项清单**（诚实列出哪些是读来的、哪些是实测的）
+5. 给下一张修复卡的具体指令清单
+6. **未验证项清单**：诚实列出哪些结论是读源码得来、哪些需要 Windows 实机确认
 
 ## 边界
 
-- **只读**，不改本仓任何 Rust 代码。产出只有一份 md 文档。
-- 探针工程放 `/tmp`，**不入仓**。
-- 参考源：`~/ref/reference-docs`（若需产品行为参考）。GPUI 源码按上面第 2 节的方式获取。
+- **只读本仓**：不改本仓任何 Rust 代码，产出只有那一个 md
 - 允许 `touches`：`docs/ime-win32-recon-status.md`
+- 不要建 `/tmp` 探针工程，不要跑 `cargo build`
+- 不要读 `~/.cargo/registry` 之外的源码树（不要翻 `~/ref`、不要 clone zed）
 
 ## 完成标准
 
-1. 复现结果明确（含「未能实测」这一诚实结论）
-2. 每条缺陷都有源码级定位（文件 + 行号）
-3. 每条缺陷都有可执行的验证方法（不是「应该能修好」）
-4. 下一张卡的指令清单足够具体，让 `d2-ime-fix` 不需要重新调研
+1. 开头有明确的「未实测」声明
+2. 每条缺陷都有源码级定位（文件 + 行号 + 原文片段）
+3. 每条都有可执行的验证方法（在 Windows 上能跑的具体步骤）
+4. 对「应用层能否拿到 caret 矩形」给出明确结论（这决定修法可行性）
+5. 下一张修复卡拿到文档后**不需要重新调研**
 
-## ⛔ 上游不可用时的行为（硬约束）
+## ⛔ 工具调用预算（硬约束）
 
-若你在执行中遇到以下任一情况，**立即停止重试并结束本轮**，不要反复重试、不要改写任务目标：
+**最多 40 次工具调用。** 到 40 次就停止分析、把已有发现写进文档、结束。
 
-- `API Error: 403` / `Failed to authenticate` / `上游模型繁忙`
-- `API returned an empty or malformed response` / `check for a proxy or gateway`
-- 连续两次工具调用均因网络/网关错误失败
+分配建议：`ls`/确认源码位置 ≤6 次，`grep`/`sed` 定位 ≤25 次，写文档 ≤4 次。
 
-结束时的报告必须是：
+**不要反复读同一个文件。** 定位到就记下来，继续下一个。
+
+## ⛔ 上游不可用时的行为
+
+遇到 `API Error: 403` / `Failed to authenticate` / `上游模型繁忙` /
+`empty or malformed response` / `proxy or gateway` — **立即停止**，报告：
 
 ```
 STATUS: UPSTREAM_UNAVAILABLE
 最后一次错误原文：<粘贴>
 已完成的工作：<无 或 具体文件列表>
 ```
-
-**理由**：历史上有卡因 403 空转 61 轮、零产物、整轮作废。宁可快速失败让主理人修网关，也不要把轮次消耗在重试上。**这不是你的错，如实上报即可。**

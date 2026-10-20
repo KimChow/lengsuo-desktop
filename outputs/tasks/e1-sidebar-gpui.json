@@ -1,0 +1,11 @@
+{
+  "task": "e1-sidebar-gpui",
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/e1-sidebar-gpui",
+  "slot": 1,
+  "lane": "ui",
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/sidebar_gpui.rs",
+    "docs/sidebar-gpui-status.md"
+  ],
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e1-sidebar-gpui.txt"
+}

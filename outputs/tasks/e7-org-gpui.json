@@ -1,0 +1,11 @@
+{
+  "task": "e7-org-gpui",
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/e7-org-gpui",
+  "slot": 1,
+  "lane": "view",
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/org_gpui.rs",
+    "docs/org-gpui-status.md"
+  ],
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e7-org-gpui.txt"
+}

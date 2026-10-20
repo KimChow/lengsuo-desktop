@@ -1,0 +1,70 @@
+# 任务书 · e2-session-gpui（会话流接线）
+
+## 本卡定位：**把描述层接到 GPUI**
+
+`ui/session_render.rs`（390 行）已产出 `Vec<Block>` 描述，本卡把它渲染成元素树。
+
+## 现状（先读，别重写）
+
+```rust
+pub enum Block {
+    UserBubble { text: String, align: Align },      // 右对齐气泡
+    AssistantText { text: String, align: Align },   // 左对齐正文
+    ToolCall(ToolCard),                             // 折叠卡片
+    ToolResult(ToolResultView),                     // 终端/文件列表/diff
+    FilesGrid { files: Vec<FileItem> },             // 文件卡片网格
+    Approval(ApprovalCardView),                     // 待审批
+    StaleNotice { text: &'static str },             // 断档提示
+}
+
+pub fn render(state: &SessionStreamState) -> Vec<Block>
+```
+
+`Block::ToolResult` 内含 `ToolResultKind`（终端 / 文件列表 / diff 三态），要分别渲染。
+
+## 你要做的事
+
+在 `crates/lengsuo-desktop/src/ui/session_gpui.rs`（**已建占位**）实现：
+
+1. `pub fn render_block(block: &Block) -> impl IntoElement`（或按 Block 分支的内部函数）
+2. 七种 Block 全部要渲染，**不许漏**：
+   - `UserBubble`：右对齐，背景色区分
+   - `AssistantText`：左对齐，普通文本
+   - `ToolCall`：折叠卡（默认收起，点击展开）
+   - `ToolResult`：按 `ToolResultKind` 三种形态分别渲染（终端用等宽、文件列表可点击、diff 用增删色）
+   - `FilesGrid`：网格布局
+   - `Approval`：**渲染只读**，三个按钮（允许/拒绝/总是允许）；**未决策即等待中，不得默认放行**
+   - `StaleNotice`：醒目提示条（断流提示，通常在首块）
+3. 一个 `pub struct SessionStreamGpui { state: SessionStreamState }` 收拢状态，`impl Render` 遍历 `render(&self.state)`
+
+## 硬约束
+
+- **不改** `ui/session_render.rs` / `ui/tool_card.rs` / `ui/approval_card.rs`（描述层已验收）
+- **不改** `ui/mod.rs`、`Cargo.toml`
+- 不接真实数据源（用 `SessionStreamState` + 手工构造消息）
+- 审批按钮的点击**只改局部 UI 状态**，不伪造审批决策（真正决策要走 `resolve_approval`，本卡不接）
+- 颜色走 `cx.theme()`，不硬编码
+
+## 门禁
+
+```bash
+cargo fmt --all
+cargo test -p lengsuo-desktop
+cargo clippy -p lengsuo-desktop --all-targets -- -D warnings
+cargo check -p lengsuo-desktop --features ui
+python scripts/check_line_limit.py
+```
+
+## 完成标准
+
+1. `cargo check --features ui` 通过
+2. **七种 Block 都有渲染分支**（报告里逐个列出，缺一不可）
+3. 描述层 189 个测试未被破坏
+4. `docs/session-gpui-status.md` 记录映射表 + 缺口（如 Markdown 富文本未实现、diff 仅纯文本高亮）
+
+## ⛔ 工具调用预算：**最多 45 次**
+
+## ⛔ 上游不可用
+
+遇到 `403` / `上游模型繁忙` / `empty or malformed response` / `proxy or gateway`
+→ 立即停止，报告 `STATUS: UPSTREAM_UNAVAILABLE` + 错误原文。

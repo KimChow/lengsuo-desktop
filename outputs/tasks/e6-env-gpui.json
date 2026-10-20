@@ -1,0 +1,11 @@
+{
+  "task": "e6-env-gpui",
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/e6-env-gpui",
+  "slot": 3,
+  "lane": "view",
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/env_gpui.rs",
+    "docs/env-gpui-status.md"
+  ],
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e6-env-gpui.txt"
+}
