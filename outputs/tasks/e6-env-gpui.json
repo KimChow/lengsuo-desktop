@@ -7,5 +7,7 @@
     "crates/lengsuo-desktop/src/ui/env_gpui.rs",
     "docs/env-gpui-status.md"
   ],
-  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e6-env-gpui.txt"
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e6-env-gpui.txt",
+  "max_turns": 120,
+  "max_budget_turns": 120
 }

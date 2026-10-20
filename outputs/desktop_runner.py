@@ -277,6 +277,31 @@ for line in (ROOT / "logs" / f"{task}.jsonl").read_text().splitlines():
     except ValueError:
         pass
 
+# 撞上限/异常退出时，卡往往已经写了大半代码但没走到提交那一步。
+# 这里把残留改动提交下来（标 WIP），让产物不至于被重派时的 reset 抹掉。
+# 编译不过由集成门禁拦住 —— 比默默丢掉强。
+try:
+    _dirty = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True
+    ).stdout.strip()
+    if _dirty:
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=wt,
+            capture_output=True,
+            text=True,
+        )
+        _msg = "wip(desktop): 卡未完成，保留已写下的实现（待复核）"
+        subprocess.run(
+            ["git", "commit", "-m", _msg],
+            cwd=wt,
+            capture_output=True,
+            text=True,
+        )
+        print(f"→ {task}: 已提交残留改动（{len(_dirty.splitlines())} 项）")
+except Exception as _exc:  # noqa: BLE001
+    print(f"→ {task}: 提交残留改动失败：{_exc}")
+
 state.write_text(
     json.dumps(
         {

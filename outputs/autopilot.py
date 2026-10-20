@@ -261,12 +261,39 @@ def step_dispatch() -> int:
 
 
 def step_push() -> None:
-    """47 无 GitHub 凭据，推送由本机窗口做；这里只报告差异。"""
-    code, out = run(["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"], cwd=REPO)
-    if code == 0 and out.strip() and out.strip() != "0\t0":
-        log(f"  47 本地 main 领先 origin/main：{out.strip()}（需本机窗口 fetch→push）")
+    """把 47 的 main 推到 GitHub。
+
+    47 已配仓库专用凭据（~/.git-credentials-desktop，600，仅本仓生效），
+    所以这里能直接推，不必等本机窗口。
+    推送后必须核对远端 SHA 与本地一致 —— 静默失败是这类脚本最常见的坑。
+    """
+    code, out = run(
+        ["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"],
+        cwd=REPO,
+    )
+    if code != 0:
+        log("  无法比较与 origin/main 的差异（跳过推送）")
+        return
+    counts = out.split()
+    if len(counts) == 2 and counts[0] == "0" and counts[1] == "0":
+        log("  47 main 与 origin/main 已同步，无需推送")
+        return
+
+    pcode, pout = run(["git", "push", "origin", "main"], cwd=REPO, timeout=300)
+    if pcode != 0:
+        first = next((x for x in pout.splitlines() if x.strip()), "")
+        log(f"  推送失败 → {first[:110]}")
+        return
+
+    # 推送后核对：远端 SHA 必须与本地一致
+    lcode, lout = run(["git", "rev-parse", "HEAD"], cwd=REPO)
+    rcode, rout = run(["git", "ls-remote", "origin", "refs/heads/main"], cwd=REPO, timeout=120)
+    local_sha = lout.strip()[:8] if lcode == 0 else "?"
+    remote_sha = rout.split()[0][:8] if rcode == 0 and rout.split() else "?"
+    if local_sha == remote_sha and local_sha != "?":
+        log(f"  ✓ 已推送并核对：{local_sha}")
     else:
-        log("  47 main 与 origin/main 同步")
+        log(f"  ⚠ 推送后核对不一致：local={local_sha} remote={remote_sha}")
 
 
 def step_report() -> None:

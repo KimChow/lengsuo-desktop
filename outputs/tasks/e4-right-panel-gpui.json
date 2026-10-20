@@ -7,5 +7,7 @@
     "crates/lengsuo-desktop/src/ui/right_panel_gpui.rs",
     "docs/right-panel-gpui-status.md"
   ],
-  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e4-right-panel-gpui.txt"
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e4-right-panel-gpui.txt",
+  "max_turns": 120,
+  "max_budget_turns": 120
 }

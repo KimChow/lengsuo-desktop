@@ -7,5 +7,7 @@
     "crates/lengsuo-desktop/src/ui/input_gpui.rs",
     "docs/input-gpui-status.md"
   ],
-  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e3-input-gpui.txt"
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e3-input-gpui.txt",
+  "max_turns": 120,
+  "max_budget_turns": 120
 }
