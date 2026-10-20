@@ -18,9 +18,9 @@ use crate::ui::input_area::{InputAreaState, InputMode, OutgoingInput};
 #[cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 #[cfg(feature = "ui")]
-use gpui_kit::component::ActiveTheme as _;
-#[cfg(feature = "ui")]
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+#[cfg(feature = "ui")]
+use gpui_kit::component::ActiveTheme as _;
 #[cfg(feature = "ui")]
 use gpui_kit::*;
 
@@ -203,10 +203,9 @@ impl InputAreaGpui {
             return;
         };
         // 清空编辑器。`set_value` 不会发 `InputEvent::Change`，因此不会回环。
-        self.textarea
-            .update(cx, |textarea, textarea_cx| {
-                textarea.set_value("", window, textarea_cx);
-            });
+        self.textarea.update(cx, |textarea, textarea_cx| {
+            textarea.set_value("", window, textarea_cx);
+        });
         self.outbox.push(outgoing.clone());
         if let Some(callback) = self.on_send.as_mut() {
             callback(outgoing);
@@ -350,7 +349,10 @@ mod tests {
                 .collect();
             assert_eq!(selected, vec![mode], "高亮必须跟着切换");
         }
-        assert!(!apply_mode(&mut state, InputMode::Expert), "重复点击不算变化");
+        assert!(
+            !apply_mode(&mut state, InputMode::Expert),
+            "重复点击不算变化"
+        );
         assert_eq!(state.mode(), InputMode::Expert);
     }
 
