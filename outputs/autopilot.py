@@ -265,8 +265,17 @@ def step_push() -> None:
 
     47 已配仓库专用凭据（~/.git-credentials-desktop，600，仅本仓生效），
     所以这里能直接推，不必等本机窗口。
+
+    推送前先 fetch + 合并远端 —— 远端可能已被本机窗口推过新提交，
+    直接 push 会因非快进被拒。合并用 --no-edit（不打断自动流程）。
     推送后必须核对远端 SHA 与本地一致 —— 静默失败是这类脚本最常见的坑。
     """
+    fcode, fout = run(["git", "fetch", "origin", "main"], cwd=REPO, timeout=180)
+    if fcode != 0:
+        first = next((x for x in fout.splitlines() if x.strip()), "")
+        log(f"  fetch 失败 → {first[:100]}")
+        return
+
     code, out = run(
         ["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"],
         cwd=REPO,
@@ -278,6 +287,17 @@ def step_push() -> None:
     if len(counts) == 2 and counts[0] == "0" and counts[1] == "0":
         log("  47 main 与 origin/main 已同步，无需推送")
         return
+
+    # 远端领先 ⇒ 先合并远端（可能冲突，冲突则停下等人）
+    if len(counts) == 2 and counts[1] != "0":
+        mcode, mout = run(
+            ["git", "merge", "--no-edit", "origin/main"], cwd=REPO, timeout=300
+        )
+        if mcode != 0:
+            first = next((x for x in mout.splitlines() if x.strip()), "")
+            log(f"  ⚠ 合并 origin/main 冲突，停下等人：{first[:100]}")
+            return
+        log("  已合并远端新提交")
 
     pcode, pout = run(["git", "push", "origin", "main"], cwd=REPO, timeout=300)
     if pcode != 0:
