@@ -18,8 +18,12 @@ from pathlib import Path
 
 from card_ledger import Ledger, LedgerError
 
-# 允许用环境变量指向别的派卡根（回归测试隔离用；平时不必设置）
-ROOT = Path(os.environ.get("LENGSUO_DEV_ROOT") or (Path.home() / "lengsuo-agent-dev"))
+# 允许用环境变量指向别的派卡根（回归测试隔离用；平时不必设置）。
+# 默认从脚本自身位置推导：本脚本位于 <派卡根>/repo/scripts/ 下，
+# 向上两级即派卡根 —— 换线（agent/network/desktop）无需改代码。
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_DEFAULT_ROOT = _SCRIPT_DIR.parent.parent
+ROOT = Path(os.environ.get("LENGSUO_DEV_ROOT") or _DEFAULT_ROOT)
 REPO = ROOT / "repo"
 
 SHARED_PATHS = (
