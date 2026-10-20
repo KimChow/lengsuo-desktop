@@ -7,5 +7,7 @@
     "crates/lengsuo-desktop/src/ui/sidebar_gpui.rs",
     "docs/sidebar-gpui-status.md"
   ],
-  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e1-sidebar-gpui.txt"
+  "brief": "/home/ubuntu/lengsuo-desktop-dev/tasks/e1-sidebar-gpui.txt",
+  "max_turns": 120,
+  "max_budget_turns": 120
 }

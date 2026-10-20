@@ -17,5 +17,7 @@
     "e5-palette-gpui",
     "e6-env-gpui",
     "e7-org-gpui"
-  ]
+  ],
+  "max_turns": 120,
+  "max_budget_turns": 120
 }
