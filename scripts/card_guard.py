@@ -148,6 +148,28 @@ def cmd_verify(task: str) -> int:
             led.update(task, state="failed", reason="touches 越界")
         return fail(f"{task} 越界改动 {len(outside)}/{len(changed)} 个文件：", outside[:20])
 
+    # 空改动必须判失败。历史教训：卡片把预算全花在调研上、一行代码没写时，
+    # 三点 diff 结果为空 → 这里会误判"改动在范围内"→ 状态进 verifying →
+    # merge 时才发现候选是空提交 → 台账已被别处标成 merged，产物静默丢失。
+    if not changed:
+        with led.lock():
+            led.update(task, state="failed", reason="空改动：无任何文件变化")
+        return fail(
+            f"{task} 空改动：相对 base 无任何文件变化。"
+            "常见原因：卡把工具调用预算全花在调研上，未产出实现。"
+            "请重派并要求先落代码后编译。"
+        )
+
+    # HEAD 必须在 base 之上有提交，否则 merge 会因"候选不是双亲合并提交"失败。
+    try:
+        base_sha = git(wt, "rev-parse", base).strip()
+    except LedgerError:
+        base_sha = ""
+    if base_sha and head == base_sha:
+        with led.lock():
+            led.update(task, state="failed", reason="HEAD 未领先 base")
+        return fail(f"{task} HEAD({head[:8]}) 未领先 base({base_sha[:8]})，无候选可合")
+
     with led.lock():
         led.update(task, state="verifying", verified_sha=head, verified_fp=fp, verified_at=time.time())
     print(f"✓ {task} 改动在范围内（{len(changed)} 文件，绑定 {head[:8]}）")
