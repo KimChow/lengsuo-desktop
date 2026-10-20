@@ -27,12 +27,18 @@ use gpui_kit::{
     ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window,
 };
 
+pub mod approval_intent;
+#[cfg(test)]
+mod approval_intent_tests;
+mod approval_render;
 mod blocks;
 pub mod diff_lines;
 pub mod markdown;
 mod markdown_view;
+#[cfg(test)]
+mod render_tests;
 
-use crate::state::session_stream::SessionStreamState;
+use crate::state::session_stream::{PendingApproval, SessionStreamState};
 use crate::ui::approval_card::ApprovalAction;
 use crate::ui::session_render::{self, Block};
 use crate::ui::tool_card::ToolCard;
@@ -56,6 +62,13 @@ pub struct SessionUiState {
     pub approval_choice: HashMap<String, ApprovalAction>,
     /// 本地选中的文件路径。
     pub selected_file: Option<String>,
+    /// 已选过「总是允许」的**作用域**（键为 [`approval_intent::ApprovalScope::key`]）。
+    ///
+    /// 只在内存、只在界面层；**不落盘**（持久化归宿主）。这张表只用于记住意图，
+    /// **不得**据此跳过 / 自动通过任何后续审批（界面不判定权限）。
+    pub always_allow_scope: approval_intent::AlwaysAllowMap,
+    /// 选过「总是允许」的**本审批 id**（键为审批 id）；只用于该卡重绘后回显选中态。
+    pub always_choice: HashMap<String, ApprovalAction>,
 }
 
 impl SessionUiState {
@@ -77,6 +90,60 @@ impl SessionUiState {
     /// 记下审批按钮的本地选择（**不**代表真实决策）。
     pub fn choose_approval(&mut self, id: &str, action: ApprovalAction) {
         self.approval_choice.insert(id.to_owned(), action);
+    }
+
+    /// 某张待审批卡在重绘后应当显示的选中动作（按审批 id）。
+    ///
+    /// - `Allow` / `Deny` 取该审批 id 的本地选择；
+    /// - `AlwaysAllow` 取该审批 id **自身的**「总是」选择。
+    ///
+    /// ⚠️ 只看本审批 id，**不**按作用域扩散：同工具 / 同会话里其它审批卡照样是未选态
+    /// （见 `approval_intent` 的反例测试）。这只是**显示**，不改变审批状态。
+    #[must_use]
+    pub fn display_choice(&self, approval_id: &str) -> Option<ApprovalAction> {
+        self.approval_choice
+            .get(approval_id)
+            .copied()
+            .or_else(|| self.always_choice.get(approval_id).copied())
+    }
+
+    /// 按作用域查是否选过「总是允许」（仅反映意图，**不得**用于跳过审批）。
+    #[must_use]
+    pub fn scope_choice(&self, scope: &approval_intent::ApprovalScope) -> Option<ApprovalAction> {
+        scope
+            .key()
+            .and_then(|key| self.always_allow_scope.get(&key).copied())
+    }
+
+    /// 产出并记下一次审批意图（**不**触发真实决策、不落盘）。
+    ///
+    /// - 「总是允许」且作用域已知 ⇒ 记入 [`Self::always_allow_scope`] 与
+    ///   [`Self::always_choice`]（后者只让**本审批卡**回显选中态）；
+    /// - 作用域未知 ⇒ 不记入任何表（fail-closed），意图仍原样返回给宿主；
+    /// - 其它动作 ⇒ 走 [`Self::choose_approval`]。
+    pub fn record_intent(
+        &mut self,
+        request: &approval_intent::ApprovalRequest<'_>,
+    ) -> approval_intent::ApprovalIntent {
+        let intent = approval_intent::ApprovalIntent::from_request(request);
+        let Some(id) = request
+            .approval_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            return intent;
+        };
+        if request.action.is_always() {
+            if approval_intent::record_intent(&mut self.always_allow_scope, &intent)
+                != approval_intent::Recorded::Skipped
+            {
+                self.always_choice
+                    .insert(id.to_owned(), ApprovalAction::AlwaysAllow);
+            }
+        } else {
+            self.choose_approval(id, request.action);
+        }
+        intent
     }
 
     /// 本地选中的文件路径。
@@ -139,6 +206,14 @@ impl SessionStreamGpui {
     pub fn choose_approval(&mut self, id: &str, action: ApprovalAction) {
         self.ui.choose_approval(id, action);
     }
+
+    /// 产出并记下一次审批意图（**不**触发真实决策、不落盘）；返回的意图交宿主 / 运行时消费。
+    pub fn record_intent(
+        &mut self,
+        request: &approval_intent::ApprovalRequest<'_>,
+    ) -> approval_intent::ApprovalIntent {
+        self.ui.record_intent(request)
+    }
 }
 
 /// 渲染一个块所需的上下文。
@@ -146,12 +221,15 @@ impl SessionStreamGpui {
 /// - `theme`：颜色来源，一律取自 `cx.theme()`；
 /// - `ui`：视图的局部界面态；
 /// - `host`：交互宿主。给了才能点击（展开 / 选文件 / 审批按钮）；
-/// - `index`：块在会话流中的序号（折叠态的键，也是元素 id 的唯一性来源）。
+/// - `index`：块在会话流中的序号（折叠态的键，也是元素 id 的唯一性来源）；
+/// - `approvals`：渲染时的审批源（只读）。用于**只**取「审批 id → 工具名」，
+///   让点击「总是允许」时能产出带作用域的意图；不参与任何放行判断。
 pub struct BlockCtx<'a> {
     theme: &'a Theme,
     ui: Cow<'a, SessionUiState>,
     host: Option<&'a Entity<SessionStreamGpui>>,
     index: usize,
+    approvals: Option<&'a [PendingApproval]>,
 }
 
 impl<'a> BlockCtx<'a> {
@@ -163,6 +241,7 @@ impl<'a> BlockCtx<'a> {
             ui: Cow::Owned(SessionUiState::default()),
             host: None,
             index: 0,
+            approvals: None,
         }
     }
 
@@ -179,7 +258,23 @@ impl<'a> BlockCtx<'a> {
             ui: Cow::Borrowed(ui),
             host: Some(host),
             index,
+            approvals: None,
         }
+    }
+
+    /// 挂上审批源（只用于取工具名，供意图使用）。
+    #[must_use]
+    pub fn with_approvals(mut self, approvals: &'a [PendingApproval]) -> Self {
+        self.approvals = Some(approvals);
+        self
+    }
+
+    /// 某审批 id 的工具名（缺失返回 `None`；不伪造）。
+    fn tool_of(&self, approval_id: &str) -> Option<&'a str> {
+        self.approvals?
+            .iter()
+            .find(|a| a.id == approval_id)
+            .map(|a| a.tool.as_str())
     }
 
     /// 该块是否处于展开态（工具调用卡片）。
@@ -239,7 +334,7 @@ pub fn render_block_with(block: &Block, ctx: &BlockCtx<'_>) -> AnyElement {
         Block::ToolCall(card) => blocks::render_tool_call(card, ctx),
         Block::ToolResult(view) => blocks::render_tool_result(view, ctx),
         Block::FilesGrid { files } => blocks::render_files_grid(files, ctx),
-        Block::Approval(card) => blocks::render_approval(card, ctx),
+        Block::Approval(card) => approval_render::render_approval(card, ctx),
         Block::StaleNotice { text } => blocks::render_stale_notice(text, ctx),
     }
 }
@@ -270,131 +365,10 @@ impl Render for SessionStreamGpui {
         }
 
         for (index, block) in blocks.iter().enumerate() {
-            let ctx = BlockCtx::interactive(&theme, &self.ui, &host, index);
+            let ctx = BlockCtx::interactive(&theme, &self.ui, &host, index)
+                .with_approvals(self.state.approvals());
             root = root.child(render_block_with(block, &ctx));
         }
         root
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
-    // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
-    use super::diff_lines::{classify, DiffLineKind};
-    use super::render_block_with;
-    use super::{ApprovalAction, BlockCtx, SessionStreamGpui, SessionUiState};
-    use crate::state::session_stream::{
-        MessageRole, PendingApproval, SessionMessage, SessionStreamState,
-    };
-    use crate::ui::session_render::{self, Block};
-    use gpui_kit::component::Theme;
-
-    fn msg(role: MessageRole, content: &str, tool: Option<&str>) -> SessionMessage {
-        SessionMessage {
-            role,
-            content: content.into(),
-            tool: tool.map(str::to_owned),
-            ts_ms: 0,
-        }
-    }
-
-    #[test]
-    fn tool_call_starts_folded_and_toggles() {
-        let mut ui = SessionUiState::default();
-        assert!(!ui.is_expanded(0, true), "工具卡片默认收起");
-        ui.toggle_expanded(0, true);
-        assert!(ui.is_expanded(0, true));
-        ui.toggle_expanded(0, true);
-        assert!(!ui.is_expanded(0, true));
-    }
-
-    #[test]
-    fn approval_choice_is_local_only_and_never_resolves() {
-        let mut state = SessionStreamState::new();
-        state.push_approval(PendingApproval {
-            id: "a1".into(),
-            tool: "Bash".into(),
-            summary: "rm -rf build".into(),
-            resolved: None,
-        });
-        let mut view = SessionStreamGpui::new(state);
-        view.choose_approval("a1", ApprovalAction::Allow);
-
-        assert_eq!(
-            view.ui_state().approval_choice.get("a1"),
-            Some(&ApprovalAction::Allow)
-        );
-        assert_eq!(
-            view.state().approvals()[0].resolved,
-            None,
-            "本地选择不得伪造审批决策"
-        );
-    }
-
-    #[test]
-    fn file_selection_toggles_off() {
-        let mut ui = SessionUiState::default();
-        ui.toggle_file("src/main.rs");
-        assert_eq!(ui.selected_file(), Some("src/main.rs"));
-        ui.toggle_file("src/main.rs");
-        assert_eq!(ui.selected_file(), None);
-    }
-
-    #[test]
-    fn diff_lines_are_classified_for_coloring() {
-        assert_eq!(classify("+added"), DiffLineKind::Added);
-        assert_eq!(classify("-removed"), DiffLineKind::Removed);
-        assert_eq!(classify("@@ -1 +1 @@"), DiffLineKind::Hunk);
-        assert_eq!(classify("+++ b/x"), DiffLineKind::Header);
-        assert_eq!(classify(" context"), DiffLineKind::Context);
-    }
-
-    #[test]
-    fn every_block_kind_has_a_render_branch() {
-        let theme = Theme::default();
-        let ctx = BlockCtx::passive(&theme);
-        let mut state = SessionStreamState::new();
-        assert!(state.push_message(1, msg(MessageRole::User, "你好", None)));
-        assert!(state.push_message(2, msg(MessageRole::Assistant, "好的", None)));
-        assert!(state.push_message(3, msg(MessageRole::ToolCall, "src/main.rs", Some("Read"))));
-        assert!(state.push_message(4, msg(MessageRole::ToolResult, "src/main.rs", Some("Glob"))));
-        state.push_approval(PendingApproval {
-            id: "a1".into(),
-            tool: "Bash".into(),
-            summary: "ls".into(),
-            resolved: None,
-        });
-        state.mark_gap();
-
-        let blocks = session_render::render(&state);
-        let kinds: Vec<&str> = blocks
-            .iter()
-            .map(|b| match b {
-                Block::UserBubble { .. } => "user",
-                Block::AssistantText { .. } => "assistant",
-                Block::ToolCall(_) => "tool_call",
-                Block::ToolResult(_) => "tool_result",
-                Block::FilesGrid { .. } => "files",
-                Block::Approval(_) => "approval",
-                Block::StaleNotice { .. } => "stale",
-            })
-            .collect();
-        for want in [
-            "user",
-            "assistant",
-            "tool_call",
-            "tool_result",
-            "approval",
-            "stale",
-        ] {
-            assert!(kinds.contains(&want), "缺少分支：{want}（实际 {kinds:?}）");
-        }
-        // 七种块都能渲染出元素（不 panic）。
-        for block in &blocks {
-            let _ = render_block_with(block, &ctx);
-        }
-        // 文件网格也有分支。
-        let _ = render_block_with(&session_render::files_grid(&["a.rs".into()]), &ctx);
     }
 }

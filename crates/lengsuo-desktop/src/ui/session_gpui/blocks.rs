@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use super::diff_lines::DiffLineKind;
 use super::{with_click, BlockCtx, BUBBLE_MAX_W, FILE_CARD_W};
-use crate::ui::approval_card::{ApprovalAction, ApprovalButton, ApprovalCardView};
+use crate::ui::approval_card::ApprovalAction;
 use crate::ui::session_render::{Align, FileItem, ToolResultKind, ToolResultView};
 use crate::ui::tool_card::ToolCard;
 
@@ -287,83 +287,6 @@ pub(super) fn render_file_card(item: &FileItem, sub: usize, ctx: &BlockCtx<'_>) 
     } else {
         card.into_any_element()
     }
-}
-
-/// 审批卡：**只读渲染**。三个按钮，点击只记本地选择，绝不放行。
-pub(super) fn render_approval(card: &ApprovalCardView, ctx: &BlockCtx<'_>) -> AnyElement {
-    let theme = ctx.theme;
-    let choice = ctx.ui.approval_choice.get(&card.id).copied();
-
-    let status = div().text_xs();
-    let status = match (card.pending, choice) {
-        (true, None) => status.text_color(theme.muted_foreground).child("等待决策"),
-        (true, Some(action)) => status
-            .text_color(theme.warning)
-            .child(format!("已在界面选择：{}（尚未生效）", action.label())),
-        (false, _) => status.text_color(theme.muted_foreground).child("已决策"),
-    };
-
-    let mut buttons = div().flex().flex_row().gap_2();
-    for (i, btn) in card.buttons.iter().enumerate() {
-        buttons = buttons.child(render_approval_button(&card.id, btn, i, choice, ctx));
-    }
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .w_full()
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.background)
-        .child(div().text_sm().font_bold().child(card.title.clone()))
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(card.summary.clone()),
-        )
-        .child(status)
-        .child(buttons)
-        .into_any_element()
-}
-
-/// 单个审批按钮（允许 / 拒绝 / 总是允许）。
-pub(super) fn render_approval_button(
-    id: &str,
-    btn: &ApprovalButton,
-    sub: usize,
-    choice: Option<ApprovalAction>,
-    ctx: &BlockCtx<'_>,
-) -> AnyElement {
-    let theme = ctx.theme;
-    let (bg, fg) = approval_button_colors(btn.action, theme);
-    let selected = choice == Some(btn.action);
-    let button = div()
-        .px_3()
-        .py_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(if selected { theme.accent } else { theme.border })
-        .bg(bg)
-        .text_color(fg)
-        .text_sm()
-        .child(btn.label.to_owned());
-    if !btn.enabled {
-        // 已决策项的按钮必须禁用：不可点击，也不给交互反馈。
-        return button.opacity(0.5).into_any_element();
-    }
-    let action = btn.action;
-    let approval_id = id.to_owned();
-    with_click(
-        button,
-        ctx.element_id("approval", sub),
-        ctx.host,
-        move |view| view.choose_approval(&approval_id, action),
-    )
 }
 
 /// 断档提示：醒目提示条（描述层保证它排在首块）。
