@@ -575,7 +575,7 @@ mod tests {
     fn deciding_inside_the_panel_updates_only_the_local_copy() {
         let mut panel = RightPanelGpui::from_state(&approvals_layout(), &session_with_approval());
         assert!(approval_card::decide(
-            &mut panel.session_mut(),
+            panel.session_mut(),
             "a1",
             ApprovalAction::Allow
         ));
