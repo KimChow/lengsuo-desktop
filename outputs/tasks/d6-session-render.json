@@ -1,0 +1,19 @@
+{
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/d6-session-render",
+  "base": "main",
+  "slot": 2,
+  "lane": "view",
+  "max_turns": 90,
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/session_render.rs",
+    "crates/lengsuo-desktop/src/ui/tool_card.rs",
+    "crates/lengsuo-desktop/src/ui/approval_card.rs",
+    "crates/lengsuo-desktop/src/ui/input_area.rs",
+    "crates/lengsuo-desktop/src/ui/mod.rs",
+    "docs/session-render-status.md"
+  ],
+  "depends_on": [],
+  "reference": {
+    "note": "①工具卡片标题必须走 theme::tool_titles::tool_title（已有实现，含未知工具兜底），禁止直显 msg.tool 原文；②断档态（SessionStreamState::is_stale）必须显著提示，不得假装完整；③审批走 resolve_approval，已决策项不可再点击，未决策前不得默认放行；④四类消息：user 右对齐 / assistant-text markdown / tool_use 折叠卡片 / tool_result 终端或文件或 diff。"
+  }
+}

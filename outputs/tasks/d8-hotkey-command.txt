@@ -1,0 +1,79 @@
+# 任务书 · d8-hotkey-command（快捷键与命令面板接线）
+
+## 目标
+
+实现**快捷键系统**与**命令面板**（`Ctrl+K`）的接线。
+
+## 既有资产（先读，复用）
+
+`crates/lengsuo-desktop/src/theme/palette.rs` 已有：
+
+- `PaletteCommand { id, title, kind }` —— 命令定义（**用 id 派发，不用标题派发**）
+- `CommandKind` 四类：`Session` / `Environment` / `Organization` / `App`
+- `COMMANDS` 静态表（6 条内置命令）
+- `filter_commands(keyword, commands)` —— 大小写不敏感过滤
+
+## 参考事实（产品逆向文档）
+
+命令面板原文：
+
+> 命令面板（`Ctrl+K` / `Ctrl+Shift+P`）：命令/技能/MCP/文件/会话全局搜索
+
+主窗快捷键（原文）：
+
+```
+Ctrl+K 或 Ctrl+Shift+P  → 打开命令面板
+Ctrl+S                  → 保存文件
+Escape                  → 关闭浮层
+```
+
+## 你要做的事
+
+### 1. 快捷键注册表
+
+在 `src/state/` 下新建 `hotkeys.rs`：
+
+- 定义 `Hotkey { modifiers, key }` 结构
+- 一张**快捷键 → 命令 id** 的映射表（引用 `palette.rs` 的 id，不复制命令定义）
+- 解析与匹配逻辑：给定一次按键事件，返回要派发的命令 id
+- **冲突检测**：注册表里同一组合键映射到多个命令时，**必须报错而不是静默取第一个**
+
+**关键约束**：快捷键**可配置**（用户能改）。所以注册表要支持覆盖，且
+覆盖后**重新做冲突检测** —— 用户改出来的冲突也要能发现。
+
+### 2. 命令面板状态
+
+在 `src/state/` 下新建 `palette_state.rs`：
+
+- 面板开/关状态
+- 当前搜索关键词
+- 过滤后的命令列表（调 `filter_commands`）
+- 当前选中项（键盘上下移动）
+- **打开时清空上次关键词**（不要残留）
+
+### 3. 视图接线
+
+在 `src/ui/` 下新建命令面板视图（浮层）：
+
+- 顶部输入框 + 下方过滤结果列表
+- 键盘上下选择、回车执行、Escape 关闭
+- 显示命令的 `title`（不显示 `id`）
+
+## 交付物
+
+1. `src/state/hotkeys.rs`、`src/state/palette_state.rs`、`src/ui/command_palette.rs`
+2. `docs/hotkey-command-status.md`：文件清单、测试覆盖点、实跑命令与退出码、缺口
+
+## 边界
+
+- 只改新建文件 + `state/mod.rs` / `ui/mod.rs` 追加 `pub mod`
+- **不改** `Cargo.toml`、`src/theme/palette.rs`（可 `use` 它）
+- 不做真实全局快捷键注册（那是 pack 时的宿主职责），只做**注册表与匹配逻辑**
+
+## 完成标准
+
+1. 快捷键冲突**能被检出**，有测试（含用户覆盖后产生的冲突）
+2. 命令按 `id` 派发，不按标题
+3. 面板打开时关键词被清空，有测试
+4. 上下选择边界不越界（首项上移不变、末项下移不变），有测试
+5. 门禁四项全绿

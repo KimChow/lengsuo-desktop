@@ -1,0 +1,82 @@
+# 任务书 · d2-gpui-skeleton（GPUI 依赖接入与最小窗口）
+
+## 目标
+
+把 GPUI 接进本仓，跑起一个**能开窗口、能渲染中文文本**的最小骨架。
+这是后续所有视图卡的地基。
+
+## 当前状态
+
+- `crates/lengsuo-desktop/Cargo.toml` 有 `ui = []` feature，**尚未接任何 gpui 依赖**
+- `src/ui/mod.rs` 只有占位函数 `renderer_pending()`
+- `src/state/` 与 `src/theme/` 已有可用状态层（不要改）
+
+## 你要做的事
+
+### 1. 接入 gpui-kit
+
+在 `crates/lengsuo-desktop/Cargo.toml` 里加：
+
+```toml
+[features]
+default = []
+ui = ["dep:gpui-kit"]
+
+[dependencies]
+gpui-kit = { version = "0.8", optional = true }
+```
+
+⚠️ **Cargo.toml 不在你的 touches 里** —— 这是共享区，由基建卡独占。
+**你需要确切的 gpui-kit 版本与 feature 组合**（读 `gpui-kit` 的文档或 `Cargo.toml` 确认），
+把**完整可粘贴的依赖块**写进报告，由主理人代为落盘。**不要自己改 Cargo.toml。**
+
+### 2. 实现最小渲染入口
+
+在 `src/ui/` 下新建文件（**不要改 `ui/mod.rs` 的既有内容，只在其末尾追加 `pub mod` 行**，
+这行也写进报告由主理人代落）：
+
+要求：
+
+- 一个 `fn launch() -> anyhow::Result<()>` 或等价入口，打开一个窗口
+- 窗口里显示：一个标题文字（中文）+ 一个多行输入框（中文占位符）
+- **纯骨架**：不需要业务逻辑，不接状态层
+
+**目的**：让 IME 问题可复现、可验证（配合 `d1` 卡）。
+
+### 3. feature 双门禁
+
+必须验证两种组合都能通过：
+
+```bash
+# 不开 ui：不引入 gpui，纯逻辑可编译可测
+cargo test -p lengsuo-desktop --locked
+
+# 开 ui：GPUI 渲染层编译通过
+cargo check -p lengsuo-desktop --features ui
+```
+
+**如果 gpui 在 47（Linux）上编不过**：如实记录报错，并把 `ui` feature 下的代码用
+`#[cfg(feature = "ui")]` 严格隔离，确保 **不开 ui 时全绿**。不要为了让它编过而放宽任何门禁。
+
+### 4. 记录平台差异
+
+报告里写清：47 是 Linux（可能缺 X11/Wayland 库），Windows 是本仓的目标平台。
+**Linux 编不过不等于 Windows 编不过** —— 分开记录，不要把两者混为一谈。
+
+## 交付物
+
+1. `crates/lengsuo-desktop/src/ui/` 下的新文件（GPUI 骨架）
+2. `docs/gpui-skeleton-status.md`：依赖块（可直接粘贴）、实跑命令与退出码、平台差异、缺口
+
+## 边界
+
+- **不改** `Cargo.toml`、`Cargo.lock`、`src/state/`、`src/theme/`
+- `ui/mod.rs` 只允许**追加**行（不加 `pub mod` 就没法编），追加内容写进报告
+- 不接真实运行时、不接协议、不做业务
+
+## 完成标准
+
+1. 给出了可粘贴的完整依赖块（含确切版本）
+2. `cargo check -p lengsuo-desktop --features ui` 在 47 上的结果**如实记录**（通过 / 报错原文）
+3. 不开 `ui` feature 时，`cargo test --locked` 与 gate 四项**全绿**
+4. 说明了 IME 问题在本骨架里的复现路径（给 `d1` 卡用）

@@ -1,0 +1,14 @@
+{
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/d1-ime-win32-recon",
+  "base": "main",
+  "slot": 0,
+  "lane": "recon",
+  "max_turns": 60,
+  "touches": [
+    "docs/ime-win32-recon-status.md"
+  ],
+  "depends_on": [],
+  "reference": {
+    "note": "GPUI 源码从本地 cargo registry 或 vendor 目录读；探针工程放 /tmp 不入仓。本卡只读不编码。"
+  }
+}

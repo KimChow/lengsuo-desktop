@@ -1,0 +1,18 @@
+{
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/d5-env-view",
+  "base": "main",
+  "slot": 1,
+  "lane": "view",
+  "max_turns": 80,
+  "touches": [
+    "crates/lengsuo-desktop/src/state/env_group.rs",
+    "crates/lengsuo-desktop/src/state/mod.rs",
+    "crates/lengsuo-desktop/src/ui/env_view.rs",
+    "crates/lengsuo-desktop/src/ui/mod.rs",
+    "docs/env-view-status.md"
+  ],
+  "depends_on": [],
+  "reference": {
+    "note": "先读 src/state/env_list.rs —— 它已定义 EnvStatus 四态与 fail-closed 判定次序、invalid_count 可见性约定。本卡在其上扩展分组与筛选，不重写。"
+  }
+}

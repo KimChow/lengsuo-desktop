@@ -1,0 +1,19 @@
+{
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/d8-hotkey-command",
+  "base": "main",
+  "slot": 1,
+  "lane": "theme",
+  "max_turns": 85,
+  "touches": [
+    "crates/lengsuo-desktop/src/state/hotkeys.rs",
+    "crates/lengsuo-desktop/src/state/palette_state.rs",
+    "crates/lengsuo-desktop/src/state/mod.rs",
+    "crates/lengsuo-desktop/src/ui/command_palette.rs",
+    "crates/lengsuo-desktop/src/ui/mod.rs",
+    "docs/hotkey-command-status.md"
+  ],
+  "depends_on": [],
+  "reference": {
+    "note": "①复用 theme::palette 的 COMMANDS / filter_commands / PaletteCommand，命令按 id 派发不按标题；②快捷键可被用户覆盖，覆盖后必须重新做冲突检测；③Ctrl+K 与 Ctrl+Shift+P 都开面板；Escape 关浮层；④本卡只做注册表与匹配逻辑，不做真实全局快捷键注册（宿主职责）。"
+  }
+}

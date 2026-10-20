@@ -1,0 +1,95 @@
+# 任务书 · d6-session-render（会话流渲染：消息 + 工具卡片 + 审批）
+
+## 目标
+
+实现**会话流**的完整渲染：四类消息 + 工具卡片（人话标题）+ 审批交互。
+
+## 参考事实（产品逆向文档原文，逐条实现）
+
+### 消息类型 → 渲染（原文表）
+
+| 类型 | 渲染 |
+|---|---|
+| `user` | 右对齐气泡 |
+| `assistant-text` | markdown 渲染 |
+| `tool_use` | **折叠卡片**：图标 + 人话标题 + 参数摘要 |
+| `tool_result` | 终端输出（等宽）/ 文件列表（可点击）/ diff |
+| `files` | 文件卡片网格 |
+| `approval` | 弹窗式卡片：**允许 / 拒绝 / 总是允许** |
+
+### 工具名对用户不可见（原文规则）
+
+> **工具名对用户不可见 R13-1**：卡片标题写「读取文件」不写「Read 工具」（人话映射表）。
+
+映射表原文：
+
+```
+Read:  a => `读取 ${short(a.path)}`
+Write: a => `创建 ${short(a.path)}`
+Edit:  a => `修改 ${short(a.path)}`
+Bash:  () => `执行命令`
+Grep:  a => `搜索 "${short(a.pattern, 20)}"`
+WebFetch: a => `查看网页 ${short(a.url, 30)}`
+```
+
+⚠️ **`src/theme/tool_titles.rs` 已经实现了这套映射**（含「未知工具不暴露内部名」的兜底）。
+**直接复用它，不要重写。**
+
+## 既有资产（先读）
+
+`crates/lengsuo-desktop/src/state/session_stream.rs` 已有：
+
+- `SessionStreamState`：消息列表 + 审批列表 + `last_seq` + `stale` 标记
+- `MessageRole` 四类枚举
+- `PendingApproval { id, tool, summary, resolved }`
+- `push_message(seq, msg) -> bool`：**seq 单调校验**（重复/回退被拒）
+- `mark_gap()`：标记事件流断档
+- `resolve_approval(id, allow) -> bool`：**幂等**（已决策不可二次决策）
+- `parse_message(&Value)`：容错解析
+
+## 你要做的事
+
+### 1. 消息渲染
+
+在 `src/ui/` 下新建会话流渲染模块：
+
+- 四类消息按上表分别渲染
+- 工具卡片用 `theme::tool_titles::tool_title()` 生成标题（**禁止直接显示 `msg.tool` 原文**）
+- 用户消息右对齐，助手消息左对齐
+
+### 2. 断档提示（重要）
+
+`SessionStreamState::is_stale()` 为 true 时，界面**必须显著提示**「事件流中断，正在恢复」。
+
+这是既有约定：**不得假装完整**。有测试验证这一行为。
+
+### 3. 审批交互
+
+- 用 `pending_approvals()` 渲染待审批卡片
+- 三个操作：允许 / 拒绝 / 总是允许
+- 决策走 `resolve_approval()`，**已决策的项不得再可点击**
+- **审批默认挂起**：未决策前界面必须显示为等待中，**不得默认放行**
+
+### 4. 输入区
+
+多行输入 + 模式选择（5 模式：quick / ask / plan / craft / expert）+ 发送按钮。
+
+## 交付物
+
+1. `src/ui/` 下新增的渲染文件
+2. `docs/session-render-status.md`：文件清单、测试覆盖点、实跑命令与退出码、缺口
+
+## 边界
+
+- 只改新建文件 + `ui/mod.rs` 追加 `pub mod`
+- **不改** `Cargo.toml`、`src/state/session_stream.rs`、`src/theme/tool_titles.rs`
+- 不做真实 Markdown 渲染引擎（可先纯文本，标注为缺口）
+- 不接真实运行时
+
+## 完成标准
+
+1. 工具卡片标题走 `tool_title()`，**未知工具不暴露内部名**，有测试
+2. 断档态在界面可见，有测试
+3. 审批已决策项不可再操作，有测试
+4. 四类消息都有渲染分支
+5. 门禁四项全绿

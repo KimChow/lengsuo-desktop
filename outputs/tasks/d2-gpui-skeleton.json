@@ -1,0 +1,17 @@
+{
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/d2-gpui-skeleton",
+  "base": "main",
+  "slot": 1,
+  "lane": "ui",
+  "max_turns": 80,
+  "touches": [
+    "crates/lengsuo-desktop/src/ui/gpui_app.rs",
+    "crates/lengsuo-desktop/src/ui/gpui_input.rs",
+    "crates/lengsuo-desktop/src/ui/mod.rs",
+    "docs/gpui-skeleton-status.md"
+  ],
+  "depends_on": [],
+  "reference": {
+    "note": "gpui-kit 0.8.0 是长桥（Longbridge）的 Apache-2.0 组件库。看它的 examples/hello_world 与 examples/input 确认最小用法。47 上无 X11/Wayland 时编译可能失败——如实记录，不因此放宽门禁。"
+  }
+}

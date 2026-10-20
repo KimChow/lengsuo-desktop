@@ -1,0 +1,17 @@
+{
+  "worktree": "/home/ubuntu/lengsuo-desktop-dev/worktrees/d7-theme-tokens",
+  "base": "main",
+  "slot": 0,
+  "lane": "theme",
+  "max_turns": 70,
+  "touches": [
+    "crates/lengsuo-desktop/src/theme/tokens.rs",
+    "crates/lengsuo-desktop/src/theme/colors.rs",
+    "crates/lengsuo-desktop/src/theme/mod.rs",
+    "docs/theme-tokens-status.md"
+  ],
+  "depends_on": [],
+  "reference": {
+    "note": "①本层是语义层不是渲染层，定义「什么颜色代表什么」，零渲染依赖；②状态色遵循中文习惯：数值上升=红、下降=绿（与欧美相反）；③亮/暗两套令牌的「键」必须完全一致，只有值不同，需测试证明；④src/theme/palette.rs 现有内容是命令面板命令表（命名易混淆），本卡不改它，但在报告里指出该问题。"
+  }
+}
