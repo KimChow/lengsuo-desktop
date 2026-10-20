@@ -69,6 +69,22 @@ python scripts/check_line_limit.py
 遇到 `403` / `上游模型繁忙` / `empty or malformed response` / `proxy or gateway`
 → 立即停止，报告 `STATUS: UPSTREAM_UNAVAILABLE` + 错误原文。
 
+## 📖 API 速查表（先看这个，别查源码）
+
+**`docs/gpui-wiring-cheatsheet.md` 已把 gpui-kit / gpui-pre 的用法核实完毕。**
+
+它包含：最小骨架代码、全部 flex/尺寸/间距/圆角/文本样式方法名、
+`.child()` vs `.children()` 的区别、`on_click` 签名、`Entity`/`Context` 用法、
+主题色字段清单、常见编译错误速查表。
+
+**用法**：
+1. **先读这张速查表**（1-2 次 Read 足够）
+2. **直接按表写代码**，不要去 grep `~/.cargo/registry` 查 API
+3. 只有当速查表里确实没有你需要的 API 时，才允许查源码（**最多 12 次调用**）
+
+⛔ 上一批 e4/e5/e6/e7 四张卡把 45 次预算全花在 grep registry 源码上，
+一行代码没写就撞上限，**产物被静默丢弃**。不要重复这个错误。
+
 ## ⛔ 执行纪律（本批新增，违反即作废）
 
 **上一批 e4/e5/e6/e7 四张卡全部作废**：它们把 45 次工具调用预算全花在调研
