@@ -23,9 +23,6 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 #[cfg(feature = "ui")]
 use gpui_kit::*;
-// `on_click` 来自 `StatefulInteractiveElement`，不 import 就没有这个方法。
-#[cfg(feature = "ui")]
-use gpui_kit::StatefulInteractiveElement as _;
 
 #[cfg(feature = "ui")]
 use crate::ui::gpui_input::PLACEHOLDER;
@@ -235,6 +232,7 @@ impl Render for InputAreaGpui {
             );
             let element = if button.selected {
                 div()
+                    .id(format!("input-mode-{}", button.mode.id()))
                     .px_2()
                     .py_1()
                     .rounded_sm()
@@ -248,6 +246,7 @@ impl Render for InputAreaGpui {
                     .into_any_element()
             } else {
                 div()
+                    .id(format!("input-mode-{}", button.mode.id()))
                     .px_2()
                     .py_1()
                     .rounded_sm()
@@ -271,6 +270,7 @@ impl Render for InputAreaGpui {
         );
         let send_element: AnyElement = if send.enabled {
             div()
+                .id("input-send-button")
                 .px_3()
                 .py_1()
                 .rounded_sm()
@@ -314,7 +314,10 @@ impl Render for InputAreaGpui {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
+    // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
+    use super::{apply_mode, mode_buttons, take_outgoing};
+    use crate::ui::input_area::{InputAreaState, InputMode};
 
     #[test]
     fn mode_bar_renders_five_modes_with_exactly_one_selected() {
