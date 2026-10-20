@@ -18,6 +18,9 @@
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::ActiveTheme as _;
+// `overflow_y_scrollbar` 来自 gpui-component 的 `ScrollableElement` trait
+// （不在 gpui-pre 里）⇒ 必须显式导入，否则 E0599。
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::*;
 
 use crate::state::hotkeys::{
@@ -397,7 +400,15 @@ impl Render for CommandPaletteGpui {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
+    // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
+    use super::{
+        default_registry, hotkey_from_keystroke, palette_key_from_keystroke, PaletteKey,
+    };
+    use crate::state::hotkeys::Hotkey;
+    use crate::state::palette_state::PaletteState;
+    use crate::ui::command_palette;
+    use gpui_kit::{Keystroke, Modifiers};
 
     /// 造一个平台按键事件。
     fn keystroke(key: &str, key_char: Option<&str>, ctrl: bool, shift: bool) -> Keystroke {
