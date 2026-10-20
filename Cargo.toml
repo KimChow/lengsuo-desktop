@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lengsuo-desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "LicenseRef-Proprietary"
+authors = ["Lengsuo project"]
+
+[workspace.dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+incremental = false
+debug = 0
+strip = "debuginfo"
+
+[profile.release]
+debug = 0
+strip = "debuginfo"
+
+[profile.test]
+incremental = false
+debug = 0
+strip = "debuginfo"
+
+[profile.dev.build-override]
+debug = 0
+
+[profile.release.build-override]
+debug = 0
+
+[profile.test.build-override]
+debug = 0

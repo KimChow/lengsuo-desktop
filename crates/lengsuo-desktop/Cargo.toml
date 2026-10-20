@@ -1,0 +1,16 @@
+[package]
+name = "lengsuo-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+# 阶段二：引入 GPUI 渲染层后由此 feature 隔离；阶段一纯逻辑不依赖 gpui。
+ui = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
