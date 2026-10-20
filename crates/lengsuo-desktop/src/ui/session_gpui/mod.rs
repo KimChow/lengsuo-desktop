@@ -28,6 +28,9 @@ use gpui_kit::{
 };
 
 mod blocks;
+pub mod diff_lines;
+pub mod markdown;
+mod markdown_view;
 
 use crate::state::session_stream::SessionStreamState;
 use crate::ui::approval_card::ApprovalAction;
@@ -278,7 +281,7 @@ impl Render for SessionStreamGpui {
 mod tests {
     // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
     // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
-    use super::blocks::{classify_diff_line, DiffLineKind};
+    use super::diff_lines::{classify, DiffLineKind};
     use super::render_block_with;
     use super::{ApprovalAction, BlockCtx, SessionStreamGpui, SessionUiState};
     use crate::state::session_stream::{
@@ -340,11 +343,11 @@ mod tests {
 
     #[test]
     fn diff_lines_are_classified_for_coloring() {
-        assert_eq!(classify_diff_line("+added"), DiffLineKind::Added);
-        assert_eq!(classify_diff_line("-removed"), DiffLineKind::Removed);
-        assert_eq!(classify_diff_line("@@ -1 +1 @@"), DiffLineKind::Hunk);
-        assert_eq!(classify_diff_line("+++ b/x"), DiffLineKind::Header);
-        assert_eq!(classify_diff_line(" context"), DiffLineKind::Context);
+        assert_eq!(classify("+added"), DiffLineKind::Added);
+        assert_eq!(classify("-removed"), DiffLineKind::Removed);
+        assert_eq!(classify("@@ -1 +1 @@"), DiffLineKind::Hunk);
+        assert_eq!(classify("+++ b/x"), DiffLineKind::Header);
+        assert_eq!(classify(" context"), DiffLineKind::Context);
     }
 
     #[test]

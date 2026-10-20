@@ -7,7 +7,8 @@ use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
-use super::{with_click, BlockCtx, BUBBLE_MAX_W, CONTENT_MAX_W, FILE_CARD_W};
+use super::diff_lines::DiffLineKind;
+use super::{with_click, BlockCtx, BUBBLE_MAX_W, FILE_CARD_W};
 use crate::ui::approval_card::{ApprovalAction, ApprovalButton, ApprovalCardView};
 use crate::ui::session_render::{Align, FileItem, ToolResultKind, ToolResultView};
 use crate::ui::tool_card::ToolCard;
@@ -34,7 +35,7 @@ pub(super) fn render_user_bubble(text: &str, align: Align, ctx: &BlockCtx<'_>) -
     .into_any_element()
 }
 
-/// 助手正文：左对齐，普通文本（纯文本，未接 Markdown）。
+/// 助手正文：左对齐，走轻量 Markdown 子集（见 [`super::markdown`]）。
 pub(super) fn render_assistant_text(text: &str, align: Align, ctx: &BlockCtx<'_>) -> AnyElement {
     let theme = ctx.theme;
     let row = div().flex().flex_row().w_full();
@@ -42,14 +43,8 @@ pub(super) fn render_assistant_text(text: &str, align: Align, ctx: &BlockCtx<'_>
         Align::Right => row.justify_end(),
         Align::Left => row.justify_start(),
     };
-    row.child(
-        div()
-            .max_w(px(CONTENT_MAX_W))
-            .text_sm()
-            .text_color(theme.foreground)
-            .child(text.to_owned()),
-    )
-    .into_any_element()
+    row.child(super::markdown_view::render_markdown(text, theme))
+        .into_any_element()
 }
 
 /// 工具调用卡片：默认收起，点标题展开。
@@ -201,7 +196,7 @@ pub(super) fn render_file_list(files: &[FileItem], ctx: &BlockCtx<'_>) -> AnyEle
     list.into_any_element()
 }
 
-/// diff：按增 / 删 / 上下文分色，纯文本高亮。
+/// diff：按增 / 删 / 上下文分色并带行号（分类在 [`super::diff_lines`]）。
 pub(super) fn render_diff(text: &str, ctx: &BlockCtx<'_>) -> AnyElement {
     let theme = ctx.theme;
     let mut body = div()
@@ -211,14 +206,27 @@ pub(super) fn render_diff(text: &str, ctx: &BlockCtx<'_>) -> AnyElement {
         .pb_2()
         .whitespace_nowrap()
         .font_family(theme.mono_font_family.clone());
-    for line in text.lines() {
-        let color = match classify_diff_line(line) {
+    for line in super::diff_lines::split(text) {
+        let color = match line.kind {
             DiffLineKind::Added => theme.success,
             DiffLineKind::Removed => theme.danger,
             DiffLineKind::Hunk => theme.accent,
-            DiffLineKind::Header | DiffLineKind::Context => theme.foreground,
+            DiffLineKind::Header | DiffLineKind::Plain => theme.foreground,
+            DiffLineKind::Context => theme.muted_foreground,
         };
-        body = body.child(div().text_sm().text_color(color).child(line.to_owned()));
+        body = body.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .text_sm()
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("{:>4}", line.no)),
+                )
+                .child(div().text_color(color).child(line.text)),
+        );
     }
     body.into_any_element()
 }
@@ -372,31 +380,6 @@ pub(super) fn render_stale_notice(text: &str, ctx: &BlockCtx<'_>) -> AnyElement 
         .font_bold()
         .child(text.to_owned())
         .into_any_element()
-}
-
-/// diff 行的语义分类。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DiffLineKind {
-    Added,
-    Removed,
-    Hunk,
-    Header,
-    Context,
-}
-
-/// 判定 diff 行的类别。
-pub(super) fn classify_diff_line(line: &str) -> DiffLineKind {
-    if line.starts_with("@@") {
-        DiffLineKind::Hunk
-    } else if line.starts_with("+++") || line.starts_with("---") || line.starts_with("diff ") {
-        DiffLineKind::Header
-    } else if line.starts_with('+') {
-        DiffLineKind::Added
-    } else if line.starts_with('-') {
-        DiffLineKind::Removed
-    } else {
-        DiffLineKind::Context
-    }
 }
 
 /// 审批按钮配色（取自主题，不硬编码）。
