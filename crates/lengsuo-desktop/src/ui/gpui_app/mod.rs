@@ -59,6 +59,7 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
 use crate::state::hotkeys::HotkeyRegistry;
+use crate::state::layout_prefs::LayoutPrefs;
 use crate::ui::command_palette::{self, PaletteAction};
 use crate::ui::input_gpui::InputAreaGpui;
 use crate::ui::layout::{WorkbenchLayout, STREAM_MIN_WIDTH};
@@ -103,6 +104,8 @@ struct AppShell {
     registry: HotkeyRegistry,
     /// 根视图焦点：全局按键先到这里。
     focus: FocusHandle,
+    /// 上次**成功落盘**的版式偏好：版式没变就不重复写文件。
+    last_written: Option<LayoutPrefs>,
 }
 
 /// 打开设置窗口（`app.settings` 命令派发时调用）。
@@ -122,7 +125,26 @@ fn open_settings_window(cx: &mut App) {
 
 impl AppShell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let layout = WorkbenchLayout::new();
+        // ★ 版式偏好水合：**开窗之前**读一次 `layout.json` 并应用 ⇒ 第一帧就是
+        // 用户上次的版式（边栏宽度 / 右栏宽度 / 右栏折叠态）。
+        //
+        // 读不到 / 读坏了 ⇒ 回落默认值 + 记日志说明原因（fail-closed，
+        // 既不 panic 也不静默吞错）。详见 `prefs_file::read_layout`。
+        let (prefs, note) = prefs_file::read_layout();
+        if let Some(reason) = note {
+            eprintln!("[lengsuo-desktop] 版式偏好回落为默认值：{reason}");
+        }
+        let mut layout = WorkbenchLayout::new();
+        layout.apply_prefs(prefs);
+        // 「已落盘」的基线取**夹取后的实际版式**，而不是原始偏好：
+        // 偏好里的越界宽度被夹掉后，磁盘上的内容与用户看到的不一致 ⇒
+        // 立刻补写一次，让磁盘 == 界面。写失败只记日志。
+        let hydrated = layout.export_prefs();
+        if hydrated != prefs {
+            if let Err(reason) = prefs_file::write_layout(hydrated) {
+                eprintln!("[lengsuo-desktop] 版式偏好未落盘：{reason}");
+            }
+        }
         let session_state = demo_session();
 
         let sidebar = cx.new(|_| SidebarViewGpui::new(sidebar_gpui::demo_state()));
@@ -151,6 +173,13 @@ impl AppShell {
             }),
             cx.observe(&tab_strip, |shell: &mut Self, _, cx| {
                 shell.adopt_tab_strip(cx);
+                shell.sync_layout(cx);
+            }),
+            // 右侧面板自己也有「收起 / 展开」按钮与 tab 按钮：它们改的是
+            // 面板私有的版式副本 ⇒ 必须**回收**给权威版式，否则下一次下发
+            // 会把折叠态覆盖回展开（与 `adopt_tab_strip` 同一类修复）。
+            cx.observe(&right_panel, |shell: &mut Self, _, cx| {
+                shell.adopt_right_panel(cx);
                 shell.sync_layout(cx);
             }),
         ];
@@ -193,6 +222,8 @@ impl AppShell {
             pending_seq: None,
             registry: default_registry(),
             focus: cx.focus_handle(),
+            // 刚落盘过（或刚水合过）的那份偏好：版式没变就不重复写文件。
+            last_written: Some(hydrated),
         }
     }
 
@@ -290,6 +321,46 @@ impl AppShell {
         });
     }
 
+    /// 右侧面板自己的「收起 / 展开」按钮 ⇒ 把折叠态**回写**给权威版式（左分隔条）。
+    ///
+    /// 与 [`Self::adopt_tab_strip`] 同一类问题：`sync_layout` 只做「权威 → 子视图」
+    /// 下发，而面板的折叠按钮改的是它私有副本里的 `collapsed` 标志。
+    /// 不回收的话，下一次下发会把折叠态覆盖回展开 ⇒ 表现成「点收起，折叠态弹回来」。
+    ///
+    /// 回收逻辑复用 [`adopt_right_panel_selection`]（与 tab 条共用同一段纯函数），
+    /// **不另写一份**折叠/选中的判定。
+    fn adopt_right_panel(&mut self, cx: &mut Context<Self>) {
+        let incoming = self.right_panel.read(cx).layout().clone();
+        self.left_divider.update(cx, |divider, cx| {
+            if adopt_right_panel_selection(divider.layout_mut(), &incoming) {
+                cx.notify();
+            }
+        });
+    }
+
+    /// 把当前版式**写回**偏好文件（尽力而为）。
+    ///
+    /// - **拖拽过程中不写**：拖拽时每个鼠标移动事件都会触发一次同步，
+    ///   逐帧写磁盘既无必要又可能把文件写坏。松手那一次同步才落盘
+    ///   （=「松手才提交」的语义）。
+    /// - 只在版式**真的变了**时写（`last_written` 去重）。
+    /// - 写失败**只记日志**，绝不影响交互（fail-closed）。
+    fn persist_layout(&mut self, cx: &mut Context<Self>) {
+        if self.left_divider.read(cx).is_dragging() || self.right_divider.read(cx).is_dragging() {
+            return;
+        }
+        let current = self.left_divider.read(cx).layout().export_prefs();
+        if self.last_written == Some(current) {
+            return;
+        }
+        match prefs_file::write_layout(current) {
+            Ok(()) => self.last_written = Some(current),
+            Err(reason) => {
+                eprintln!("[lengsuo-desktop] 版式偏好未落盘：{reason}");
+            }
+        }
+    }
+
     /// 把版式（左分隔条 —— 唯一来源）下发到右分隔条与右侧面板。
     ///
     /// - 右分隔条整份覆盖：它只负责拖拽，不持有独立的版式主张。
@@ -336,6 +407,9 @@ impl AppShell {
                 cx.notify();
             }
         });
+
+        // 版式变了 ⇒ 写回偏好文件（e22）。写失败只记日志，不影响交互。
+        self.persist_layout(cx);
 
         cx.notify();
     }
