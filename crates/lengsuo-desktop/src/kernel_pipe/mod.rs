@@ -1,13 +1,16 @@
-//! 内核管道（kernel pipe）的**纯逻辑层**：帧编解码 + 密钥派生 + 握手状态机。
+//! 内核管道（kernel pipe）的**纯逻辑层**：帧编解码 + 密钥 + 握手状态机。
 //!
-//! 边界（对齐 `docs/kernel-wire-contract.md`）：
-//! - 本层**不碰 IO**：不建命名管道、不起进程、不收发 socket。
-//!   接线（起管道、启动内核、传 `--lengsuo-kernel-pipe=<name>`）归 P2。
-//! - 本层**不依赖 GPUI**，与 [`crate::state`] 同一分层纪律：纯逻辑、可单测。
-//! - 字节布局**逐字节对齐**跨仓线协议 `kernel-wire-contract.md` §2/§3。
-//!   固定测试向量抄自该文档（唯一真相），两侧必须逐字节相同。
+//! # 边界
 //!
-//! 帧格式（线协议 §2）：
+//! 本模块**只做纯逻辑**：字节进、字节出、状态进、状态出。
+//! ⛔ 不碰 IO（不建管道、不读写 socket、不起进程）——那是 P2 接线卡的事。
+//! ⛔ 不依赖 GPUI、不依赖 `crate::ui`——照 `state/` 的分层惯例，纯逻辑独立可测。
+//!
+//! # 线协议
+//!
+//! 字节布局的**唯一真相**是跨仓契约 `kernel-wire-contract.md`（内核仓）。
+//! 本模块的每一个常量都对齐它，测试里逐字节锁死固定测试向量。
+//! 摘要：
 //!
 //! ```text
 //! 偏移  长度  字段
@@ -17,189 +20,411 @@
 //! 8     len   payload
 //! ```
 //!
-//! ⛔ **大端（网络序）**——跨仓最容易错的一处，测试用固定字节数组锁死。
-
-use thiserror::Error;
+//! ⭐ **字节序是大端（网络序）**——跨仓最容易错的一处，测试里用手工字节数组固定死。
+//!
+//! # 子模块
+//!
+//! - [`keys`]：机器码派生、密钥信封编解码（纯逻辑）。
+//! - [`handshake`]：握手状态机（纯状态，不碰 IO）。
 
 pub mod handshake;
 pub mod keys;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
-/// 帧头长度：`len`(4) + `type`(1) + `reserved`(3)。
-pub const FRAME_HEADER_LEN: usize = 8;
+/// 帧头长度（字节）。`len` 字段描述的是**不含本头**的 payload 长度。
+pub const HEADER_LEN: usize = 8;
 
-/// 单帧 payload 上限：8 MiB（线协议 §2）。
+/// 单帧 payload 上限：8 MiB。
 ///
-/// 8388608 = `0x00800000`，恰为上限本身**合法**，再大 1 字节即非法。
-pub const MAX_PAYLOAD_LEN: usize = 8 * 1024 * 1024;
+/// 超过上限的 `len` **解码失败**——不等数据、不截断、不做部分明文。
+/// 上限本身取自线协议 §2；`8 * 1024 * 1024 == 0x0080_0000`。
+pub const MAX_PAYLOAD_LEN: u32 = 8 * 1024 * 1024;
 
-/// `0x01` Hello：内核 → runner，载荷 JSON `{version, nonce}`。
-pub const FRAME_TYPE_HELLO: u8 = 0x01;
-/// `0x02` KeyEnvelope：runner → 内核，载荷为二进制密钥信封。
-pub const FRAME_TYPE_KEY_ENVELOPE: u8 = 0x02;
-/// `0x03` ConfigBundle：runner → 内核，载荷 JSON（配置包）。
-pub const FRAME_TYPE_CONFIG_BUNDLE: u8 = 0x03;
-/// `0x04` ActionRequest：runner → 内核，载荷 JSON（指令）。
-pub const FRAME_TYPE_ACTION_REQUEST: u8 = 0x04;
-/// `0x05` ActionResult：内核 → runner，载荷 JSON `{ok, error_code}`。
-pub const FRAME_TYPE_ACTION_RESULT: u8 = 0x05;
-/// `0x81` Event：内核 → runner，载荷 JSON（上行事件）。
-pub const FRAME_TYPE_EVENT: u8 = 0x81;
-/// `0x82` EventAck：runner → 内核，载荷 JSON `{seq}`。
-pub const FRAME_TYPE_EVENT_ACK: u8 = 0x82;
-
-/// 帧编解码错误。
+/// 帧类型（线协议 §3）。
 ///
-/// ⛔ 错误文本**不得**包含密钥、信封内容或载荷内容——只说「哪一条约束被违反」。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+/// ⚠️ 这些值是**跨仓约定**，改一个就要两侧同时改（并同步改固定测试向量）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum FrameType {
+    /// `0x01` 内核 → runner：JSON `{version, nonce}`。
+    Hello = 0x01,
+    /// `0x02` runner → 内核：二进制密钥信封（见 [`keys`]）。
+    KeyEnvelope = 0x02,
+    /// `0x03` runner → 内核：JSON 配置包。
+    ConfigBundle = 0x03,
+    /// `0x04` runner → 内核：JSON 指令。
+    ActionRequest = 0x04,
+    /// `0x05` 内核 → runner：JSON `{ok, error_code}`。
+    ActionResult = 0x05,
+    /// `0x81` 内核 → runner：JSON 上行事件。
+    Event = 0x81,
+    /// `0x82` runner → 内核：JSON `{seq}`。
+    EventAck = 0x82,
+}
+
+impl FrameType {
+    /// 帧类型的线协议取值。
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+
+    /// 已知帧类型 ⇒ 字节值；未知 ⇒ `None`。
+    ///
+    /// 未知类型是**解码失败**（线协议 §2），不是「原样透传的未知类型」。
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0x01 => Some(Self::Hello),
+            0x02 => Some(Self::KeyEnvelope),
+            0x03 => Some(Self::ConfigBundle),
+            0x04 => Some(Self::ActionRequest),
+            0x05 => Some(Self::ActionResult),
+            0x81 => Some(Self::Event),
+            0x82 => Some(Self::EventAck),
+            _ => None,
+        }
+    }
+}
+
+/// 帧解码失败的原因。
+///
+/// ⛔ 这些错误文本**不得**包含载荷内容：载荷里可能有密钥信封。
+/// 帧头里的 `type`/`len` 是公开的协议常量，可以安全出现在错误文本里。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FrameError {
-    /// 帧头被截断（不足 8 字节）。
-    #[error("帧头被截断")]
-    HeaderTruncated,
-    /// `len` 超过 8 MiB 上限。
-    #[error("帧 payload 超过 8 MiB 上限")]
-    PayloadTooLarge,
-    /// `reserved` 三字节非零。
-    #[error("帧头 reserved 字段非零")]
+    /// 缓冲区不足以凑出完整的 8 字节帧头。
+    #[error("帧头被截断：需要 {HEADER_LEN} 字节，实际 {actual} 字节")]
+    TruncatedHeader { actual: usize },
+
+    /// 帧头里的 `len` 超过 8 MiB 上限。
+    #[error("帧长超限：声明 {declared} 字节，上限 {MAX_PAYLOAD_LEN} 字节")]
+    PayloadTooLarge { declared: u32 },
+
+    /// 帧头里的 `reserved` 三字节不全为 0。
+    #[error("保留位非零")]
     ReservedNotZero,
-    /// `type` 不是已知帧类型。
-    #[error("未知的帧类型：{0:#04x}")]
-    UnknownType(u8),
-    /// payload 字节数不足 `len` 声明的长度。
-    #[error("帧 payload 不完整")]
-    PayloadTruncated,
-    /// 缓冲区尾部有多余字节（`decode` 要求恰好一帧）。
-    #[error("帧尾有多余字节")]
-    TrailingBytes,
+
+    /// 帧头里的 `type` 不是已知帧类型。
+    #[error("未知帧类型：0x{code:02x}")]
+    UnknownType { code: u8 },
+
+    /// 载荷字节数不足 `len` 声明的长度。
+    #[error("载荷被截断：声明 {declared} 字节，实际 {actual} 字节")]
+    TruncatedPayload { declared: usize, actual: usize },
 }
 
-/// 已知帧类型判定（线协议 §3 的 7 个值，一个不多一个不少）。
-#[must_use]
-pub fn is_known_frame_type(frame_type: u8) -> bool {
-    matches!(
-        frame_type,
-        FRAME_TYPE_HELLO
-            | FRAME_TYPE_KEY_ENVELOPE
-            | FRAME_TYPE_CONFIG_BUNDLE
-            | FRAME_TYPE_ACTION_REQUEST
-            | FRAME_TYPE_ACTION_RESULT
-            | FRAME_TYPE_EVENT
-            | FRAME_TYPE_EVENT_ACK
-    )
-}
-
-/// 一帧：8 字节头 + payload。
-///
-/// 头**按收到的原始字节保存**（不是重新算的）：GCM 的 AAD 就是这 8 字节，
-/// 重新算虽然结果相同，但保留原字节才谈得上「头被改即认证失败」。
+/// 一个解码出来的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
-    header: [u8; FRAME_HEADER_LEN],
-    frame_type: u8,
-    payload: Vec<u8>,
+    /// 帧类型。
+    pub frame_type: FrameType,
+    /// 载荷（不含帧头）。
+    pub payload: Vec<u8>,
 }
 
 impl Frame {
-    /// 构造一帧（校验帧类型与 payload 长度上限）。
-    pub fn new(frame_type: u8, payload: Vec<u8>) -> Result<Self, FrameError> {
-        if !is_known_frame_type(frame_type) {
-            return Err(FrameError::UnknownType(frame_type));
-        }
-        if payload.len() > MAX_PAYLOAD_LEN {
-            return Err(FrameError::PayloadTooLarge);
-        }
-        Ok(Self {
-            header: build_header(frame_type, payload.len()),
+    /// 构造一帧。
+    #[must_use]
+    pub fn new(frame_type: FrameType, payload: Vec<u8>) -> Self {
+        Self {
             frame_type,
             payload,
-        })
+        }
     }
 
-    /// 帧类型。
+    /// 编码成线上的字节（含 8 字节帧头）。
+    ///
+    /// payload 超过 8 MiB 上限时返回 `None`——**不截断**。
     #[must_use]
-    pub fn frame_type(&self) -> u8 {
-        self.frame_type
-    }
-
-    /// payload 字节。
-    #[must_use]
-    pub fn payload(&self) -> &[u8] {
-        &self.payload
-    }
-
-    /// 帧头 8 字节——**GCM 的 AAD**（线协议 §5）。
-    #[must_use]
-    pub fn header(&self) -> &[u8; FRAME_HEADER_LEN] {
-        &self.header
-    }
-
-    /// 整帧字节（头 + payload）。
-    #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(FRAME_HEADER_LEN + self.payload.len());
-        out.extend_from_slice(&self.header);
+    pub fn encode(&self) -> Option<Vec<u8>> {
+        let len = u32::try_from(self.payload.len()).ok()?;
+        if len > MAX_PAYLOAD_LEN {
+            return None;
+        }
+        let mut out = Vec::with_capacity(HEADER_LEN + self.payload.len());
+        out.extend_from_slice(&len.to_be_bytes());
+        out.push(self.frame_type.code());
+        out.extend_from_slice(&[0u8; 3]);
         out.extend_from_slice(&self.payload);
-        out
+        Some(out)
     }
 }
 
-/// 造 8 字节帧头：`len` 大端 + `type` + 三个 0。
-fn build_header(frame_type: u8, payload_len: usize) -> [u8; FRAME_HEADER_LEN] {
-    let mut header = [0u8; FRAME_HEADER_LEN];
-    header[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
-    header[4] = frame_type;
-    header
-}
-
-/// 编码一帧：返回「头 + payload」的线字节。
+/// 从缓冲区**开头**解出一帧。
 ///
-/// 与 [`decode`] 互为逆运算：未知帧类型、payload 超 8 MiB 一律**拒绝**
-/// （fail-closed：宁可不发，也不发一帧对端必然拒收的字节）。
-pub fn encode(frame_type: u8, payload: &[u8]) -> Result<Vec<u8>, FrameError> {
-    Ok(Frame::new(frame_type, payload.to_vec())?.encode())
-}
-
-/// 解码**恰好一帧**（缓冲区尾部必须没有多余字节）。
-pub fn decode(bytes: &[u8]) -> Result<Frame, FrameError> {
-    let (frame, consumed) = decode_prefix(bytes)?;
-    if consumed != bytes.len() {
-        return Err(FrameError::TrailingBytes);
-    }
-    Ok(frame)
-}
-
-/// 解码缓冲区的**第一帧**，并返回它占用的字节数（供 P2 做流式拆帧）。
+/// # 语义
 ///
-/// 失败时**不返回任何部分明文**（线协议 §2 的 fail-closed 要求）。
-pub fn decode_prefix(bytes: &[u8]) -> Result<(Frame, usize), FrameError> {
-    if bytes.len() < FRAME_HEADER_LEN {
-        return Err(FrameError::HeaderTruncated);
+/// - 头不足 8 字节 ⇒ [`FrameError::TruncatedHeader`]；
+/// - `len` 超 8 MiB ⇒ [`FrameError::PayloadTooLarge`]（**不等数据、不截断**）；
+/// - `reserved` 非 0 ⇒ [`FrameError::ReservedNotZero`]；
+/// - `type` 未知 ⇒ [`FrameError::UnknownType`]；
+/// - 载荷不足 `len` ⇒ [`FrameError::TruncatedPayload`]。
+///
+/// 失败时**不返回任何部分明文**。
+///
+/// # 长度
+///
+/// 成功时返回 `(帧, 本帧总字节数)`；总字节数 = `8 + len`。
+/// 调用方据此从缓冲区里切走这一帧、继续解下一帧。
+pub fn decode_frame(buf: &[u8]) -> Result<(Frame, usize), FrameError> {
+    if buf.len() < HEADER_LEN {
+        return Err(FrameError::TruncatedHeader { actual: buf.len() });
     }
-    let payload_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-    if payload_len > MAX_PAYLOAD_LEN {
-        return Err(FrameError::PayloadTooLarge);
+
+    // ⭐ 大端：len 是网络序。写成小端会让固定向量立刻对不上。
+    let declared = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    if declared > MAX_PAYLOAD_LEN {
+        return Err(FrameError::PayloadTooLarge { declared });
     }
-    if bytes[5..8] != [0u8, 0u8, 0u8] {
+
+    let frame_type = buf[4];
+    if buf[5] != 0 || buf[6] != 0 || buf[7] != 0 {
         return Err(FrameError::ReservedNotZero);
     }
-    let frame_type = bytes[4];
-    if !is_known_frame_type(frame_type) {
-        return Err(FrameError::UnknownType(frame_type));
+
+    let code = frame_type;
+    let kind = FrameType::from_code(code).ok_or(FrameError::UnknownType { code })?;
+
+    let declared_len = declared as usize;
+    let total = HEADER_LEN + declared_len;
+    if buf.len() < total {
+        return Err(FrameError::TruncatedPayload {
+            declared: declared_len,
+            actual: buf.len().saturating_sub(HEADER_LEN),
+        });
     }
-    let total = FRAME_HEADER_LEN + payload_len;
-    if bytes.len() < total {
-        return Err(FrameError::PayloadTruncated);
+
+    let payload = buf[HEADER_LEN..total].to_vec();
+    Ok((Frame::new(kind, payload), total))
+}
+
+/// 缓冲区里能解出的帧**数量**（尽力而为：遇到坏帧就停下）。
+///
+/// 只做「有多少个完整合法的帧」这一个统计，不返回任何载荷内容。
+/// 用途：连接收尾时判断「还有没有没收完的尾包」。
+#[must_use]
+pub fn count_complete_frames(buf: &[u8]) -> usize {
+    let mut count = 0;
+    let mut offset = 0usize;
+    while offset < buf.len() {
+        match decode_frame(&buf[offset..]) {
+            Ok((_, used)) => {
+                count += 1;
+                offset += used;
+            }
+            Err(_) => break,
+        }
     }
-    let mut header = [0u8; FRAME_HEADER_LEN];
-    header.copy_from_slice(&bytes[..FRAME_HEADER_LEN]);
-    Ok((
-        Frame {
-            header,
-            frame_type,
-            payload: bytes[FRAME_HEADER_LEN..total].to_vec(),
-        },
-        total,
-    ))
+    count
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+
+    /// 合法帧的共同填充字节（线协议 §2）。
+    const FILL: u8 = 0x5A;
+
+    /// 合法帧 6 组：`(len, 帧头 8 字节)`（线协议 §2，逐字节照抄）。
+    const LEGAL_HEADERS: [(u32, [u8; 8]); 6] = [
+        (0, [0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00]),
+        (1, [0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00]),
+        (3, [0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00]),
+        (255, [0x00, 0x00, 0x00, 0xff, 0x03, 0x00, 0x00, 0x00]),
+        (65535, [0x00, 0x00, 0xff, 0xff, 0x03, 0x00, 0x00, 0x00]),
+        (8_388_608, [0x00, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00]),
+    ];
+
+    /// 非法帧：`len` 超上限（8 MiB + 1）。
+    const IL_LEN_OVER: [u8; 8] = [0x00, 0x80, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00];
+    /// 非法帧：`reserved` 非 0。
+    const IL_RESERVED: [u8; 9] = [0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00, 0x01, 0x5A];
+    /// 非法帧：未知 `type`。
+    const IL_TYPE: [u8; 9] = [0x00, 0x00, 0x00, 0x01, 0x07, 0x00, 0x00, 0x00, 0x5A];
+    /// 非法帧：头被截断（7 字节）。
+    const IL_TRUNC_HDR: [u8; 7] = [0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00];
+    /// 非法帧：载荷不足（声明 3，实给 1）。
+    const IL_TRUNC_PAYLOAD: [u8; 9] = [0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x5A];
+
+    #[test]
+    fn legal_frame_headers_match_the_wire_contract_byte_for_byte() {
+        for (len, header) in LEGAL_HEADERS {
+            let frame = Frame::new(FrameType::ConfigBundle, vec![FILL; len as usize]);
+            let encoded = frame.encode().expect("合法帧应可编码");
+            assert_eq!(
+                &encoded[..HEADER_LEN],
+                &header[..],
+                "len={len} 的帧头必须与线协议逐字节相同"
+            );
+            assert_eq!(encoded.len(), HEADER_LEN + len as usize);
+        }
+    }
+
+    #[test]
+    fn legal_frames_round_trip() {
+        for (len, _header) in LEGAL_HEADERS {
+            // 8 MiB 的向量太占内存，帧头由上面那个测试单独验。
+            if len as usize > 65535 {
+                continue;
+            }
+            let payload = vec![FILL; len as usize];
+            let frame = Frame::new(FrameType::ConfigBundle, payload.clone());
+            let encoded = frame.encode().expect("合法帧应可编码");
+            let (decoded, used) = decode_frame(&encoded).expect("合法帧应可解码");
+            assert_eq!(decoded.frame_type, FrameType::ConfigBundle);
+            assert_eq!(decoded.payload, payload, "往返后载荷必须逐字节相同");
+            assert_eq!(used, encoded.len());
+        }
+    }
+
+    #[test]
+    fn empty_and_small_frames_round_trip() {
+        for len in [0usize, 1, 3, 255, 65535] {
+            let payload: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            let frame = Frame::new(FrameType::Event, payload.clone());
+            let encoded = frame.encode().expect("合法帧应可编码");
+            let (decoded, _) = decode_frame(&encoded).expect("合法帧应可解码");
+            assert_eq!(decoded.payload, payload, "len={len} 往返后必须逐字节相同");
+        }
+    }
+
+    #[test]
+    fn payload_len_over_the_limit_is_rejected() {
+        // IL_LEN_OVER：len = 8 MiB + 1。
+        let err = decode_frame(&IL_LEN_OVER).expect_err("len 超上限必须失败");
+        assert_eq!(
+            err,
+            FrameError::PayloadTooLarge {
+                declared: MAX_PAYLOAD_LEN + 1
+            }
+        );
+    }
+
+    #[test]
+    fn max_payload_len_is_exactly_legal() {
+        // VMAX：len 恰为上限 8 MiB ⇒ 合法。
+        let (len, header) = LEGAL_HEADERS[5];
+        assert_eq!(len, MAX_PAYLOAD_LEN);
+        let mut frame_bytes = header.to_vec();
+        frame_bytes.extend_from_slice(&[FILL; 16]);
+        // 只给 16 字节载荷但声明 8 MiB ⇒ 载荷不足（不是超限）。
+        let err = decode_frame(&frame_bytes).expect_err("载荷不足必须失败");
+        assert_eq!(
+            err,
+            FrameError::TruncatedPayload {
+                declared: MAX_PAYLOAD_LEN as usize,
+                actual: 16
+            }
+        );
+    }
+
+    #[test]
+    fn reserved_bytes_must_be_zero() {
+        // IL_RESERVED：reserved 的最后一字节是 0x01。
+        let err = decode_frame(&IL_RESERVED).expect_err("reserved 非 0 必须失败");
+        assert_eq!(err, FrameError::ReservedNotZero);
+    }
+
+    #[test]
+    fn unknown_frame_type_is_rejected() {
+        // IL_TYPE：type = 0x07，不是已知帧类型。
+        let err = decode_frame(&IL_TYPE).expect_err("未知 type 必须失败");
+        assert_eq!(err, FrameError::UnknownType { code: 0x07 });
+    }
+
+    #[test]
+    fn truncated_header_is_rejected() {
+        // IL_TRUNC_HDR：只有 7 字节。
+        let err = decode_frame(&IL_TRUNC_HDR).expect_err("头被截断必须失败");
+        assert_eq!(err, FrameError::TruncatedHeader { actual: 7 });
+    }
+
+    #[test]
+    fn every_truncated_header_length_is_rejected() {
+        // 1..=7 字节都必须是「头被截断」，而不是别的错。
+        for len in 1..HEADER_LEN {
+            let buf = vec![0x00u8; len];
+            let err = decode_frame(&buf).expect_err("头不全都必须失败");
+            assert_eq!(
+                err,
+                FrameError::TruncatedHeader { actual: len },
+                "{len} 字节的头必须报「头被截断」"
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_payload_is_rejected() {
+        // IL_TRUNC_PAYLOAD：声明 3，实给 1。
+        let err = decode_frame(&IL_TRUNC_PAYLOAD).expect_err("载荷不足必须失败");
+        assert_eq!(
+            err,
+            FrameError::TruncatedPayload {
+                declared: 3,
+                actual: 1
+            }
+        );
+    }
+
+    #[test]
+    fn frame_length_is_big_endian() {
+        // ⭐ 手工构造期望字节数组：len=1、type=0x01 ⇒ `00 00 00 01 01 00 00 00`。
+        // 写成小端会得到 `01 00 00 00 ...`，这里立刻对不上。
+        let expected: [u8; 9] = [0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x5A];
+        let frame = Frame::new(FrameType::Hello, vec![0x5A]);
+        let encoded = frame.encode().expect("应可编码");
+        assert_eq!(encoded, expected.to_vec(), "帧头必须是大端（网络序）");
+    }
+
+    #[test]
+    fn every_frame_type_code_matches_the_wire_contract() {
+        let expected = [
+            (FrameType::Hello, 0x01u8),
+            (FrameType::KeyEnvelope, 0x02),
+            (FrameType::ConfigBundle, 0x03),
+            (FrameType::ActionRequest, 0x04),
+            (FrameType::ActionResult, 0x05),
+            (FrameType::Event, 0x81),
+            (FrameType::EventAck, 0x82),
+        ];
+        for (kind, code) in expected {
+            assert_eq!(kind.code(), code, "帧类型码必须与线协议一致");
+            assert_eq!(FrameType::from_code(code), Some(kind));
+        }
+        for unknown in [0x00u8, 0x06, 0x07, 0x80, 0x83, 0xff] {
+            assert_eq!(
+                FrameType::from_code(unknown),
+                None,
+                "0x{unknown:02x} 必须未知"
+            );
+        }
+    }
+
+    #[test]
+    fn encoder_refuses_to_truncate_an_oversized_payload() {
+        // 超过 8 MiB 的载荷不能被静默截断。
+        let mut payload = vec![0u8; MAX_PAYLOAD_LEN as usize + 1];
+        payload[MAX_PAYLOAD_LEN as usize] = 0x01;
+        let frame = Frame::new(FrameType::Event, payload);
+        assert!(frame.encode().is_none(), "超限载荷必须编码失败，不得截断");
+    }
+
+    #[test]
+    fn decoder_reports_how_many_complete_frames_are_buffered() {
+        let a = Frame::new(FrameType::Hello, vec![1, 2, 3])
+            .encode()
+            .expect("应可编码");
+        let b = Frame::new(FrameType::Event, vec![])
+            .encode()
+            .expect("应可编码");
+        let mut buf = a.clone();
+        buf.extend_from_slice(&b);
+        assert_eq!(count_complete_frames(&buf), 2);
+        // 尾部再接半个头 ⇒ 只数到 2 个完整帧。
+        buf.extend_from_slice(&[0x00, 0x00]);
+        assert_eq!(count_complete_frames(&buf), 2);
+    }
 }
