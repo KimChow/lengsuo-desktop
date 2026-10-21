@@ -34,12 +34,21 @@ SHARED_PATHS = (
     "scripts",
 )
 
+# 本仓只有一个 crate（lengsuo-desktop）。LANES 按**界面职责**划分，
+# 用于派卡时的窗口分组与冲突提示；不是 crate 清单。
+# 2026-10-21：原先此处抄的是 agent 仓的 crate 名（agent-core / agent-gateway …），
+# 与本仓内容完全不对应 ⇒ 修正为 desktop 自己的 lane。
 LANES = {
-    "core": ["agent-core", "agent-tasks"],
-    "proto": ["agent-acp", "agent-gateway"],
-    "exec": ["agent-tools", "agent-tools-exec", "agent-pty", "agent-execpolicy"],
-    "cap": ["agent-mcp", "agent-skills", "agent-prompts"],
-    "env": ["agent-memory", "agent-sandbox", "credential-ref", "policy-engine", "lengsuo-shell"],
+    # 视图状态层（纯逻辑，无 IO / 无渲染）
+    "view": ["state"],
+    # 渲染层（GPUI 视图）
+    "ui": ["ui"],
+    # 设计令牌与人话映射
+    "theme": ["theme"],
+    # 应用装配与入口（根视图 / 二进制）
+    "core": ["bin", "gpui_app"],
+    # 调研 / 现状核对类（只读产出）
+    "recon": [],
 }
 
 # merging 也算占用：否则进入合流后别的卡能立刻占进来，合流就不再独占。
