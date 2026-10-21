@@ -2,12 +2,15 @@
 //!
 //! 本模块只把版式状态（见 [`RightPanelLayout`]）与
 //! [`SessionStreamState`] 转成渲染描述：
-//! - **任务清单**与**文件预览**本卡只有占位说明（数据源另卡接入）；
+//! - **任务清单**本卡只有占位说明（数据源另卡接入）；
+//! - **文件预览**只读消费会话流的**跳转意图**（[`FileIntent`]），显示「要预览哪个文件」；
+//!   ⛔ **不读文件、不渲染文件内容**（预览器属 P3，见 `docs/ui-parity-spec.md` A14）；
 //! - **审批待办**只读消费 `pending_approvals()`，渲染为审批卡片；
 //!   渲染不会替用户决策。
 //!
 //! 折叠时面板只保留窄条与三个 tab 入口，不渲染 tab 内容。
 
+use crate::state::file_intent::FileIntent;
 use crate::state::session_stream::SessionStreamState;
 use crate::ui::approval_card::{self, ApprovalCardView};
 use crate::ui::layout::{RightPanelLayout, RightPanelTab};
@@ -18,6 +21,11 @@ pub const TASKS_PLACEHOLDER: &str = "任务清单占位：等待任务状态接�
 pub const PREVIEW_PLACEHOLDER: &str = "文件预览占位：选择文件后在此显示预览";
 /// 审批待办为空时的文案。
 pub const APPROVALS_EMPTY_TEXT: &str = "暂无待审批事项";
+/// 预览 tab 在**没有**跳转意图时的文案（真实为空）。
+pub const PREVIEW_EMPTY_TEXT: &str = "未选择文件";
+/// 预览 tab 在**有**跳转意图、但预览器本体未实现时的说明文案。
+pub const PREVIEW_UNSUPPORTED_TEXT: &str =
+    "预览器尚未实现（属 P3）：当前只显示待预览文件，不渲染内容";
 
 /// tab 的占位文案；审批待办由状态驱动，没有占位。
 #[must_use]
@@ -39,6 +47,13 @@ pub struct TabButton {
     pub badge: Option<usize>,
 }
 
+/// 预览内容：当前要预览的文件（来自会话流的跳转意图）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewContent {
+    /// 预览器本体未实现（P3）：只显示「要预览哪个文件」，不渲染文件内容。
+    Target { path: String },
+}
+
 /// 面板内容。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RightPanelContent {
@@ -46,6 +61,8 @@ pub enum RightPanelContent {
     Collapsed,
     /// 占位内容（任务清单 / 文件预览）。
     Placeholder { text: &'static str },
+    /// 预览内容（当前要预览的文件）。
+    Preview(PreviewContent),
     /// 待审批卡片（只含未决策项）。
     Approvals(Vec<ApprovalCardView>),
     /// 审批待办为空。
@@ -66,12 +83,32 @@ pub struct RightPanelView {
     pub pending_approval_count: usize,
 }
 
-/// 生成右侧面板渲染描述。
+/// 生成右侧面板渲染描述（**没有**预览意图）。
+///
+/// 等价于 [`render_with_preview`] 且 `preview = None`。
+///
+/// 保留这个两参入口是因为版式层（`ui/layout.rs`）也在调 `render`，
+/// 而**版式层不在本卡的改动边界内** ⇒ 这里必须留一个兼容入口，
+/// 真正的实现只有 [`render_with_preview`] 一处（不另写第二套判断）。
+#[must_use]
+pub fn render(layout: &RightPanelLayout, session: &SessionStreamState) -> RightPanelView {
+    render_with_preview(layout, session, None)
+}
+
+/// 生成右侧面板渲染描述（含**预览意图**）。
+///
+/// `preview` 是会话流侧产生的**跳转意图**（谁点的、点的是哪个文件）：
+/// - 有意图且当前 tab 是「文件预览」⇒ 内容为 [`RightPanelContent::Preview`]；
+/// - 无意图 ⇒ 内容为 [`RightPanelContent::Empty`]（**不是**占位文案）。
 ///
 /// `pending_approval_count` 与审批卡片都直接来自会话流状态；
 /// 本函数不修改状态。
 #[must_use]
-pub fn render(layout: &RightPanelLayout, session: &SessionStreamState) -> RightPanelView {
+pub fn render_with_preview(
+    layout: &RightPanelLayout,
+    session: &SessionStreamState,
+    preview: Option<&FileIntent>,
+) -> RightPanelView {
     let pending_approval_count = session.pending_approvals().count();
     let active_tab = layout.tab();
     let tabs = RightPanelTab::ALL
@@ -92,8 +129,13 @@ pub fn render(layout: &RightPanelLayout, session: &SessionStreamState) -> RightP
             RightPanelTab::Tasks => RightPanelContent::Placeholder {
                 text: TASKS_PLACEHOLDER,
             },
-            RightPanelTab::Preview => RightPanelContent::Placeholder {
-                text: PREVIEW_PLACEHOLDER,
+            RightPanelTab::Preview => match preview {
+                Some(intent) => RightPanelContent::Preview(PreviewContent::Target {
+                    path: intent.path.clone(),
+                }),
+                None => RightPanelContent::Empty {
+                    text: PREVIEW_EMPTY_TEXT,
+                },
             },
             RightPanelTab::Approvals => {
                 let cards = approval_card::pending_cards(session);
@@ -121,6 +163,7 @@ pub fn render(layout: &RightPanelLayout, session: &SessionStreamState) -> RightP
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::file_intent::FileIntentSource;
     use crate::state::session_stream::{PendingApproval, SessionMessage};
 
     fn session_with_approval() -> SessionStreamState {
@@ -141,6 +184,12 @@ mod tests {
             resolved: None,
         });
         session
+    }
+
+    fn preview_layout() -> RightPanelLayout {
+        let mut layout = RightPanelLayout::new();
+        layout.select_tab(RightPanelTab::Preview);
+        layout
     }
 
     #[test]
@@ -173,9 +222,10 @@ mod tests {
         let view = render(&layout, &SessionStreamState::new());
         assert_eq!(
             view.content,
-            RightPanelContent::Placeholder {
-                text: PREVIEW_PLACEHOLDER
-            }
+            RightPanelContent::Empty {
+                text: PREVIEW_EMPTY_TEXT
+            },
+            "没有跳转意图时，预览 tab 是**空态**，不是占位文案"
         );
         assert!(view.tabs[1].selected);
     }
@@ -245,5 +295,63 @@ mod tests {
         assert_eq!(view.content, RightPanelContent::Collapsed);
         assert_eq!(view.tabs.len(), 3, "折叠后仍须保留三个 tab 入口");
         assert_eq!(view.pending_approval_count, 1, "折叠不吞审批角标");
+    }
+
+    #[test]
+    fn preview_intent_shows_the_target_file() {
+        let intent = FileIntent::new("src/main.rs", FileIntentSource::FileCard);
+        let view =
+            render_with_preview(&preview_layout(), &SessionStreamState::new(), Some(&intent));
+        assert_eq!(
+            view.content,
+            RightPanelContent::Preview(PreviewContent::Target {
+                path: "src/main.rs".to_owned()
+            }),
+            "有跳转意图时，预览 tab 必须显示待预览文件"
+        );
+    }
+
+    #[test]
+    fn preview_without_intent_is_empty_not_placeholder() {
+        let view = render_with_preview(&preview_layout(), &SessionStreamState::new(), None);
+        assert_eq!(
+            view.content,
+            RightPanelContent::Empty {
+                text: PREVIEW_EMPTY_TEXT
+            },
+            "没有意图时是空态，不是占位"
+        );
+    }
+
+    #[test]
+    fn preview_intent_does_not_affect_the_tasks_tab() {
+        let intent = FileIntent::new("src/main.rs", FileIntentSource::FileList);
+        let view = render_with_preview(
+            &RightPanelLayout::new(),
+            &SessionStreamState::new(),
+            Some(&intent),
+        );
+        assert_eq!(
+            view.content,
+            RightPanelContent::Placeholder {
+                text: TASKS_PLACEHOLDER
+            },
+            "任务清单 tab 的既有行为不得回归"
+        );
+    }
+
+    #[test]
+    fn approvals_tab_ignores_the_preview_intent() {
+        let intent = FileIntent::new("src/main.rs", FileIntentSource::FileCard);
+        let mut layout = RightPanelLayout::new();
+        layout.select_tab(RightPanelTab::Approvals);
+        let view = render_with_preview(&layout, &SessionStreamState::new(), Some(&intent));
+        assert_eq!(
+            view.content,
+            RightPanelContent::Empty {
+                text: APPROVALS_EMPTY_TEXT
+            },
+            "审批待办 tab 的既有行为不得回归"
+        );
     }
 }

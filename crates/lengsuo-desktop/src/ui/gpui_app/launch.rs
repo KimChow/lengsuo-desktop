@@ -9,9 +9,25 @@ use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 use gpui_kit::*;
 
 use crate::ui::settings_gpui::view::ThemeChoice;
+use crate::ui::settings_gpui::SettingsGpui;
 
 use super::prefs_file;
 use super::AppShell;
+
+/// 打开设置窗口（`app.settings` 命令派发时调用）。
+///
+/// ⛔ 失败不 panic：开窗失败（无显示服务器等）时静默返回，主界面不受影响。
+pub(super) fn open_settings_window(cx: &mut App) {
+    let options = WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some(SETTINGS_WINDOW_TITLE.into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    // `gpui_kit::open_window` 返回 `Result` ⇒ 失败就放弃这次开窗。
+    let _ = gpui_kit::open_window(options, cx, |_window, cx| cx.new(SettingsGpui::new));
+}
 
 /// 系统窗口标题。
 pub const WINDOW_TITLE: &str = "冷锁桌面端 · 工作台";
@@ -20,6 +36,8 @@ pub const HOTKEY_HINT: &str = "Ctrl+K 打开命令面板";
 /// 没有显示服务器时的错误文案。
 pub const NO_DISPLAY_MESSAGE: &str =
     "当前环境没有可用的显示服务器（DISPLAY / WAYLAND_DISPLAY 均为空），无法打开窗口";
+/// 设置窗口的标题栏文案。
+pub(super) const SETTINGS_WINDOW_TITLE: &str = "设置";
 
 /// 启动失败的原因。
 #[derive(Debug)]
