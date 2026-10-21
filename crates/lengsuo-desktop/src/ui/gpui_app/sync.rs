@@ -1,10 +1,19 @@
-//! 根视图的纯函数：版式派生、发送回显、等待态解除判据。
+//! 根视图的纯函数与**同步方法**：版式派生、发送回显、等待态解除判据、
+//! 审批 / 文件意图的读取侧同步。
 //!
-//! 这里**不依赖窗口**，全部可在单元测试里直接调用。
+//! 这里**不依赖窗口**的全是纯函数；`impl AppShell` 那几段需要 `Context`，
+//! 但同样**不产生任何业务语义** —— 只做「权威 → 副本」的下发。
 
+use gpui_kit::*;
+
+use crate::state::file_intent::FileIntent;
 use crate::state::session_stream::{MessageRole, SessionMessage, SessionStreamState};
 use crate::ui::input_area::OutgoingInput;
-use crate::ui::layout::{RegionWidths, RightPanelLayout, WorkbenchLayout};
+use crate::ui::layout::{RegionWidths, RightPanelLayout, RightPanelTab, WorkbenchLayout};
+use crate::ui::right_panel_gpui::RightPanelGpui;
+
+use super::prefs_file;
+use super::AppShell;
 
 /// 由版式状态算三区宽度（渲染读宽度的**唯一入口**）。
 ///
@@ -119,127 +128,189 @@ pub(super) fn approvals_in_sync(authority: &SessionStreamState, copy: &SessionSt
     authority.approvals() == copy.approvals()
 }
 
-#[cfg(test)]
-mod tests {
-    // 显式导入（不用 `use super::*`）：父模块的 glob 会把 GPUI 的 `test` 属性宏
-    // 带进作用域并遮蔽标准 `#[test]`（速查表 §12.3）。
-    use super::{adopt_right_panel_selection, tab_strip_layout};
-    use crate::ui::layout::{RightPanelLayout, RightPanelTab, WorkbenchLayout};
-
-    /// 回归测试：**只下发不回收** ⇒ 点 tab 的选中态会被下一次下发覆盖回去。
-    ///
-    /// 这正是 2026-10-21 Windows 真机实测发现的缺陷（编译 + 289 测试全绿也测不到，
-    /// 因为错的不是纯函数，而是根视图少了一次「回收」）。
-    #[test]
-    fn without_adopt_a_tab_click_is_lost() {
-        let mut authority = WorkbenchLayout::new();
-        // tab 条被点击：它自己的版式变成 Preview
-        let mut strip = RightPanelLayout::new();
-        strip.select_tab(RightPanelTab::Preview);
-        // 缺了「回收」这一步，直接下发：权威版式里仍是旧 tab
-        let pushed = tab_strip_layout(&authority, &strip);
-        assert_eq!(
-            pushed.tab(),
-            RightPanelTab::Tasks,
-            "没有回收时，下发应把点击覆盖回旧 tab（这就是 bug 的表现）"
-        );
-        // 补上回收后，权威版式才跟上
-        let changed = adopt_right_panel_selection(&mut authority, &strip);
-        assert!(changed, "回收必须报告发生了改变");
-        assert_eq!(authority.right_panel().tab(), RightPanelTab::Preview);
-        assert_eq!(
-            tab_strip_layout(&authority, &strip).tab(),
-            RightPanelTab::Preview
-        );
+/// 把跳转意图应用到右侧面板：写入意图 + 激活「文件预览」tab。
+///
+/// 返回是否真的发生了变化（供调用方决定要不要 `notify()`）。
+///
+/// **为什么要激活 tab**：对齐 A4「点文件跳预览」——点了文件必须有反应，
+/// 否则意图白产生（面板停在「任务清单」，用户看不到任何变化）。
+/// 选中态的**权威**仍是左分隔条：本函数只改面板自己的副本，随后面板的
+/// `notify()` 会经 `adopt_right_panel` 把选中态**回收**给权威版式。
+///
+/// 没有意图（`None`）时**不动 tab**：只清掉旧意图。
+#[must_use]
+pub(super) fn apply_preview_intent(panel: &mut RightPanelGpui, intent: Option<FileIntent>) -> bool {
+    if panel.preview_intent() == intent.as_ref() {
+        return false;
     }
-
-    /// 回收必须**幂等**：同一状态再收一次返回 false（否则 observe 会死循环）。
-    #[test]
-    fn adopt_is_idempotent() {
-        let mut authority = WorkbenchLayout::new();
-        let mut strip = RightPanelLayout::new();
-        strip.select_tab(RightPanelTab::Approvals);
-        assert!(adopt_right_panel_selection(&mut authority, &strip));
-        assert!(
-            !adopt_right_panel_selection(&mut authority, &strip),
-            "第二次回收不应再报告改变"
-        );
+    let has_intent = intent.is_some();
+    panel.set_preview_intent(intent);
+    if has_intent {
+        // `select_tab` 同时展开折叠态的窄条（窄条只用于恢复入口）。
+        panel.layout_mut().select_tab(RightPanelTab::Preview);
     }
-
-    /// 回收**不许动宽度**：宽度归分隔条管，tab 条无权改。
-    #[test]
-    fn adopt_does_not_touch_width() {
-        let mut authority = WorkbenchLayout::new();
-        let before = authority.right_panel().width();
-        let mut strip = RightPanelLayout::new();
-        strip.select_tab(RightPanelTab::Preview);
-        adopt_right_panel_selection(&mut authority, &strip);
-        assert_eq!(
-            authority.right_panel().width(),
-            before,
-            "回收只改选中/折叠，不应改宽度"
-        );
-    }
-
-    /// 折叠态也要能被回收（否则折叠后点 tab 恢复不了展开）。
-    #[test]
-    fn adopt_carries_collapsed_state() {
-        let mut authority = WorkbenchLayout::new();
-        let mut strip = RightPanelLayout::new();
-        strip.collapse();
-        assert!(adopt_right_panel_selection(&mut authority, &strip));
-        assert!(authority.right_panel().is_collapsed());
-        assert!(authority.right_panel().is_collapsed());
-    }
+    true
 }
 
-#[cfg(test)]
-mod width_sync_tests {
-    // 显式导入（不用 `use super::*`），理由见速查表 §12.3。
-    use crate::ui::layout::{WorkbenchLayout, RIGHT_PANEL_MAX_WIDTH, RIGHT_PANEL_MIN_WIDTH};
-
-    /// 回归测试：右分隔条拖出来的宽度必须能**回收**给权威版式。
-    ///
-    /// 2026-10-21 Windows 真机实测：只做「权威 → 右分隔条」下发、不做回收时，
-    /// 右分隔条拖完立刻被旧宽度覆盖 ⇒ 表现成「右栏被锁死、拖不动」。
-    #[test]
-    fn right_divider_width_round_trips_through_authority() {
-        let mut authority = WorkbenchLayout::new();
-        let mut right_divider = WorkbenchLayout::new();
-
-        // 模拟右分隔条被拖动：它自己的宽度变小
-        let target = authority.right_panel().width() - 60.0;
-        right_divider.right_panel_mut().set_width(target);
-        assert_eq!(right_divider.right_panel().width(), target);
-
-        // 回收：把它写回权威
-        let incoming = right_divider.right_panel().width();
-        let panel = authority.right_panel_mut();
-        if panel.width() != incoming {
-            panel.set_width(incoming);
-        }
-
-        // 下发：权威 → 右分隔条应保持 target，而不是退回默认值
-        assert_eq!(
-            authority.right_panel().width(),
-            target,
-            "回收后权威必须是拖动结果"
-        );
-        assert_eq!(
-            authority.right_panel().width(),
-            right_divider.right_panel().width(),
-            "两侧必须一致，否则下一次下发会把拖动冲掉"
-        );
+impl AppShell {
+    /// 审批读取侧同步：根视图（经由会话流）是唯一写入者，右栏只是副本。
+    pub(super) fn sync_approvals(&mut self, cx: &mut Context<Self>) {
+        let authority = self.session.read(cx).state().clone();
+        let right_panel = self.right_panel.clone();
+        right_panel.update(cx, |panel, cx| {
+            if !approvals_in_sync(&authority, panel.session()) {
+                let base = authority.clone();
+                let session = panel.session_mut();
+                session.clear();
+                for approval in base.approvals() {
+                    session.push_approval(approval.clone());
+                }
+                cx.notify();
+            }
+        });
     }
 
-    /// 宽度夹取仍由描述层独占：回收越界值不会突破 min/max。
-    #[test]
-    fn adopted_width_is_still_clamped() {
-        let mut authority = WorkbenchLayout::new();
-        authority.right_panel_mut().set_width(99_999.0);
-        assert_eq!(authority.right_panel().width(), RIGHT_PANEL_MAX_WIDTH);
+    /// 文件跳转意图同步：会话流是唯一产生者，右栏预览 tab 只是**消费者**。
+    ///
+    /// 右栏不产生意图，也不判定文件是否存在。
+    ///
+    /// ⛔ 预览器本体未实现（P3，见 `docs/ui-parity-spec.md` A14）：这里只把
+    /// 「要跳哪个文件」下发给右栏，**不读文件、不落盘**。
+    pub(super) fn sync_file_intent(&mut self, cx: &mut Context<Self>) {
+        let intent = self.session.read(cx).file_intent().cloned();
+        let right_panel = self.right_panel.clone();
+        right_panel.update(cx, |panel, cx| {
+            if apply_preview_intent(panel, intent) {
+                cx.notify();
+            }
+        });
+    }
 
-        authority.right_panel_mut().set_width(-500.0);
-        assert_eq!(authority.right_panel().width(), RIGHT_PANEL_MIN_WIDTH);
+    /// tab 条刚被点击 ⇒ 把它的选中态 / 折叠态**回写**给权威版式（左分隔条）。
+    ///
+    /// 为什么必须有这一步：`sync_layout` 是「以左分隔条为唯一来源**下发**」，
+    /// 而 tab 条自己的点击改的是它私有的 `RightPanelLayout`。若只观察 tab 条就直接
+    /// `sync_layout`，下发会用权威版式里**旧的** tab 选中态把刚点出来的新状态覆盖掉
+    /// —— 表现就是「点 tab 完全没反应」（2026-10-21 Windows 真机实测到的缺陷，
+    /// 编译与单元测试都发现不了，因为纯函数 `tab_strip_layout` 本身是对的）。
+    ///
+    /// 只回写 tab 选中态与折叠态，**不动宽度**：宽度归分隔条管。
+    pub(super) fn adopt_tab_strip(&mut self, cx: &mut Context<Self>) {
+        let incoming = self.tab_strip.read(cx).layout().clone();
+        self.left_divider.update(cx, |divider, cx| {
+            if adopt_right_panel_selection(divider.layout_mut(), &incoming) {
+                cx.notify();
+            }
+        });
+    }
+
+    /// 右分隔条刚被拖动 ⇒ 把它算出的右栏宽度**回写**给权威版式（左分隔条）。
+    ///
+    /// 与 [`Self::adopt_tab_strip`] 同一类修复：`sync_layout` 只做「权威 → 子视图」
+    /// 下发，而右分隔条的拖拽改的是它私有副本里的 `right_panel` 宽度。
+    /// 若只下发不回收，下一次同步会用权威里的旧宽度把拖动结果覆盖回去
+    /// ⇒ 表现成「右分隔条被锁死、拖不动」。2026-10-21 Windows 真机实测发现。
+    pub(super) fn adopt_right_divider(&mut self, cx: &mut Context<Self>) {
+        let incoming_width = self.right_divider.read(cx).layout().right_panel().width();
+        self.left_divider.update(cx, |divider, cx| {
+            let panel = divider.layout_mut().right_panel_mut();
+            if panel.width() != incoming_width {
+                panel.set_width(incoming_width);
+                cx.notify();
+            }
+        });
+    }
+
+    /// 右侧面板自己的「收起 / 展开」按钮 ⇒ 把折叠态**回写**给权威版式（左分隔条）。
+    ///
+    /// 与 [`Self::adopt_tab_strip`] 同一类问题：`sync_layout` 只做「权威 → 子视图」
+    /// 下发，而面板的折叠按钮改的是它私有副本里的 `collapsed` 标志。
+    /// 不回收的话，下一次下发会把折叠态覆盖回展开 ⇒ 表现成「点收起，折叠态弹回来」。
+    ///
+    /// 回收逻辑复用 [`adopt_right_panel_selection`]（与 tab 条共用同一段纯函数），
+    /// **不另写一份**折叠 / 选中的判定。
+    pub(super) fn adopt_right_panel(&mut self, cx: &mut Context<Self>) {
+        let incoming = self.right_panel.read(cx).layout().clone();
+        self.left_divider.update(cx, |divider, cx| {
+            if adopt_right_panel_selection(divider.layout_mut(), &incoming) {
+                cx.notify();
+            }
+        });
+    }
+
+    /// 把当前版式**写回**偏好文件（尽力而为）。
+    ///
+    /// - **拖拽过程中不写**：拖拽时每个鼠标移动事件都会触发一次同步，
+    ///   逐帧写磁盘既无必要又可能把文件写坏。松手那一次同步才落盘
+    ///   （=「松手才提交」的语义）。
+    /// - 只在版式**真的变了**时写（`last_written` 去重）。
+    /// - 写失败**只记日志**，绝不影响交互（fail-closed）。
+    pub(super) fn persist_layout(&mut self, cx: &mut Context<Self>) {
+        if self.left_divider.read(cx).is_dragging() || self.right_divider.read(cx).is_dragging() {
+            return;
+        }
+        let current = self.left_divider.read(cx).layout().export_prefs();
+        if self.last_written == Some(current) {
+            return;
+        }
+        match prefs_file::write_layout(current) {
+            Ok(()) => self.last_written = Some(current),
+            Err(reason) => {
+                eprintln!("[lengsuo-desktop] 版式偏好未落盘：{reason}");
+            }
+        }
+    }
+
+    /// 把版式（左分隔条 —— 唯一来源）下发到右分隔条与右侧面板。
+    ///
+    /// - 右分隔条整份覆盖：它只负责拖拽，不持有独立的版式主张。
+    /// - 右侧面板**就地**用 [`crate::ui::right_panel_gpui::RightPanelGpui::layout_mut`]
+    ///   改选中 tab / 折叠态，**不重建 `Entity`**（重建会丢面板里审批卡片的本地态）；
+    ///   宽度归分隔条管，这里不动它的宽度字段。
+    ///
+    /// 回写前先比较，没变化就不 `notify()`，避免 observe → notify → observe 的循环。
+    ///
+    /// **最后必须 `cx.notify()` 自己**：三区宽度是根视图渲染时从左分隔条读回的，
+    /// 子实体的 `notify()` 只会重绘子视图本身；没有这一步，拖动分隔条后
+    /// 根视图不会重排三区 —— 表现成「分隔条跟手走、面板宽度不动」（2026-10-21
+    /// Windows 真机实测：分隔条元素位置变了，侧栏右边界纹丝不动）。
+    /// GPUI 对重复 `notify` 幂等，这里无条件调用是安全的。
+    pub(super) fn sync_layout(&mut self, cx: &mut Context<Self>) {
+        let authority = self.left_divider.read(cx).layout().clone();
+
+        // 右分隔条**只下发宽度**，不整份覆盖：它自己也是拖拽的输入源，
+        // 整份覆盖会把它刚拖出来的结果冲掉（同 `adopt_right_divider` 的注释）。
+        let right_divider = self.right_divider.clone();
+        let authority_width = authority.right_panel().width();
+        right_divider.update(cx, |divider, cx| {
+            let panel = divider.layout_mut().right_panel_mut();
+            if panel.width() != authority_width {
+                panel.set_width(authority_width);
+                cx.notify();
+            }
+        });
+
+        let right_panel = self.right_panel.clone();
+        right_panel.update(cx, |panel, cx| {
+            let synced = tab_strip_layout(&authority, panel.layout());
+            if panel.layout() != &synced {
+                *panel.layout_mut() = synced;
+                cx.notify();
+            }
+        });
+
+        let tab_strip = self.tab_strip.clone();
+        tab_strip.update(cx, |strip, cx| {
+            let synced = tab_strip_layout(&authority, strip.layout());
+            if strip.layout() != &synced {
+                *strip.layout_mut() = synced;
+                cx.notify();
+            }
+        });
+
+        // 版式变了 ⇒ 写回偏好文件（e22）。写失败只记日志，不影响交互。
+        self.persist_layout(cx);
+
+        cx.notify();
     }
 }

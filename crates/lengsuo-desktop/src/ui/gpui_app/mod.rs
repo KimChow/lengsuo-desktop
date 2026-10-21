@@ -36,8 +36,12 @@
 //!   出现非 `User` 的回应（[`sync::should_finish_send`]）时，才由
 //!   [`AppShell::settle_pending`] 调 [`InputAreaGpui::finish_send`] 解除等待。
 //!
-//! 文件划分：`demo.rs`（演示数据）、`launch.rs`（窗口启动）、`sync.rs`（纯函数）、
-//! `tests.rs`（单元测试）。
+//! e25 点文件跳预览：**会话流是意图的唯一产生者**，右栏预览 tab 只是**消费者**
+//! （经 [`AppShell::sync_file_intent`] 下发）。⛔ 预览器本体未实现（P3，A14）。
+//!
+//! 文件划分：`demo.rs`（演示数据）、`launch.rs`（窗口启动）、`sync.rs`（纯函数 +
+//! 根视图的同步方法）、`prefs_file.rs`（偏好落盘）、`tests.rs` / `sync_tests.rs`
+//! （单元测试）。
 #![cfg(feature = "ui")]
 
 mod demo;
@@ -45,14 +49,13 @@ mod launch;
 pub(crate) mod prefs_file;
 mod sync;
 #[cfg(test)]
+mod sync_tests;
+#[cfg(test)]
 mod tests;
 
 pub use demo::{demo_session, secondary_views};
 pub use launch::{launch, LaunchError, HOTKEY_HINT, NO_DISPLAY_MESSAGE, WINDOW_TITLE};
-use sync::{
-    adopt_right_panel_selection, approvals_in_sync, echo_message, next_echo_seq, regions_for,
-    should_finish_send,
-};
+use sync::{echo_message, next_echo_seq, regions_for, should_finish_send};
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::ActiveTheme as _;
@@ -67,16 +70,13 @@ use crate::ui::layout_gpui::{DividerGpui, DividerSide, RightPanelTabGpui};
 use crate::ui::palette_gpui::{self, CommandPaletteGpui};
 use crate::ui::right_panel_gpui::RightPanelGpui;
 use crate::ui::session_gpui::SessionStreamGpui;
-use crate::ui::settings_gpui::SettingsGpui;
 
 /// 打开设置窗口的命令 id（命令表 `theme::palette` 里的 `app.settings`）。
 const SETTINGS_COMMAND_ID: &str = "app.settings";
-/// 设置窗口的标题栏文案。
-const SETTINGS_WINDOW_TITLE: &str = "设置";
 use crate::ui::sidebar_gpui::{self, SidebarViewGpui};
 
 use demo::default_registry;
-use sync::tab_strip_layout;
+use launch::open_settings_window;
 
 /// 工作台根视图：三区 + 输入区 + 命令面板浮层。
 ///
@@ -96,7 +96,7 @@ struct AppShell {
     tab_strip: Entity<RightPanelTabGpui>,
     /// 子视图 `notify()` 时回调：把版式变化下发到右侧面板与右分隔条。
     _layout_sync: Vec<Subscription>,
-    /// 会话流 / 输入区变化的订阅（回显、解除等待态、审批读取侧同步）。
+    /// 会话流 / 输入区变化的订阅（回显、解除等待态、审批与文件意图读取侧同步）。
     _session_sync: Vec<Subscription>,
     /// 已发出、尚未收到运行时确认的回显序号；`Some` 时才允许解除等待态。
     pending_seq: Option<u64>,
@@ -106,21 +106,6 @@ struct AppShell {
     focus: FocusHandle,
     /// 上次**成功落盘**的版式偏好：版式没变就不重复写文件。
     last_written: Option<LayoutPrefs>,
-}
-
-/// 打开设置窗口（`app.settings` 命令派发时调用）。
-///
-/// ⛔ 失败不 panic：开窗失败（无显示服务器等）时静默返回，主界面不受影响。
-fn open_settings_window(cx: &mut App) {
-    let options = WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: Some(SETTINGS_WINDOW_TITLE.into()),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    // `gpui_kit::open_window` 返回 `Result` ⇒ 失败就放弃这次开窗。
-    let _ = gpui_kit::open_window(options, cx, |_window, cx| cx.new(SettingsGpui::new));
 }
 
 impl AppShell {
@@ -184,12 +169,14 @@ impl AppShell {
             }),
         ];
 
-        // 会话流推进 ⇒ 解除等待态 + 审批读取侧同步。
+        // 会话流推进 ⇒ 解除等待态 + 审批读取侧同步 + 文件意图读取侧同步。
         // 输入区自己 `notify()`（发送后）⇒ 消费它排队的输入做本地回显。
         let _session_sync = vec![
             cx.observe(&session, |shell: &mut Self, _, cx| {
                 shell.settle_pending(cx);
                 shell.sync_approvals(cx);
+                // 顺序：审批在前，文件意图在后（互不依赖，保持既有阅读顺序）。
+                shell.sync_file_intent(cx);
             }),
             cx.observe(&input, |shell: &mut Self, _, cx| shell.drain_outbox(cx)),
         ];
@@ -267,151 +254,6 @@ impl AppShell {
         }
         self.pending_seq = None;
         self.input.update(cx, |input, cx| input.finish_send(cx));
-    }
-
-    /// 审批读取侧同步：根视图（经由会话流）是唯一写入者，右栏只是副本。
-    fn sync_approvals(&mut self, cx: &mut Context<Self>) {
-        let authority = self.session.read(cx).state().clone();
-        let right_panel = self.right_panel.clone();
-        right_panel.update(cx, |panel, cx| {
-            if !approvals_in_sync(&authority, panel.session()) {
-                let base = authority.clone();
-                let session = panel.session_mut();
-                session.clear();
-                for approval in base.approvals() {
-                    session.push_approval(approval.clone());
-                }
-                cx.notify();
-            }
-        });
-    }
-
-    /// tab 条刚被点击 ⇒ 把它的选中态 / 折叠态**回写**给权威版式（左分隔条）。
-    ///
-    /// 为什么必须有这一步：`sync_layout` 是「以左分隔条为唯一来源**下发**」，
-    /// 而 tab 条自己的点击改的是它私有的 `RightPanelLayout`。若只观察 tab 条就直接
-    /// `sync_layout`，下发会用权威版式里**旧的** tab 选中态把刚点出来的新状态覆盖掉
-    /// —— 表现就是「点 tab 完全没反应」（2026-10-21 Windows 真机实测到的缺陷，
-    /// 编译与单元测试都发现不了，因为纯函数 `tab_strip_layout` 本身是对的）。
-    ///
-    /// 只回写 tab 选中态与折叠态，**不动宽度**：宽度归分隔条管。
-    fn adopt_tab_strip(&mut self, cx: &mut Context<Self>) {
-        let incoming = self.tab_strip.read(cx).layout().clone();
-        self.left_divider.update(cx, |divider, cx| {
-            if adopt_right_panel_selection(divider.layout_mut(), &incoming) {
-                cx.notify();
-            }
-        });
-    }
-
-    /// 右分隔条刚被拖动 ⇒ 把它算出的右栏宽度**回写**给权威版式（左分隔条）。
-    ///
-    /// 与 [`Self::adopt_tab_strip`] 同一类修复：`sync_layout` 只做「权威 → 子视图」
-    /// 下发，而右分隔条的拖拽改的是它私有副本里的 `right_panel` 宽度。
-    /// 若只下发不回收，下一次同步会用权威里的旧宽度把拖动结果覆盖回去
-    /// ⇒ 表现成「右分隔条被锁死、拖不动」。2026-10-21 Windows 真机实测发现。
-    fn adopt_right_divider(&mut self, cx: &mut Context<Self>) {
-        let incoming_width = self.right_divider.read(cx).layout().right_panel().width();
-        self.left_divider.update(cx, |divider, cx| {
-            let panel = divider.layout_mut().right_panel_mut();
-            if panel.width() != incoming_width {
-                panel.set_width(incoming_width);
-                cx.notify();
-            }
-        });
-    }
-
-    /// 右侧面板自己的「收起 / 展开」按钮 ⇒ 把折叠态**回写**给权威版式（左分隔条）。
-    ///
-    /// 与 [`Self::adopt_tab_strip`] 同一类问题：`sync_layout` 只做「权威 → 子视图」
-    /// 下发，而面板的折叠按钮改的是它私有副本里的 `collapsed` 标志。
-    /// 不回收的话，下一次下发会把折叠态覆盖回展开 ⇒ 表现成「点收起，折叠态弹回来」。
-    ///
-    /// 回收逻辑复用 [`adopt_right_panel_selection`]（与 tab 条共用同一段纯函数），
-    /// **不另写一份**折叠/选中的判定。
-    fn adopt_right_panel(&mut self, cx: &mut Context<Self>) {
-        let incoming = self.right_panel.read(cx).layout().clone();
-        self.left_divider.update(cx, |divider, cx| {
-            if adopt_right_panel_selection(divider.layout_mut(), &incoming) {
-                cx.notify();
-            }
-        });
-    }
-
-    /// 把当前版式**写回**偏好文件（尽力而为）。
-    ///
-    /// - **拖拽过程中不写**：拖拽时每个鼠标移动事件都会触发一次同步，
-    ///   逐帧写磁盘既无必要又可能把文件写坏。松手那一次同步才落盘
-    ///   （=「松手才提交」的语义）。
-    /// - 只在版式**真的变了**时写（`last_written` 去重）。
-    /// - 写失败**只记日志**，绝不影响交互（fail-closed）。
-    fn persist_layout(&mut self, cx: &mut Context<Self>) {
-        if self.left_divider.read(cx).is_dragging() || self.right_divider.read(cx).is_dragging() {
-            return;
-        }
-        let current = self.left_divider.read(cx).layout().export_prefs();
-        if self.last_written == Some(current) {
-            return;
-        }
-        match prefs_file::write_layout(current) {
-            Ok(()) => self.last_written = Some(current),
-            Err(reason) => {
-                eprintln!("[lengsuo-desktop] 版式偏好未落盘：{reason}");
-            }
-        }
-    }
-
-    /// 把版式（左分隔条 —— 唯一来源）下发到右分隔条与右侧面板。
-    ///
-    /// - 右分隔条整份覆盖：它只负责拖拽，不持有独立的版式主张。
-    /// - 右侧面板**就地**用 [`RightPanelGpui::layout_mut`] 改选中 tab / 折叠态，
-    ///   **不重建 `Entity`**（重建会丢面板里审批卡片的本地态）；宽度归分隔条管，
-    ///   这里不动它的宽度字段。
-    ///
-    /// 回写前先比较，没变化就不 `notify()`，避免 observe → notify → observe 的循环。
-    ///
-    /// **最后必须 `cx.notify()` 自己**：三区宽度是根视图渲染时从左分隔条读回的，
-    /// 子实体的 `notify()` 只会重绘子视图本身；没有这一步，拖动分隔条后
-    /// 根视图不会重排三区 —— 表现成「分隔条跟手走、面板宽度不动」（2026-10-21
-    /// Windows 真机实测：分隔条元素位置变了，侧栏右边界纹丝不动）。
-    /// GPUI 对重复 `notify` 幂等，这里无条件调用是安全的。
-    fn sync_layout(&mut self, cx: &mut Context<Self>) {
-        let authority = self.left_divider.read(cx).layout().clone();
-
-        // 右分隔条**只下发宽度**，不整份覆盖：它自己也是拖拽的输入源，
-        // 整份覆盖会把它刚拖出来的结果冲掉（同 `adopt_right_divider` 的注释）。
-        let right_divider = self.right_divider.clone();
-        let authority_width = authority.right_panel().width();
-        right_divider.update(cx, |divider, cx| {
-            let panel = divider.layout_mut().right_panel_mut();
-            if panel.width() != authority_width {
-                panel.set_width(authority_width);
-                cx.notify();
-            }
-        });
-
-        let right_panel = self.right_panel.clone();
-        right_panel.update(cx, |panel, cx| {
-            let synced = tab_strip_layout(&authority, panel.layout());
-            if panel.layout() != &synced {
-                *panel.layout_mut() = synced;
-                cx.notify();
-            }
-        });
-
-        let tab_strip = self.tab_strip.clone();
-        tab_strip.update(cx, |strip, cx| {
-            let synced = tab_strip_layout(&authority, strip.layout());
-            if strip.layout() != &synced {
-                *strip.layout_mut() = synced;
-                cx.notify();
-            }
-        });
-
-        // 版式变了 ⇒ 写回偏好文件（e22）。写失败只记日志，不影响交互。
-        self.persist_layout(cx);
-
-        cx.notify();
     }
 
     /// 处理根视图的按键：只做快捷键转换与面板开关，其余按键放行。
