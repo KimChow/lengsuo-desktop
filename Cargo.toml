@@ -15,6 +15,18 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# 内核管道（kernel pipe）加密依赖：p0-kernel-pipe-deps 卡引入，供后续卡
+# p1-kernel-pipe-core 使用（帧编解码 / 密钥信封 / 握手状态机）。
+# 版本锁定在缓存里已有的那套，避免依赖树里出现第二套 getrandom：
+#   aes-gcm 0.10 的 getrandom feature 走 rand_core 0.6 → getrandom 0.2。
+# aes-gcm 关掉 default-features 后显式重列 ["aes","alloc","getrandom"]，
+# 与 0.10.3 的默认值集合相同，但把 feature 集固定下来不随上游默认值漂移。
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc", "getrandom"] }
+sha2 = "0.10"
+hkdf = "0.12"
+getrandom = { version = "0.2", features = ["std"] }
+zeroize = "1"
+
 [profile.dev]
 incremental = false
 debug = 0
