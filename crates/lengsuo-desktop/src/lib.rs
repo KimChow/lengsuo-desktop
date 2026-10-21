@@ -10,6 +10,11 @@
 //! - `state`：视图状态机（纯 Rust，无 IO、无渲染）
 //! - `theme`：设计令牌
 //! - `kernel_pipe`：内核管道的**纯逻辑层**（帧编解码 / 密钥派生 / 握手状态机）
+//!   - `profile_rules`：profile 同步的**收集规则**（白名单 / 黑名单 / 上限），
+//!     与内核侧 `native/profile_bundle.*` 逐条对齐
+//!   - `zip_writer`：profile 包的**清单层与写出层**（契约 §4.5 的清单形状 +
+//!     流式 zip 写）
+//!   - `upload`：profile 同步的**编排层**（打包 ⇒ 上传 ⇒ 失败不阻塞关闭）
 //! - `ui`：GPUI 视图（`feature = "ui"`）
 
 #![forbid(unsafe_code)]

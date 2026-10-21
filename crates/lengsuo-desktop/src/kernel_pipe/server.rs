@@ -42,6 +42,7 @@ use crate::kernel_pipe::keys::{self, SessionKeySource, GCM_NONCE_LEN};
 use crate::kernel_pipe::launch::{
     self, imp::Listener, imp::Transport, Endpoint, PipeError, PipeServerConfig,
 };
+use crate::kernel_pipe::upload;
 use crate::kernel_pipe::{decode_frame, Frame, FrameError, FrameType};
 
 #[cfg(test)]
@@ -408,12 +409,29 @@ impl Connection {
         self.closed
     }
 
-    /// 握手：收 `Hello` ⇒ 回 `KeyEnvelope`。
+    /// 握手：收 `Hello` ⇒ 回 `KeyEnvelope` ⇒ 回 `ConfigBundle`。
     ///
     /// ⛔ **fail-closed**：版本不匹配 / Hello 非法 ⇒ **断链 + 报错**，
     /// **绝不降级成「无密钥继续跑」**。
     /// ⛔ 错误文本**不含密钥或信封内容**。
+    ///
+    /// ⭐ **`ConfigBundle` 是必发的一帧**：内核侧
+    /// `KernelPipeClient::Initialize` 的顺序是
+    /// `Hello` → `KeyEnvelope` → **`ConfigBundle`** → 才开始发事件。
+    /// 只回 `KeyEnvelope` ⇒ 内核**卡在等 `ConfigBundle`**（连接不报错，
+    /// 但内核不进入事件阶段）。
     pub fn perform_handshake(&mut self) -> Result<(), PipeError> {
+        self.perform_handshake_with(&upload::ProfileSyncRules::default())
+    }
+
+    /// 握手 + 发 `ConfigBundle`（用给定的收集规则）。
+    ///
+    /// 规则从哪来由调用方决定：平台下发什么就是什么；平台没下发时用
+    /// 默认集合（拍板 1B：默认含 History）。
+    pub fn perform_handshake_with(
+        &mut self,
+        rules: &upload::ProfileSyncRules,
+    ) -> Result<(), PipeError> {
         let hello = match self.read_frame() {
             Ok(Some(frame)) => frame,
             Ok(None) => {
@@ -491,6 +509,17 @@ impl Connection {
             return Err(PipeError::Io(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "发送密钥信封失败",
+            )));
+        }
+
+        // ⭐ 必做项 0：握手后立刻发一帧 `ConfigBundle`。
+        // ⛔ 载荷里不许有密钥、会话密钥、真实用户数据、`data_url`（拍板 3A）。
+        // ⛔ 载荷是合法 JSON，且**冻结后不可变**（内核侧只读一次）。
+        if !self.emit(&upload::config_bundle_frame(rules)) {
+            self.close();
+            return Err(PipeError::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "发送配置包失败",
             )));
         }
         self.ready = true;

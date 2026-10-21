@@ -28,11 +28,20 @@
 //! - [`handshake`]：握手状态机（纯状态，不碰 IO）。
 //! - [`server`]：**IO 层**——管道服务端（监听 + 收发循环）。
 //! - [`launch`]：启动内核进程并拼命令行。
+//! - [`profile_rules`]：profile 同步的收集规则（白名单 / 黑名单 / 上限，纯逻辑）。
+//! - [`zip_writer`]：profile 文件清单 ⇄ zip 归档（清单解析 + 扫目录 + 流式写）。
+//! - [`upload`]：profile 云同步的编排层（打包 + 上传 + 失败不阻塞）。
 
 pub mod handshake;
 pub mod keys;
 pub mod launch;
+pub mod profile_rules;
 pub mod server;
+pub mod upload;
+pub mod zip_writer;
+
+#[cfg(test)]
+pub(crate) mod profile_vectors;
 
 #[cfg(test)]
 pub(crate) mod tests;

@@ -222,6 +222,17 @@ impl KernelPeer {
         assert_eq!(header[4], FrameType::KeyEnvelope.code());
         Frame::new(FrameType::KeyEnvelope, payload)
     }
+
+    /// 收任意一帧（**不**断言类型）：握手后连着收两帧时要用。
+    fn recv_any_frame(&mut self) -> (u8, Vec<u8>, [u8; 8]) {
+        use std::io::Read;
+        let mut header = [0u8; 8];
+        self.stream.read_exact(&mut header).expect("应能读头");
+        let len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        let mut payload = vec![0u8; len];
+        self.stream.read_exact(&mut payload).expect("应能读载荷");
+        (header[4], payload, header)
+    }
 }
 
 /// 造一份配置（固定 `k_machine` + 固定 GCM nonce ⇒ 字节可比对）。
@@ -295,6 +306,65 @@ fn the_handshake_replies_with_the_byte_for_byte_expected_envelope() {
     assert_eq!(keys::to_hex(&plain.session_key), SESSION_KEY_HEX);
     assert_eq!(plain.container_id, CONTAINER_ID.to_vec());
     assert_eq!(plain.expires_unix, EXPIRES_UNIX);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_handshake_is_followed_by_the_config_bundle_frame() {
+    // ⭐ 必做项 0：握手后**立刻**发一帧 `ConfigBundle`（0x03）。
+    // ⛔ 不发这一帧，内核会卡在等 `ConfigBundle`：连接不报错，
+    // 但内核不进入事件阶段 ⇒ 整条通道卡住。
+    let name = format!("t-configbundle-{}", std::process::id());
+    let server = KernelPipeServer::bind(&name, fixed_config()).expect("应能绑定");
+    let mut peer = KernelPeer::connect(&server);
+    let mut conn = server
+        .accept(Some(Duration::from_secs(5)))
+        .expect("应能接受");
+
+    peer.send(&hello_frame(PROTOCOL_VERSION, &HELLO_NONCE));
+    conn.perform_handshake().expect("握手应成功");
+    assert!(conn.is_ready());
+
+    // 第一帧：KeyEnvelope（0x02）。
+    let (kind, _payload, _header) = peer.recv_any_frame();
+    assert_eq!(kind, 0x02, "第一帧必须是密钥信封");
+
+    // 第二帧：ConfigBundle（0x03）—— ⛔ 这一帧不许缺。
+    let (kind, payload, header) = peer.recv_any_frame();
+    assert_eq!(kind, 0x03, "第二帧必须是 ConfigBundle（0x03）");
+
+    // 帧头 8 字节：reserved 三字节全 0、len 是**大端**的载荷字节数。
+    assert_eq!(&header[5..8], &[0x00, 0x00, 0x00], "reserved 必须全 0");
+    let declared = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+    assert_eq!(
+        declared as usize,
+        payload.len(),
+        "len 必须是载荷字节数（大端）"
+    );
+
+    // 载荷是**合法 JSON**，且与跨仓固定向量逐字节相同。
+    let expected = upload::config_bundle_payload(&upload::ProfileSyncRules::default());
+    assert_eq!(
+        payload,
+        expected.as_bytes(),
+        "ConfigBundle 载荷必须与固定向量逐字节相同"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&payload).expect("应是合法 JSON");
+    assert!(
+        parsed.get("profile_sync").is_some(),
+        "必须有 profile_sync 段"
+    );
+
+    // ⛔ 载荷里不许有密钥、会话密钥、`data_url`（拍板 3A）。
+    let text = String::from_utf8_lossy(&payload);
+    assert!(!text.contains("data_url"), "不许有 data_url：{text}");
+    assert!(!text.contains("session_key"), "不许有会话密钥：{text}");
+    assert!(!text.contains("k_machine"), "不许有机器密钥：{text}");
+    assert!(
+        !text.contains(SESSION_KEY_HEX),
+        "不许有会话密钥字节：{text}"
+    );
+    assert!(!text.contains(K_MACHINE_HEX), "不许有机器密钥字节：{text}");
 }
 
 #[cfg(target_os = "linux")]
