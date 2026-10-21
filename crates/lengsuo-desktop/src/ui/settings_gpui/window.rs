@@ -19,10 +19,12 @@ use gpui_kit::*;
 // 组件层的 `Theme` 与本仓语义层同名 ⇒ 改名引入，不混进 `use` 名单。
 use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 
+use crate::state::env_group::EnvGroupState;
 use crate::state::hotkeys::{Binding, HotkeyRegistry};
 use crate::state::org_perm::CapabilityFlags;
 use crate::ui::settings_gpui::view::{PanelId, SettingsView, ThemeChoice};
 
+use super::data_panel;
 use super::hotkey_panel;
 use super::nav;
 use super::security_panel;
@@ -45,6 +47,10 @@ pub struct SettingsGpui {
     ///
     /// ⛔ 本面板**只读**：改键需要持久化 + 冲突裁决，不在本卡范围。
     bindings: Vec<Binding>,
+    /// 浏览器环境分组视图状态（只读快照）：「数据管理」面板的数据源。
+    ///
+    /// ⛔ 本字段只承载快照，界面**不做环境管理**（增删改是业务语义）。
+    data: EnvGroupState,
     /// 窗口自身的焦点句柄：Esc 关闭设置窗口靠它。
     focus: FocusHandle,
 }
@@ -72,6 +78,7 @@ impl SettingsGpui {
             view,
             flags: CapabilityFlags::default(),
             bindings: default_bindings(),
+            data: EnvGroupState::new(),
             focus: cx.focus_handle(),
         }
     }
@@ -90,6 +97,15 @@ impl SettingsGpui {
     pub fn with_bindings(cx: &mut Context<Self>, bindings: Vec<Binding>) -> Self {
         Self {
             bindings,
+            ..Self::new(cx)
+        }
+    }
+
+    /// 带环境分组状态构造（宿主/测试用；默认构造 ⇒ 空状态）。
+    #[must_use]
+    pub fn with_data(cx: &mut Context<Self>, data: EnvGroupState) -> Self {
+        Self {
+            data,
             ..Self::new(cx)
         }
     }
@@ -178,6 +194,7 @@ impl Render for SettingsGpui {
             PanelId::SystemPermissions => {
                 system_perm_panel::render_system_perm_panel(&self.flags, &theme, cx)
             }
+            PanelId::DataManagement => data_panel::render_data_panel(&self.data, &theme, cx),
             _ => div()
                 .text_sm()
                 .text_color(theme.muted_foreground)

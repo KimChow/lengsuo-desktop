@@ -15,9 +15,14 @@
 //! - 「个性化」的快捷键清单**只读**：展示本仓真实的绑定表，
 //!   ⛔ 不提供改键入口（改键需持久化 + 冲突裁决，不在本卡范围）。
 
+mod data;
 mod hotkeys;
 mod permissions;
 
+pub use self::data::{
+    data_panel_body, data_summary, empty_state_text, group_display_name, DataPanelBody,
+    DataSummary, GROUP_NAME_PLACEHOLDER,
+};
 pub use self::hotkeys::{
     command_label, format_hotkey, hotkey_panel, HotkeyPanel, HotkeyRow, EMPTY_BINDINGS_TEXT,
     UNKNOWN_COMMAND_LABEL,
