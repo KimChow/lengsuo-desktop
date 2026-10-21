@@ -29,6 +29,8 @@
 pub mod view;
 
 #[cfg(feature = "ui")]
+mod data_panel;
+#[cfg(feature = "ui")]
 mod hotkey_panel;
 #[cfg(feature = "ui")]
 mod nav;
