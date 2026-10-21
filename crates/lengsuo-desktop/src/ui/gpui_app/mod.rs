@@ -42,6 +42,7 @@
 
 mod demo;
 mod launch;
+pub(crate) mod prefs_file;
 mod sync;
 #[cfg(test)]
 mod tests;

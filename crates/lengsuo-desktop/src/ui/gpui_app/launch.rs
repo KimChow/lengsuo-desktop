@@ -4,8 +4,13 @@
 
 use std::sync::{Arc, Mutex};
 
+// 组件层的 `Theme` 与本仓语义层同名 ⇒ 改名引入，不混进 `use` 名单。
+use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 use gpui_kit::*;
 
+use crate::ui::settings_gpui::view::ThemeChoice;
+
+use super::prefs_file;
 use super::AppShell;
 
 /// 系统窗口标题。
@@ -74,6 +79,25 @@ pub fn launch() -> Result<(), LaunchError> {
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+
+        // ★ 首帧水合：**开窗之前**读主题快照并应用 ⇒ 第一帧就是目标主题，
+        // 不存在「先亮色闪一下再切暗色」。这正是 A9 的落点。
+        //
+        // `gpui_kit::init` 内部把组件层主题固定成 **Light**（`theme::init` 调
+        // `Theme::change(ThemeMode::Light, ...)`），所以**必须**在这里显式改写，
+        // 否则暗色偏好要等到开窗后才被纠正 —— 那一帧白闪就在眼前。
+        let (saved_theme, note) = prefs_file::read_theme();
+        if let Some(reason) = note {
+            eprintln!("[lengsuo-desktop] 主题偏好回落为跟随系统：{reason}");
+        }
+        let mode = match saved_theme {
+            ThemeChoice::Dark => ThemeMode::Dark,
+            ThemeChoice::Light => ThemeMode::Light,
+            // 「跟随系统」⇒ 取**系统外观**（与设置窗口里 `System` 分支同口径）。
+            ThemeChoice::System => ThemeMode::from(cx.window_appearance()),
+        };
+        GpuiTheme::change(mode, None, cx);
+
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Some(WINDOW_TITLE.into()),
