@@ -10,14 +10,14 @@
 //! - **选中项按 id 记**（不是按下标）：结果按来源分组后跨组按下标会错位。
 //!
 //! 搜索条目的形状在 [`search_state`]（同文件树下的子模块）；数据由**调用方注入**
-//! —— 命令来自内置命令表，其余四类（技能 / MCP / 文件 / 会话）在本仓用
-//! **演示数据**，⛔ 真实数据源属运行时侧。
+//! —— 命令来自内置命令表；其余四类（技能 / MCP / 文件 / 会话）的真实数据源
+//! 属运行时侧，⛔ 本仓不实现 ⇒ **没有注入就没有该分组**（不显示假条目）。
 
 #[path = "search_state.rs"]
 pub mod search_state;
 
 pub use self::search_state::{
-    command_items, demo_items, filter_items, flatten, group_by_source, SearchGroup, SearchItem,
+    command_items, filter_items, flatten, group_by_source, real_items, SearchGroup, SearchItem,
     SearchSource,
 };
 
@@ -36,19 +36,25 @@ pub struct PaletteState {
 }
 
 impl Default for PaletteState {
+    /// **空条目**（不是演示数据）：面板默认什么都不显示，直到宿主注入真实条目。
     fn default() -> Self {
-        Self::with_items(demo_items())
+        Self::with_items(Vec::new())
     }
 }
 
 impl PaletteState {
-    /// 用**演示条目**建状态（命令来自内置表 + 四类演示数据）。
+    /// 建一个**空**状态：没有注入任何条目 ⇒ 面板打开后没有任何分组。
+    ///
+    /// ⛔ 不再灌演示条目：本仓没有真实数据源的类别 ⇒ **不显示该分组**，
+    /// 而不是显示假条目。
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// 用**注入的条目**建状态：真实数据源接入时的入口。
+    ///
+    /// 注入什么就显示什么；**空分组不出现**（见 [`group_by_source`]）。
     #[must_use]
     pub fn with_items(items: Vec<SearchItem>) -> Self {
         Self {
@@ -57,6 +63,15 @@ impl PaletteState {
             groups: Vec::new(),
             selected_id: None,
         }
+    }
+
+    /// 换掉全部条目（宿主拿到新数据时用），并重新过滤。
+    ///
+    /// 换数据后**关键词保留**：「同一批关键词下换一批结果」，而不是清空输入。
+    pub fn set_items(&mut self, items: Vec<SearchItem>) {
+        self.search = SearchState::new(items);
+        self.search.set_keyword(self.keyword().to_owned());
+        self.refilter();
     }
 
     #[must_use]
@@ -229,10 +244,19 @@ impl PaletteState {
 #[cfg(test)]
 mod tests {
     // 显式导入（不用 `use super::*`）：保持符号来源清晰。
-    use super::{demo_items, PaletteState, SearchItem, SearchSource};
+    use super::search_state::demo_items;
+    use super::{PaletteState, SearchItem, SearchSource};
 
+    /// 带演示条目的状态（测试夹具）：演示数据只在测试构建里存在。
     fn opened() -> PaletteState {
-        let mut state = PaletteState::new();
+        let mut state = PaletteState::with_items(demo_items());
+        state.open();
+        state
+    }
+
+    /// 带**真实条目**（内置命令表）的已打开状态：生产路径的样子。
+    fn opened_real() -> PaletteState {
+        let mut state = PaletteState::with_items(super::real_items());
         state.open();
         state
     }
@@ -248,6 +272,15 @@ mod tests {
         assert_eq!(state.keyword(), "");
         assert_eq!(state.selected_id(), None);
         assert_eq!(state.execute(), None);
+    }
+
+    #[test]
+    fn new_palette_has_no_items_at_all() {
+        let mut state = PaletteState::new();
+        state.open();
+        assert_eq!(total(&state), 0, "生产路径不得自带任何条目");
+        assert!(state.groups().is_empty(), "没有注入就没有分组");
+        assert_eq!(state.selected_id(), None);
     }
 
     #[test]
@@ -403,5 +436,50 @@ mod tests {
         assert!(state.backspace());
         assert_eq!(state.keyword(), "");
         assert!(!state.backspace(), "空关键词时不得声称有变化");
+    }
+
+    // —— 注入真实条目（e28）：没有注入的来源**不出现** ——
+
+    #[test]
+    fn injected_commands_show_only_the_command_group() {
+        let state = opened_real();
+        let sources: Vec<SearchSource> = state.groups().iter().map(|g| g.source).collect();
+        assert_eq!(sources, vec![SearchSource::Command], "只注入了命令");
+        for source in [
+            SearchSource::Skill,
+            SearchSource::Mcp,
+            SearchSource::File,
+            SearchSource::Session,
+        ] {
+            assert!(
+                !state.groups().iter().any(|g| g.source == source),
+                "未注入的来源不得出现分组：{:?}",
+                source
+            );
+        }
+        let titles: Vec<&str> = state
+            .groups()
+            .iter()
+            .flat_map(|g| g.items.iter())
+            .map(|item| item.title.as_str())
+            .collect();
+        assert!(titles.contains(&"新建会话"), "真实命令标题必须可见");
+        assert!(
+            titles.iter().all(|t| !t.contains("演示数据")),
+            "面板里不得出现演示数据字样"
+        );
+    }
+
+    #[test]
+    fn set_items_replaces_the_injected_set() {
+        let mut state = opened_real();
+        state.set_items(vec![SearchItem {
+            source: SearchSource::File,
+            id: "file.readme".to_owned(),
+            title: "README".to_owned(),
+            hint: None,
+        }]);
+        let sources: Vec<SearchSource> = state.groups().iter().map(|g| g.source).collect();
+        assert_eq!(sources, vec![SearchSource::File], "换数据后分组随之变化");
     }
 }

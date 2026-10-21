@@ -4,6 +4,7 @@
 //! `test` 属性宏带进来并遮蔽标准库的 `#[test]`（速查表 §12.3）。
 #![cfg(test)]
 
+use crate::state::palette_state::search_state::real_items;
 use crate::state::palette_state::PaletteState;
 use crate::ui::command_palette::{self, PaletteKey};
 // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
@@ -15,9 +16,21 @@ fn result_count(state: &PaletteState) -> usize {
     state.groups().iter().map(|group| group.items.len()).sum()
 }
 
+/// 注入**真实条目**（内置命令表）但**未打开**的状态。
+fn real_state() -> PaletteState {
+    PaletteState::with_items(real_items())
+}
+
+/// 注入**真实条目**（内置命令表）的**已打开**状态：生产路径的样子。
+fn opened_real() -> PaletteState {
+    let mut state = real_state();
+    state.open();
+    state
+}
+
 #[test]
 fn panel_stays_closed_until_opened() {
-    let mut state = PaletteState::new();
+    let mut state = real_state();
     assert!(!state.is_open());
     assert!(command_palette::render(&state).is_none());
     state.open();
@@ -29,8 +42,7 @@ fn panel_stays_closed_until_opened() {
 
 #[test]
 fn selection_stops_at_the_edges() {
-    let mut state = PaletteState::new();
-    state.open();
+    let mut state = opened_real();
     command_palette::handle_key(&mut state, PaletteKey::Up);
     assert_eq!(state.selected_index(), Some(0), "首项上移不变");
     for _ in 0..result_count(&state) + 2 {
@@ -47,8 +59,7 @@ fn selection_stops_at_the_edges() {
 
 #[test]
 fn search_box_text_reaches_the_keyword_character_by_character() {
-    let mut state = PaletteState::new();
-    state.open();
+    let mut state = opened_real();
     let mut sync = PanelSyncState::default();
 
     // IME 提交后编辑器里一次出现的可能是一整段文字：按 char 追加，绝不按字节切。
@@ -63,8 +74,7 @@ fn search_box_text_reaches_the_keyword_character_by_character() {
 
 #[test]
 fn external_clear_is_written_back_to_the_search_box() {
-    let mut state = PaletteState::new();
-    state.open();
+    let mut state = opened_real();
     let mut sync = PanelSyncState::default();
     sync.accept_search_box(&mut state, "设置");
     assert_eq!(
@@ -86,8 +96,7 @@ fn external_clear_is_written_back_to_the_search_box() {
 
 #[test]
 fn ime_input_filters_like_the_description_layer() {
-    let mut state = PaletteState::new();
-    state.open();
+    let mut state = opened_real();
     let mut sync = PanelSyncState::default();
     // 真实路径：编辑器先拿到字符，再发 `Change`；关键词只能来自写回。
     let mut typed = String::new();
@@ -105,8 +114,7 @@ fn ime_input_filters_like_the_description_layer() {
 
 #[test]
 fn deleting_multibyte_text_never_leaves_half_a_character() {
-    let mut state = PaletteState::new();
-    state.open();
+    let mut state = opened_real();
     let mut sync = PanelSyncState::default();
     for text in ["设置", "设"] {
         assert!(sync.accept_search_box(&mut state, text));

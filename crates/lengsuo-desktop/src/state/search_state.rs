@@ -4,6 +4,9 @@
 //! 本模块定义**条目形状 + 过滤 + 分组 + 状态**；**数据由调用方注入**
 //! （技能 / MCP / 文件 / 会话的真实数据源在运行时侧，⛔ 本仓不实现）。
 //!
+//! ⛔ **演示数据只活在测试里**（`#[cfg(test)]` 符号）：生产路径只能拿到
+//! 调用方注入的真实条目，界面层**无法**显示假条目。
+//!
 //! ⚠️ 模块路径：文件物理落在 `state/search_state.rs`，但 `state/mod.rs` 是**共享区**
 //! （本卡不得改）⇒ 由 `state/palette_state.rs` 用 `#[path]` 引入，
 //! 模块路径是 `crate::state::palette_state::search_state`。
@@ -135,10 +138,21 @@ pub fn command_items() -> Vec<SearchItem> {
         .collect()
 }
 
-/// 演示条目集合：命令来自内置命令表，其余四类是**演示数据**。
+/// 本仓**当前真实可得的**全部条目：只有**命令**一类。
 ///
-/// 技能 / MCP / 文件 / 会话的真实数据源在运行时侧，⛔ 本仓不实现；
-/// 这里只提供**形状正确**的占位条目，让面板能按五类来源分组展示。
+/// ⛔ 技能 / MCP / 文件 / 会话的真实数据源在运行时侧，**本仓不实现**
+/// ⇒ 这里**不**为它们编造条目；宿主拿到真实数据后自行注入那些类别。
+#[must_use]
+pub fn real_items() -> Vec<SearchItem> {
+    command_items()
+}
+
+/// 演示条目集合：**测试夹具**（⛔ 生产构建里**没有**这个函数）。
+///
+/// ⛔ 生产路径**不灌演示数据**：命令面板只显示**宿主注入的真实条目**。
+/// 演示条目整个符号都活在 `#[cfg(test)]` 里 ⇒ 界面层在生产构建里
+/// **拿不到**假条目（fail-closed）。
+#[cfg(test)]
 #[must_use]
 pub fn demo_items() -> Vec<SearchItem> {
     let mut items = command_items();
@@ -220,7 +234,6 @@ impl SearchState {
     }
 
     /// 过滤 + 分组后的结果（空分组不出现）。
-    #[must_use]
     pub fn groups(&self) -> Vec<SearchGroup> {
         group_by_source(&filter_items(&self.keyword, &self.items))
     }
@@ -230,8 +243,8 @@ impl SearchState {
 mod tests {
     // 显式导入（不用 `use super::*`）：保持符号来源清晰。
     use super::{
-        command_items, demo_items, filter_items, group_by_source, SearchItem, SearchSource,
-        SearchState,
+        command_items, demo_items, filter_items, group_by_source, real_items, SearchItem,
+        SearchSource, SearchState,
     };
 
     fn item(source: SearchSource, id: &str, title: &str) -> SearchItem {
@@ -280,6 +293,29 @@ mod tests {
         assert_eq!(items.len(), crate::theme::palette::COMMANDS.len());
         assert!(items.iter().all(|i| i.source == SearchSource::Command));
         assert!(items.iter().all(|i| i.hint.is_none()));
+    }
+
+    #[test]
+    fn real_items_only_contain_the_command_source() {
+        let items = real_items();
+        assert_eq!(items, command_items(), "真实来源当前只有内置命令表");
+        assert!(items.iter().all(|i| i.source == SearchSource::Command));
+        assert!(
+            items.iter().all(|i| i.hint.is_none()),
+            "真实条目不得带演示标记"
+        );
+        for source in [
+            SearchSource::Skill,
+            SearchSource::Mcp,
+            SearchSource::File,
+            SearchSource::Session,
+        ] {
+            assert!(
+                !items.iter().any(|i| i.source == source),
+                "本仓没有真实数据源的类别不得被编造：{:?}",
+                source
+            );
+        }
     }
 
     #[test]
@@ -343,7 +379,7 @@ mod tests {
         assert_eq!(
             filter_items("   ", &items).len(),
             items.len(),
-            "全是空白等同空关键词"
+            "空白等同空关键词"
         );
     }
 

@@ -13,8 +13,7 @@ use gpui_kit::component::Theme;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::*;
 
-use crate::ui::command_palette::search::SearchItem;
-use crate::ui::command_palette::CommandPaletteView;
+use crate::ui::command_palette::{CommandPaletteView, SearchItem};
 
 use super::layout::LIST_MAX_HEIGHT;
 
