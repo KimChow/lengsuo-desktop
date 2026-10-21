@@ -9,10 +9,12 @@
 //! 分层约定（自下而上）：
 //! - `state`：视图状态机（纯 Rust，无 IO、无渲染）
 //! - `theme`：设计令牌
+//! - `kernel_pipe`：内核管道的**纯逻辑层**（帧编解码 / 密钥派生 / 握手状态机）
 //! - `ui`：GPUI 视图（`feature = "ui"`）
 
 #![forbid(unsafe_code)]
 
+pub mod kernel_pipe;
 pub mod state;
 pub mod theme;
 pub mod ui;
