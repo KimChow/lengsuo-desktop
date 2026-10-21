@@ -26,6 +26,7 @@ use crate::ui::settings_gpui::view::{PanelId, SettingsView, ThemeChoice};
 use super::hotkey_panel;
 use super::nav;
 use super::security_panel;
+use super::system_perm_panel;
 use super::theme_panel;
 
 /// 设置窗口视图。
@@ -173,6 +174,9 @@ impl Render for SettingsGpui {
             PanelId::Security => security_panel::render_security_panel(&self.flags, &theme, cx),
             PanelId::Personalization => {
                 hotkey_panel::render_hotkey_panel(&self.bindings, &theme, cx)
+            }
+            PanelId::SystemPermissions => {
+                system_perm_panel::render_system_perm_panel(&self.flags, &theme, cx)
             }
             _ => div()
                 .text_sm()
