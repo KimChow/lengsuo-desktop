@@ -16,11 +16,13 @@
 //!   ⛔ 不提供改键入口（改键需持久化 + 冲突裁决，不在本卡范围）。
 
 mod hotkeys;
+mod permissions;
 
 pub use self::hotkeys::{
     command_label, format_hotkey, hotkey_panel, HotkeyPanel, HotkeyRow, EMPTY_BINDINGS_TEXT,
     UNKNOWN_COMMAND_LABEL,
 };
+pub use self::permissions::{permission_display, PermissionDisplay};
 
 use crate::state::org_perm::{Capability, CapabilityFlags, DenialReason};
 use crate::theme::tokens::Theme as SemanticTheme;
