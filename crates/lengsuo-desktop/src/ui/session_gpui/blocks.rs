@@ -48,57 +48,11 @@ pub(super) fn render_assistant_text(text: &str, align: Align, ctx: &BlockCtx<'_>
 }
 
 /// 工具调用卡片：默认收起，点标题展开。
+///
+/// 真正的渲染在 [`super::tool_card_view`]（图标 + 人话标题 + 参数摘要 + 可折叠）；
+/// 这里只做转发，**不重新实现**任何判断。
 pub(super) fn render_tool_call(card: &ToolCard, ctx: &BlockCtx<'_>) -> AnyElement {
-    let theme = ctx.theme;
-    let expanded = ctx.expanded(card);
-    let folded = card.folded;
-
-    let marker = if expanded { "▼" } else { "▶" };
-    let header = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px_3()
-        .py_2()
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(marker),
-        )
-        .child(div().text_sm().font_bold().child(card.title.clone()));
-
-    let index = ctx.index;
-    let header = with_click(
-        header,
-        ctx.element_id("tool-call", 0),
-        ctx.host,
-        move |view| view.toggle_expanded(index, folded),
-    );
-
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .w_full()
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.background)
-        .child(header);
-
-    if expanded {
-        body = body.child(
-            div()
-                .px_3()
-                .pb_2()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(card.summary.clone()),
-        );
-    }
-    body.into_any_element()
+    super::tool_card_view::render_tool_card(card, ctx.tool_detail(), ctx)
 }
 
 /// 工具结果：按 [`ToolResultKind`] 分三种形态渲染。

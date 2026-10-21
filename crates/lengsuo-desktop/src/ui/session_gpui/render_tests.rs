@@ -28,11 +28,11 @@ mod tests {
     #[test]
     fn tool_call_starts_folded_and_toggles() {
         let mut ui = SessionUiState::default();
-        assert!(!ui.is_expanded(0, true), "工具卡片默认收起");
-        ui.toggle_expanded(0, true);
-        assert!(ui.is_expanded(0, true));
-        ui.toggle_expanded(0, true);
-        assert!(!ui.is_expanded(0, true));
+        assert!(ui.is_tool_folded("tc-a"), "工具卡片默认收起");
+        ui.toggle_tool_fold("tc-a");
+        assert!(!ui.is_tool_folded("tc-a"), "点击后展开");
+        ui.toggle_tool_fold("tc-a");
+        assert!(ui.is_tool_folded("tc-a"), "再点一次收起");
     }
 
     #[test]

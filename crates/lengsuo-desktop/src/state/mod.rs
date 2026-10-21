@@ -11,4 +11,5 @@ pub mod hotkeys;
 pub mod org;
 pub mod org_perm;
 pub mod palette_state;
+pub mod session_demo;
 pub mod session_stream;
