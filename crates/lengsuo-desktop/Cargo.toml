@@ -32,6 +32,12 @@ hkdf = { workspace = true }
 getrandom = { workspace = true }
 zeroize = { workspace = true }
 
+# profile 打包用的 zip 依赖（p3-zip-deps 引入，r-profile-sync 使用）：
+#   zip —— profile 打包的 zip 容器读写（32 MiB 单包上限 ⇒ 流式写，不整包进内存）
+# feature 见根 Cargo.toml 的说明：deflate-flate2-zlib-rs 是唯一能编译通过的 deflate 配法。
+# 本卡只引入依赖、不写实现；实际使用在 r-profile-sync。
+zip = { workspace = true }
+
 # 桌面二进制入口：只在开 `ui` feature 时构建（否则 lib 里没有 GPUI 依赖，
 # 这个 bin 编不过）。运行 `cargo run --features ui --bin lengsuo-desktop`。
 [[bin]]

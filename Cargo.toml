@@ -27,6 +27,23 @@ hkdf = "0.12"
 getrandom = { version = "0.2", features = ["std"] }
 zeroize = "1"
 
+# profile 打包用的 zip 依赖：p3-zip-deps 卡引入，供 r-profile-sync 卡使用。
+#
+# feature 必须钉在 deflate-flate2-zlib-rs：
+#   zip 9.x 对 flate2 的声明是 default-features = false，而 deflate-flate2
+#   只开 _deflate-any、不选后端 ⇒ flate2 编译失败
+#   （"You need to choose a zlib backend" + unresolved import crc32fast）。
+#   deflate-flate2-zlib-rs 会带上 flate2/zlib-rs（纯 Rust 后端，不引 C 依赖），
+#   且 zlib-rs 0.6.8 已在锁文件里（GPUI 图像栈拉进来的），零新增传递依赖。
+#
+# 关掉 default：默认 feature 集是 aes-crypto/bzip2/deflate64/lzma/ppmd/time/
+# zstd/xz，本仓一个都用不到，每个都会多拉一批传递依赖（bzip2-sys、zstd-sys…）。
+# 关掉后锁文件只新增 3 个包：zip / typed-path / nix（后两个是 zip 的传递依赖）。
+#
+# 代价：time feature 不在 ⇒ 归档条目不写真实时间戳（DOS 时间取 1980-01-01 默认值）；
+#       只有 deflate(8) 与 store(0) 两种压缩方法可用（本仓只要这两种）。
+zip = { version = "9.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
 [profile.dev]
 incremental = false
 debug = 0
