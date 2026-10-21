@@ -37,4 +37,5 @@ pub mod org_gpui;
 pub mod palette_gpui;
 pub mod right_panel_gpui;
 pub mod session_gpui;
+pub mod settings_gpui;
 pub mod sidebar_gpui;
