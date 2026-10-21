@@ -1,4 +1,4 @@
-//! 左边栏：会话列表（置顶 / 归档 / 未读）。
+//! 左边栏：会话列表（置顶 / 归档 / 未读）＋ 频道入口 ＋ 智能体管理入口。
 //!
 //! 本模块维护边栏的**视图状态**（会话条目、选中项、归档是否可见）与渲染
 //! 描述，不接真实数据源、不发起请求。条目由调用方注入，与
@@ -10,6 +10,24 @@
 //! - 置顶会话单独成组排在最前，其余保持注入顺序；
 //! - 归档会话默认隐藏，只显示数量；显式展开后才出现在「归档」组；
 //! - 未读以 `unread` 标记交给渲染层画圆点，本层不推断已读。
+//!
+//! **边栏现在有三块**（对齐 A15）：会话列表 + 频道入口 + 智能体管理入口。
+//! 后两块只做**界面**（入口、计数、选中态），⛔ 不实现频道收发、不实现智能体
+//! 创建、不实现多代理角色模型（那是运行时与业务语义）。
+//!
+//! 目录式子模块（Rust 2018 起 `ui/mod.rs` 里的 `pub mod sidebar;` 自动指向本目录）：
+//! - [`sections`]：会话分组的摊平（置顶 / 全部会话 / 归档）。
+//! - [`nav`]：频道入口 + 智能体管理入口的描述（纯数据）。
+//! - `tests`：描述层契约测试。
+
+pub mod nav;
+mod sections;
+
+#[cfg(test)]
+mod tests;
+
+pub use nav::{NavEntry, NavKind};
+pub use sections::{SessionRow, SidebarSection};
 
 /// 边栏标题。
 pub const HEADING: &str = "会话";
@@ -33,14 +51,20 @@ pub const ARCHIVED_TOGGLE_HIDE: &str = "隐藏归档";
 /// 一条会话列表项（界面数据，不是协议模型）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionEntry {
+    /// 会话 id。
     pub id: String,
+    /// 会话标题。
     pub title: String,
+    /// 是否置顶。
     pub pinned: bool,
+    /// 是否已归档。
     pub archived: bool,
+    /// 是否有未读。
     pub unread: bool,
 }
 
 impl SessionEntry {
+    /// 构造一条会话（默认不置顶 / 不归档 / 无未读）。
     #[must_use]
     pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
         Self {
@@ -52,18 +76,21 @@ impl SessionEntry {
         }
     }
 
+    /// 设置置顶状态。
     #[must_use]
     pub fn with_pinned(mut self, pinned: bool) -> Self {
         self.pinned = pinned;
         self
     }
 
+    /// 设置归档状态。
     #[must_use]
     pub fn with_archived(mut self, archived: bool) -> Self {
         self.archived = archived;
         self
     }
 
+    /// 设置未读状态。
     #[must_use]
     pub fn with_unread(mut self, unread: bool) -> Self {
         self.unread = unread;
@@ -77,14 +104,22 @@ pub struct SidebarState {
     entries: Vec<SessionEntry>,
     selected: Option<String>,
     show_archived: bool,
+    /// 频道数量（用于频道入口角标）。
+    channel_count: usize,
+    /// 智能体数量（用于智能体管理入口角标）。
+    agent_count: usize,
+    /// 当前选中的导航入口（`None` = 选的是会话）。
+    selected_nav: Option<NavKind>,
 }
 
 impl SidebarState {
+    /// 空的边栏状态。
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 全部会话条目。
     #[must_use]
     pub fn entries(&self) -> &[SessionEntry] {
         &self.entries
@@ -100,6 +135,7 @@ impl SidebarState {
         }
     }
 
+    /// 当前选中的会话 id。
     #[must_use]
     pub fn selected(&self) -> Option<&str> {
         self.selected.as_deref()
@@ -118,6 +154,7 @@ impl SidebarState {
         selectable
     }
 
+    /// 归档是否可见。
     #[must_use]
     pub fn show_archived(&self) -> bool {
         self.show_archived
@@ -138,6 +175,7 @@ impl SidebarState {
         }
     }
 
+    /// 翻转归档可见性。
     pub fn toggle_archived(&mut self) {
         self.set_show_archived(!self.show_archived);
     }
@@ -175,26 +213,43 @@ impl SidebarState {
         pinned.extend(regular);
         pinned
     }
-}
 
-/// 渲染后的一行会话。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionRow {
-    pub id: String,
-    pub title: String,
-    /// 标题是否为占位文案（原始标题缺失 / 空白）。
-    pub title_is_placeholder: bool,
-    pub pinned: bool,
-    pub archived: bool,
-    pub unread: bool,
-    pub selected: bool,
-}
+    /// 频道数量（频道入口角标）。
+    #[must_use]
+    pub fn channel_count(&self) -> usize {
+        self.channel_count
+    }
 
-/// 边栏中的一个分组。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SidebarSection {
-    pub label: &'static str,
-    pub rows: Vec<SessionRow>,
+    /// 智能体数量（智能体管理入口角标）。
+    #[must_use]
+    pub fn agent_count(&self) -> usize {
+        self.agent_count
+    }
+
+    /// 设置频道数量。
+    pub fn set_channel_count(&mut self, count: usize) {
+        self.channel_count = count;
+    }
+
+    /// 设置智能体数量。
+    pub fn set_agent_count(&mut self, count: usize) {
+        self.agent_count = count;
+    }
+
+    /// 当前选中的导航入口（`None` = 选的是会话）。
+    #[must_use]
+    pub fn selected_nav(&self) -> Option<NavKind> {
+        self.selected_nav
+    }
+
+    /// 选中一个导航入口；返回是否发生了变化。
+    pub fn select_nav(&mut self, kind: NavKind) -> bool {
+        if self.selected_nav == Some(kind) {
+            return false;
+        }
+        self.selected_nav = Some(kind);
+        true
+    }
 }
 
 /// 边栏渲染描述。
@@ -202,8 +257,11 @@ pub struct SidebarSection {
 pub struct SidebarView {
     /// 边栏实际宽度（逻辑像素）。
     pub width: f32,
+    /// 边栏标题。
     pub heading: &'static str,
+    /// 会话分组（置顶 / 全部会话 / 归档）。
     pub sections: Vec<SidebarSection>,
+    /// 当前选中的会话 id。
     pub selected: Option<String>,
     /// 未读角标数量（不含归档）。
     pub unread_count: usize,
@@ -213,6 +271,8 @@ pub struct SidebarView {
     pub archived_toggle_label: &'static str,
     /// 没有任何可见会话时的占位文案。
     pub empty_text: Option<&'static str>,
+    /// 两个导航入口（频道 + 智能体管理）。
+    pub nav: Vec<NavEntry>,
 }
 
 /// 生成边栏渲染描述。
@@ -220,12 +280,7 @@ pub struct SidebarView {
 pub fn render(state: &SidebarState, width: f32) -> SidebarView {
     let mut sections = Vec::new();
 
-    let pinned: Vec<SessionRow> = state
-        .visible_entries()
-        .into_iter()
-        .filter(|entry| entry.pinned)
-        .map(|entry| row(entry, state.selected()))
-        .collect();
+    let pinned = sections::pinned_rows(state);
     if !pinned.is_empty() {
         sections.push(SidebarSection {
             label: PINNED_SECTION,
@@ -233,12 +288,7 @@ pub fn render(state: &SidebarState, width: f32) -> SidebarView {
         });
     }
 
-    let regular: Vec<SessionRow> = state
-        .visible_entries()
-        .into_iter()
-        .filter(|entry| !entry.pinned)
-        .map(|entry| row(entry, state.selected()))
-        .collect();
+    let regular = sections::regular_rows(state);
     if !regular.is_empty() {
         sections.push(SidebarSection {
             label: SESSIONS_SECTION,
@@ -247,12 +297,7 @@ pub fn render(state: &SidebarState, width: f32) -> SidebarView {
     }
 
     if state.show_archived() {
-        let archived: Vec<SessionRow> = state
-            .entries()
-            .iter()
-            .filter(|entry| entry.archived)
-            .map(|entry| row(entry, state.selected()))
-            .collect();
+        let archived = sections::archived_rows(state);
         if !archived.is_empty() {
             sections.push(SidebarSection {
                 label: ARCHIVED_SECTION,
@@ -286,180 +331,10 @@ pub fn render(state: &SidebarState, width: f32) -> SidebarView {
             ARCHIVED_TOGGLE_SHOW
         },
         empty_text,
-    }
-}
-
-fn row(entry: &SessionEntry, selected: Option<&str>) -> SessionRow {
-    let title = entry.title.trim();
-    SessionRow {
-        id: entry.id.clone(),
-        title: if title.is_empty() {
-            UNTITLED_SESSION.to_owned()
-        } else {
-            title.to_owned()
-        },
-        title_is_placeholder: title.is_empty(),
-        pinned: entry.pinned,
-        archived: entry.archived,
-        unread: entry.unread,
-        selected: selected == Some(entry.id.as_str()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample() -> SidebarState {
-        let mut state = SidebarState::new();
-        state.set_entries(vec![
-            SessionEntry::new("a", "普通一").with_unread(true),
-            SessionEntry::new("b", "置顶一").with_pinned(true),
-            SessionEntry::new("c", "归档一").with_archived(true),
-            SessionEntry::new("d", "普通二"),
-        ]);
-        state
-    }
-
-    #[test]
-    fn entries_keep_injection_order_and_selection_starts_empty() {
-        let state = sample();
-        assert_eq!(state.entries().len(), 4);
-        assert_eq!(state.selected(), None);
-        assert_eq!(state.unread_count(), 1);
-        assert_eq!(state.archived_count(), 1);
-    }
-
-    #[test]
-    fn pinned_sessions_are_sorted_first() {
-        let state = sample();
-        let visible: Vec<&str> = state
-            .visible_entries()
-            .iter()
-            .map(|entry| entry.id.as_str())
-            .collect();
-        assert_eq!(visible, ["b", "a", "d"], "置顶在前，归档隐藏，其余保持顺序");
-    }
-
-    #[test]
-    fn archived_are_hidden_by_default_and_toggleable() {
-        let mut state = sample();
-        let view = render(&state, 260.0);
-        assert_eq!(view.hidden_archived, 1);
-        assert_eq!(view.archived_toggle_label, ARCHIVED_TOGGLE_SHOW);
-        assert!(view
-            .sections
-            .iter()
-            .all(|section| section.label != ARCHIVED_SECTION));
-
-        state.toggle_archived();
-        let view = render(&state, 260.0);
-        assert_eq!(view.hidden_archived, 0);
-        assert_eq!(view.archived_toggle_label, ARCHIVED_TOGGLE_HIDE);
-        let archived = view
-            .sections
-            .iter()
-            .find(|section| section.label == ARCHIVED_SECTION)
-            .expect("展开后应有归档分组");
-        assert_eq!(archived.rows.len(), 1);
-        assert_eq!(archived.rows[0].title, "归档一");
-    }
-
-    #[test]
-    fn sections_show_pinned_then_regular() {
-        let view = render(&sample(), 260.0);
-        let labels: Vec<&str> = view.sections.iter().map(|s| s.label).collect();
-        assert_eq!(labels, [PINNED_SECTION, SESSIONS_SECTION]);
-        assert_eq!(view.sections[0].rows.len(), 1);
-        assert_eq!(view.sections[1].rows.len(), 2);
-        assert_eq!(view.width, 260.0);
-        assert_eq!(view.heading, HEADING);
-        assert_eq!(view.unread_count, 1);
-        assert_eq!(view.empty_text, None);
-    }
-
-    #[test]
-    fn select_requires_a_visible_entry() {
-        let mut state = sample();
-        assert!(state.select("a"));
-        assert_eq!(state.selected(), Some("a"));
-        assert!(!state.select("missing"));
-        assert_eq!(state.selected(), Some("a"), "未知 id 不得改选中");
-        assert!(!state.select("c"), "归档隐藏时不可选中");
-        assert_eq!(state.selected(), Some("a"));
-    }
-
-    #[test]
-    fn hiding_archived_clears_archived_selection() {
-        let mut state = sample();
-        state.set_show_archived(true);
-        assert!(state.select("c"));
-        assert_eq!(state.selected(), Some("c"));
-        state.set_show_archived(false);
-        assert_eq!(state.selected(), None, "归档隐藏后选中项不得悬空");
-    }
-
-    #[test]
-    fn replacing_entries_clears_stale_selection() {
-        let mut state = sample();
-        assert!(state.select("a"));
-        state.set_entries(vec![SessionEntry::new("x", "新会话")]);
-        assert_eq!(state.selected(), None);
-        assert_eq!(state.entries().len(), 1);
-    }
-
-    #[test]
-    fn empty_state_and_missing_titles_are_explicit() {
-        let view = render(&SidebarState::new(), 260.0);
-        assert!(view.sections.is_empty());
-        assert_eq!(view.empty_text, Some(EMPTY_TEXT));
-
-        let mut only_archived = SidebarState::new();
-        only_archived.set_entries(vec![
-            SessionEntry::new("archived", "旧会话").with_archived(true)
-        ]);
-        let view = render(&only_archived, 260.0);
-        assert_eq!(view.empty_text, Some(EMPTY_ACTIVE_TEXT));
-        assert_eq!(view.hidden_archived, 1);
-
-        let mut state = SidebarState::new();
-        state.set_entries(vec![
-            SessionEntry::new("blank", "   "),
-            SessionEntry::new("archived", "旧会话").with_archived(true),
-        ]);
-        let view = render(&state, 260.0);
-        assert_eq!(view.empty_text, None, "有进行中会话时不显示空态");
-        let row = &view.sections[0].rows[0];
-        assert_eq!(row.title, UNTITLED_SESSION);
-        assert!(row.title_is_placeholder);
-        assert!(!row.title.contains("blank"), "不得拿 id 冒充标题");
-    }
-
-    #[test]
-    fn selected_row_is_marked() {
-        let mut state = sample();
-        assert!(state.select("b"));
-        let view = render(&state, 260.0);
-        let selected: Vec<&SessionRow> = view
-            .sections
-            .iter()
-            .flat_map(|section| section.rows.iter())
-            .filter(|row| row.selected)
-            .collect();
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].id, "b");
-        assert_eq!(view.selected.as_deref(), Some("b"));
-    }
-
-    #[test]
-    fn unread_count_ignores_archived_sessions() {
-        let mut state = SidebarState::new();
-        state.set_entries(vec![
-            SessionEntry::new("a", "进行中").with_unread(true),
-            SessionEntry::new("b", "已归档")
-                .with_archived(true)
-                .with_unread(true),
-        ]);
-        assert_eq!(state.unread_count(), 1);
+        nav: nav::nav_entries(
+            state.channel_count(),
+            state.agent_count(),
+            state.selected_nav(),
+        ),
     }
 }
