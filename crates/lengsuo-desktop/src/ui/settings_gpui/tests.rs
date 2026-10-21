@@ -9,11 +9,13 @@
 
 use std::collections::HashSet;
 
+use crate::state::hotkeys::{Binding, Hotkey, Key, Modifiers, DEFAULT_BINDINGS};
 use crate::state::org_perm::{Capability, CapabilityFlags, DenialReason};
 use crate::theme::tokens::Theme as SemanticTheme;
 use crate::ui::settings_gpui::view::{
-    capability_label, capability_rows, has_delivered_marks, theme_label, CapabilityStatus, PanelId,
-    SettingsView, ThemeChoice, PANELS, THEME_CHOICES,
+    capability_label, capability_rows, command_label, format_hotkey, has_delivered_marks,
+    hotkey_panel, theme_label, CapabilityStatus, HotkeyPanel, PanelId, SettingsView, ThemeChoice,
+    EMPTY_BINDINGS_TEXT, PANELS, THEME_CHOICES, UNKNOWN_COMMAND_LABEL,
 };
 
 #[test]
@@ -222,5 +224,165 @@ fn the_ui_never_infers_permissions_from_roles_or_entitlement() {
     }));
     for row in capability_rows(&flags) {
         assert_eq!(row.status, CapabilityStatus::NotDelivered);
+    }
+}
+
+#[test]
+fn hotkey_formats_single_and_double_modifiers() {
+    // 单修饰：Ctrl+K。
+    assert_eq!(
+        format_hotkey(&Hotkey::new(Modifiers::CTRL, Key::Character('k'))),
+        "Ctrl+K"
+    );
+    // 双修饰：Ctrl+Shift+P。
+    assert_eq!(
+        format_hotkey(&Hotkey::new(Modifiers::CTRL_SHIFT, Key::Character('p'))),
+        "Ctrl+Shift+P"
+    );
+}
+
+#[test]
+fn hotkey_without_modifiers_has_no_stray_plus() {
+    // 无修饰键 ⇒ 只输出键名，**不**出现多余的 `+`。
+    assert_eq!(format_hotkey(&Hotkey::plain(Key::Escape)), "Escape");
+    assert_eq!(format_hotkey(&Hotkey::plain(Key::Enter)), "Enter");
+    assert!(!format_hotkey(&Hotkey::plain(Key::Escape)).starts_with('+'));
+}
+
+#[test]
+fn hotkey_format_handles_non_ascii_keys_without_panicking() {
+    // 非 ASCII 键：不能 panic，必须给出可展示的文本。
+    let text = format_hotkey(&Hotkey::plain(Key::Character('设')));
+    assert!(!text.is_empty(), "非 ASCII 键也必须格式化成非空文本");
+    // 组合键同理。
+    let text = format_hotkey(&Hotkey::new(Modifiers::CTRL, Key::Character('设')));
+    assert!(
+        text.contains('设'),
+        "非 ASCII 键的字符必须出现在结果里：{text}"
+    );
+}
+
+#[test]
+fn hotkey_format_handles_named_and_function_keys() {
+    assert_eq!(format_hotkey(&Hotkey::plain(Key::Space)), "Space");
+    assert_eq!(format_hotkey(&Hotkey::plain(Key::PageUp)), "PageUp");
+    assert_eq!(format_hotkey(&Hotkey::plain(Key::Function(5))), "F5");
+}
+
+#[test]
+fn every_default_binding_has_a_chinese_label() {
+    // 「不许漏项」的可机器判定形式：内置绑定**每一条**都要有非空中文说明，
+    // 且不得落到「未知命令」兜底上。
+    assert!(!DEFAULT_BINDINGS.is_empty(), "内置绑定表不得为空");
+    for binding in DEFAULT_BINDINGS {
+        let label = command_label(binding.command_id);
+        assert!(
+            !label.trim().is_empty(),
+            "{} 缺中文说明",
+            binding.command_id
+        );
+        assert!(
+            !label.is_ascii(),
+            "{} 的说明必须是中文，不能是英文 id：{label}",
+            binding.command_id
+        );
+        assert_ne!(
+            label, UNKNOWN_COMMAND_LABEL,
+            "{} 没有中文说明（落到了未知命令兜底）",
+            binding.command_id
+        );
+    }
+}
+
+#[test]
+fn command_label_falls_back_without_fabricating() {
+    // 未知命令 id ⇒ 明确的兜底文案，**不**返回空串、**不**编造说明。
+    assert_eq!(command_label("no.such.command"), UNKNOWN_COMMAND_LABEL);
+    // 命令面板里已知的命令复用它自己的标题。
+    assert_eq!(command_label("session.new"), "新建会话");
+}
+
+#[test]
+fn empty_binding_table_means_no_shortcuts_not_a_blank_table() {
+    // fail-closed：绑定表为空 ⇒ 明确说「没有可用的快捷键」，
+    // 不得渲染成空表或「一切正常」。
+    match hotkey_panel(&[]) {
+        HotkeyPanel::Empty => {}
+        other => panic!("空绑定表必须判定为 Empty：{other:?}"),
+    }
+    assert_eq!(EMPTY_BINDINGS_TEXT, "没有可用的快捷键");
+}
+
+#[test]
+fn hotkey_panel_lists_every_binding_without_merging() {
+    // `Ctrl+K` 与 `Ctrl+Shift+P` 指向**同一个**命令，但它们是两条绑定 ⇒
+    // 都得列出来，不得去重合并。
+    match hotkey_panel(DEFAULT_BINDINGS) {
+        HotkeyPanel::Rows(rows) => {
+            assert_eq!(rows.len(), DEFAULT_BINDINGS.len());
+            let palette_rows = rows
+                .iter()
+                .filter(|row| row.command_id == "palette.open")
+                .count();
+            assert_eq!(palette_rows, 2, "同一命令的两个键都要列出");
+            // 每行的按键文本都不能为空。
+            assert!(rows.iter().all(|row| !row.keys.trim().is_empty()));
+            // 行里的按键文本必须与绑定本身对得上。
+            for (row, binding) in rows.iter().zip(DEFAULT_BINDINGS) {
+                assert_eq!(row.keys, format_hotkey(&binding.hotkey));
+            }
+        }
+        other => panic!("非空绑定表必须判定为 Rows：{other:?}"),
+    }
+}
+
+#[test]
+fn hotkey_panel_keeps_binding_order() {
+    // 行顺序 = 绑定表顺序（注册表的添加顺序），不排序、不去重。
+    let rows = match hotkey_panel(DEFAULT_BINDINGS) {
+        HotkeyPanel::Rows(rows) => rows,
+        other => panic!("非空绑定表必须判定为 Rows：{other:?}"),
+    };
+    for (row, binding) in rows.iter().zip(DEFAULT_BINDINGS) {
+        assert_eq!(row.command_id, binding.command_id);
+    }
+}
+
+#[test]
+fn hotkey_panel_row_carries_a_chinese_label() {
+    let rows = match hotkey_panel(DEFAULT_BINDINGS) {
+        HotkeyPanel::Rows(rows) => rows,
+        other => panic!("非空绑定表必须判定为 Rows：{other:?}"),
+    };
+    for row in &rows {
+        assert!(
+            !row.label.trim().is_empty(),
+            "{} 缺中文说明",
+            row.command_id
+        );
+        assert!(
+            !row.label.is_ascii(),
+            "{} 的说明必须是中文：{}",
+            row.command_id,
+            row.label
+        );
+        assert_ne!(row.label, UNKNOWN_COMMAND_LABEL);
+    }
+}
+
+#[test]
+fn a_single_binding_still_renders_as_a_row_not_as_empty() {
+    // 「筛选无结果」与「真实为空」要分开：一条绑定 ⇒ 一行，不是空态。
+    let binding = Binding {
+        hotkey: Hotkey::new(Modifiers::CTRL, Key::Character('s')),
+        command_id: "file.save",
+    };
+    match hotkey_panel(&[binding]) {
+        HotkeyPanel::Rows(rows) => {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].keys, "Ctrl+S");
+            assert_eq!(rows[0].label, "保存文件");
+        }
+        other => panic!("一条绑定必须渲染成行：{other:?}"),
     }
 }

@@ -19,9 +19,11 @@ use gpui_kit::*;
 // 组件层的 `Theme` 与本仓语义层同名 ⇒ 改名引入，不混进 `use` 名单。
 use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 
+use crate::state::hotkeys::{Binding, HotkeyRegistry};
 use crate::state::org_perm::CapabilityFlags;
 use crate::ui::settings_gpui::view::{PanelId, SettingsView, ThemeChoice};
 
+use super::hotkey_panel;
 use super::nav;
 use super::security_panel;
 use super::theme_panel;
@@ -38,6 +40,10 @@ pub struct SettingsGpui {
     ///
     /// ⛔ 本字段只承载服务端结果，界面**不做授权推理**。
     flags: CapabilityFlags,
+    /// 本仓的真实快捷键绑定（**只读**）：「个性化」面板的数据源。
+    ///
+    /// ⛔ 本面板**只读**：改键需要持久化 + 冲突裁决，不在本卡范围。
+    bindings: Vec<Binding>,
     /// 窗口自身的焦点句柄：Esc 关闭设置窗口靠它。
     focus: FocusHandle,
 }
@@ -52,6 +58,9 @@ impl SettingsGpui {
     ///
     /// 能力标记用**空集合**初始化 ⇒ 「安全中心」面板显示「服务端未下发能力标记」。
     /// 宿主要带真实标记 ⇒ 用 [`Self::with_flags`]。
+    ///
+    /// 快捷键绑定用**内置默认表**初始化 ⇒ 「个性化」面板直接有内容可看。
+    /// 宿主要带自定义表 ⇒ 用 [`Self::with_bindings`]。
     #[must_use]
     pub fn new(cx: &mut Context<Self>) -> Self {
         let view = SettingsView {
@@ -61,6 +70,7 @@ impl SettingsGpui {
         Self {
             view,
             flags: CapabilityFlags::default(),
+            bindings: default_bindings(),
             focus: cx.focus_handle(),
         }
     }
@@ -70,6 +80,15 @@ impl SettingsGpui {
     pub fn with_flags(cx: &mut Context<Self>, flags: CapabilityFlags) -> Self {
         Self {
             flags,
+            ..Self::new(cx)
+        }
+    }
+
+    /// 带指定绑定构造（宿主/测试用；默认构造 ⇒ 内置默认绑定表）。
+    #[must_use]
+    pub fn with_bindings(cx: &mut Context<Self>, bindings: Vec<Binding>) -> Self {
+        Self {
+            bindings,
             ..Self::new(cx)
         }
     }
@@ -124,6 +143,20 @@ impl SettingsGpui {
     }
 }
 
+/// 读内置默认绑定表；失败时回落到**空表**并记日志。
+///
+/// ⛔ 不 panic、不 unwrap：内置表万一自相冲突，界面应显示「没有可用的快捷键」
+/// 并留下日志，而不是让整个设置窗口开不起来。
+fn default_bindings() -> Vec<Binding> {
+    match HotkeyRegistry::with_defaults() {
+        Ok(registry) => registry.bindings().to_vec(),
+        Err(reason) => {
+            eprintln!("[lengsuo-desktop] 内置快捷键表不可用：{reason}");
+            Vec::new()
+        }
+    }
+}
+
 impl Render for SettingsGpui {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 先把主题**克隆**一份：后面 helper 要拿 `&mut Context`，
@@ -134,10 +167,13 @@ impl Render for SettingsGpui {
         let sidebar = nav::render_sidebar(&self.view, &theme, cx);
 
         // 右栏：外观面板给三档主题；安全中心给能力位只读清单；
-        // 其余面板给占位文案。
+        // 个性化给快捷键只读清单；其余面板给占位文案。
         let content: AnyElement = match self.view.selected {
             PanelId::Appearance => theme_panel::render_theme_picker(&self.view, &theme, cx),
             PanelId::Security => security_panel::render_security_panel(&self.flags, &theme, cx),
+            PanelId::Personalization => {
+                hotkey_panel::render_hotkey_panel(&self.bindings, &theme, cx)
+            }
             _ => div()
                 .text_sm()
                 .text_color(theme.muted_foreground)

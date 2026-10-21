@@ -8,10 +8,19 @@
 //! - 主题取值的语义与 [`crate::theme::tokens::Theme`] 一一对应
 //!   （`System` / `Light` / `Dark`）；本层只做「取值 ↔ 语义层」的映射，
 //!   「解析成亮/暗并应用到渲染层」由接线层负责。
-//! - 面板**只有导航与占位内容**：除「外观」与「安全中心」外的 13 个面板功能
-//!   尚未实现，详见 `docs/settings-window-status.md`。
+//! - 面板**只有导航与占位内容**：除「外观」「安全中心」「个性化」外的 12 个面板
+//!   功能尚未实现，详见 `docs/settings-window-status.md`。
 //! - 「安全中心」的能力位展示**只读**服务端下发的 `can_*` 标记：
 //!   ⛔ 本层**不做授权推理**，只把服务端结果映射成展示文案。
+//! - 「个性化」的快捷键清单**只读**：展示本仓真实的绑定表，
+//!   ⛔ 不提供改键入口（改键需持久化 + 冲突裁决，不在本卡范围）。
+
+mod hotkeys;
+
+pub use self::hotkeys::{
+    command_label, format_hotkey, hotkey_panel, HotkeyPanel, HotkeyRow, EMPTY_BINDINGS_TEXT,
+    UNKNOWN_COMMAND_LABEL,
+};
 
 use crate::state::org_perm::{Capability, CapabilityFlags, DenialReason};
 use crate::theme::tokens::Theme as SemanticTheme;
