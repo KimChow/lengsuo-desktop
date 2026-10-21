@@ -97,7 +97,12 @@ fn render_cell(
 ) -> AnyElement {
     let Some(cell) = cell else {
         // 空位：宽度与有内容的单元格一致 ⇒ 另一侧不塌陷。
-        return div().flex().flex_1().min_w_0().h(px(LINE_H)).into_any_element();
+        return div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .h(px(LINE_H))
+            .into_any_element();
     };
 
     let mut row = div()
