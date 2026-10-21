@@ -7,8 +7,7 @@ use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
-use super::diff_lines::DiffLineKind;
-use super::{with_click, BlockCtx, BUBBLE_MAX_W, FILE_CARD_W};
+use super::{BlockCtx, BUBBLE_MAX_W};
 use crate::ui::approval_card::ApprovalAction;
 use crate::ui::session_render::{Align, FileItem, ToolResultKind, ToolResultView};
 use crate::ui::tool_card::ToolCard;
@@ -103,144 +102,45 @@ pub(super) fn render_terminal(text: &str, ctx: &BlockCtx<'_>) -> AnyElement {
     body.into_any_element()
 }
 
-/// 文件列表：每项可点击（点击只改本地选中态）。
+/// 文件列表：每项可点击（点击只改本地选中态 + 产出跳转意图）。
 pub(super) fn render_file_list(files: &[FileItem], ctx: &BlockCtx<'_>) -> AnyElement {
-    let theme = ctx.theme;
     let mut list = div().flex().flex_col().gap_1().px_3().pb_2();
     for (i, item) in files.iter().enumerate() {
-        let selected = ctx.ui.selected_file() == Some(item.path.as_str());
-        let row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .w_full()
-            .px_2()
-            .py_1()
-            .rounded_sm()
-            .text_sm()
-            .text_color(if selected {
-                theme.accent
-            } else {
-                theme.foreground
-            });
-        let row = if selected {
-            row.bg(theme.selection)
-        } else {
-            row
-        };
-        let row = row
-            .child(div().font_bold().child(item.display.clone()))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(item.path.clone()),
-            );
-        let row = if item.clickable {
-            let path = item.path.clone();
-            with_click(row, ctx.element_id("file", i), ctx.host, move |view| {
-                view.ui.toggle_file(&path);
-            })
-        } else {
-            row.into_any_element()
-        };
-        list = list.child(row);
+        list = list.child(super::file_card::render_file_row(item, i, ctx));
     }
     list.into_any_element()
 }
 
-/// diff：按增 / 删 / 上下文分色并带行号（分类在 [`super::diff_lines`]）。
+/// diff：**左右分栏**（旧文件在左、新文件在右）+ 红绿对照。
+///
+/// 形态判断在 [`super::diff_split`]（描述层），渲染在 [`super::diff_split_view`]。
+///
+/// diff 可能很长 ⇒ 卡片内**自己滚动**（⛔ 不动外层会话流的滚动）。
 pub(super) fn render_diff(text: &str, ctx: &BlockCtx<'_>) -> AnyElement {
-    let theme = ctx.theme;
-    let mut body = div()
+    let body = super::diff_split_view::render_diff_split(text, ctx.theme);
+    div()
+        // `overflow_y_scroll` 只在**带 id 的**元素上可用（速查表 §12.2）。
+        .id(ctx.element_id("diff", 0))
         .flex()
         .flex_col()
         .px_3()
         .pb_2()
-        .whitespace_nowrap()
-        .font_family(theme.mono_font_family.clone());
-    for line in super::diff_lines::split(text) {
-        let color = match line.kind {
-            DiffLineKind::Added => theme.success,
-            DiffLineKind::Removed => theme.danger,
-            DiffLineKind::Hunk => theme.accent,
-            DiffLineKind::Header | DiffLineKind::Plain => theme.foreground,
-            DiffLineKind::Context => theme.muted_foreground,
-        };
-        body = body.child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .text_sm()
-                .child(
-                    div()
-                        .text_color(theme.muted_foreground)
-                        .child(format!("{:>4}", line.no)),
-                )
-                .child(div().text_color(color).child(line.text)),
-        );
-    }
-    body.into_any_element()
+        .max_h(px(DIFF_MAX_H))
+        .overflow_y_scroll()
+        .child(body)
+        .into_any_element()
 }
+
+/// diff 卡片的最大高度（超出部分在卡片内滚动）。
+const DIFF_MAX_H: f32 = 420.0;
 
 /// 文件卡片网格。
 pub(super) fn render_files_grid(files: &[FileItem], ctx: &BlockCtx<'_>) -> AnyElement {
     let mut grid = div().flex().flex_wrap().gap_2().w_full();
     for (i, item) in files.iter().enumerate() {
-        grid = grid.child(render_file_card(item, i, ctx));
+        grid = grid.child(super::file_card::render_file_card(item, i, ctx));
     }
     grid.into_any_element()
-}
-
-/// 单张文件卡片。
-pub(super) fn render_file_card(item: &FileItem, sub: usize, ctx: &BlockCtx<'_>) -> AnyElement {
-    let theme = ctx.theme;
-    let selected = ctx.ui.selected_file() == Some(item.path.as_str());
-    let mut card = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .w(px(FILE_CARD_W))
-        .px_2()
-        .py_2()
-        .rounded_md()
-        .border_1()
-        .border_color(if selected { theme.accent } else { theme.border })
-        .bg(theme.background);
-    card = card
-        .child(
-            div()
-                .text_sm()
-                .font_bold()
-                .text_color(if selected {
-                    theme.accent
-                } else {
-                    theme.foreground
-                })
-                .child(item.display.clone()),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .truncate()
-                .child(item.path.clone()),
-        );
-    if item.clickable {
-        let path = item.path.clone();
-        with_click(
-            card,
-            ctx.element_id("file-card", sub),
-            ctx.host,
-            move |view| {
-                view.ui.toggle_file(&path);
-            },
-        )
-    } else {
-        card.into_any_element()
-    }
 }
 
 /// 断档提示：醒目提示条（描述层保证它排在首块）。
