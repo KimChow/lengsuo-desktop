@@ -15,6 +15,7 @@
 //! 尺寸单位统一为逻辑像素（与 `theme::tokens` 一致）。默认值对齐任务书：
 //! 边栏 **260px**，右侧面板可折叠，三区宽度可调。
 
+use crate::state::layout_prefs::LayoutPrefs;
 use crate::state::session_stream::SessionStreamState;
 use crate::ui::input_area::{InputAreaState, InputMode, SendButton};
 use crate::ui::right_panel::{self, RightPanelView};
@@ -22,15 +23,18 @@ use crate::ui::session_render::{self, Block};
 use crate::ui::sidebar::{self, SidebarState, SidebarView};
 
 /// 边栏默认宽度（任务书硬约束：260px）。
-pub const SIDEBAR_DEFAULT_WIDTH: f32 = 260.0;
+///
+/// **同源常量**：值住在状态层（[`crate::state::layout_prefs`]），避免「描述层默认值」
+/// 与「偏好回落默认值」两处各写一份而漂移。
+pub const SIDEBAR_DEFAULT_WIDTH: f32 = crate::state::layout_prefs::DEFAULT_SIDEBAR_WIDTH;
 /// 边栏最小宽度；再窄会把会话标题挤没。
 pub const SIDEBAR_MIN_WIDTH: f32 = 200.0;
 /// 边栏最大宽度；避免把会话流压到不可用。
 pub const SIDEBAR_MAX_WIDTH: f32 = 420.0;
 /// 会话流最小宽度。窗口过窄时优先保住会话流，允许三区总宽超出。
 pub const STREAM_MIN_WIDTH: f32 = 360.0;
-/// 右侧面板默认宽度。
-pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 320.0;
+/// 右侧面板默认宽度（**同源常量**，理由同 [`SIDEBAR_DEFAULT_WIDTH`]）。
+pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = crate::state::layout_prefs::DEFAULT_RIGHT_WIDTH;
 /// 右侧面板最小宽度（展开态）。
 pub const RIGHT_PANEL_MIN_WIDTH: f32 = 240.0;
 /// 右侧面板最大宽度（展开态）。
@@ -269,6 +273,31 @@ impl WorkbenchLayout {
 
     pub fn resize_sidebar_by(&mut self, delta: f32) {
         self.sidebar.resize_by(delta);
+    }
+
+    /// 用偏好覆盖宽度与折叠态（偏好非法时保持默认值）。
+    ///
+    /// 宽度**一律经 `set_width` 落地** ⇒ 越界值自动被夹到合法区间、非有限值被忽略
+    /// ⇒ 描述层仍是**夹取逻辑的唯一实现处**。tab 选中态**不在**偏好里 ⇒ 不动它。
+    pub fn apply_prefs(&mut self, prefs: LayoutPrefs) {
+        self.sidebar.set_width(prefs.sidebar_width);
+        let panel = &mut self.right_panel;
+        panel.set_width(prefs.right_width);
+        if prefs.right_collapsed {
+            panel.collapse();
+        } else {
+            panel.expand();
+        }
+    }
+
+    /// 导出当前版式为偏好值（宽度与折叠态；tab 选中态**不持久化**）。
+    #[must_use]
+    pub fn export_prefs(&self) -> LayoutPrefs {
+        LayoutPrefs {
+            sidebar_width: self.sidebar.width(),
+            right_width: self.right_panel.width(),
+            right_collapsed: self.right_panel.is_collapsed(),
+        }
     }
 
     /// 在给定窗口宽度下计算三区宽度。
@@ -615,5 +644,53 @@ mod tests {
             1,
             "布局渲染是只读的，不得替用户决策"
         );
+    }
+
+    // ---- e22：版式偏好导入 / 导出 ----
+
+    /// 偏好恢复：宽度与折叠态按偏好恢复；越界宽度被夹取、非有限宽度被忽略；
+    /// 导出 → 导入 → 导出幂等。
+    #[test]
+    fn apply_prefs_restores_clamps_and_round_trips() {
+        let mut layout = WorkbenchLayout::new();
+        layout.apply_prefs(LayoutPrefs {
+            sidebar_width: 300.0,
+            right_width: 400.0,
+            right_collapsed: true,
+        });
+        assert_eq!(layout.sidebar_width(), 300.0);
+        assert_eq!(layout.right_panel().width(), 400.0);
+        assert!(layout.right_panel().is_collapsed());
+        assert_eq!(
+            layout.right_panel().effective_width(),
+            RIGHT_PANEL_COLLAPSED_WIDTH,
+            "折叠时占位宽度是固定窄条"
+        );
+
+        // 越界 ⇒ 夹取；非有限 ⇒ 忽略（描述层是夹取逻辑的唯一实现处）。
+        layout.apply_prefs(LayoutPrefs {
+            sidebar_width: 10.0,
+            right_width: f32::NAN,
+            right_collapsed: false,
+        });
+        assert_eq!(layout.sidebar_width(), SIDEBAR_MIN_WIDTH);
+        assert_eq!(
+            layout.right_panel().width(),
+            400.0,
+            "非有限宽度不得破坏版式"
+        );
+        assert!(!layout.right_panel().is_collapsed());
+
+        // 导出 → 导入 → 导出：幂等。
+        layout.set_sidebar_width(280.0);
+        layout.right_panel_mut().set_width(360.0);
+        layout.right_panel_mut().collapse();
+        let exported = layout.export_prefs();
+        assert_eq!(exported.sidebar_width, 280.0);
+        assert_eq!(exported.right_width, 360.0, "导出的是展开态宽度");
+        assert!(exported.right_collapsed);
+        let mut restored = WorkbenchLayout::new();
+        restored.apply_prefs(exported);
+        assert_eq!(restored.export_prefs(), exported, "往返必须幂等");
     }
 }
