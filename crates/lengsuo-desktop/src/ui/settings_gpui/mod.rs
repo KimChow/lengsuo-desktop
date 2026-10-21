@@ -6,23 +6,28 @@
 //!   只做「描述字段 → 样式 / 事件」的映射。
 //!
 //! 文件拆分（每个文件单一职责，均 ≤ 400 行）：
-//! - `view.rs`：15 面板清单、面板 id、主题取值 —— **不门控**（无 `ui` feature 也能测）。
+//! - `view.rs`：15 面板清单、面板 id、主题取值、能力位展示文案 —— **不门控**
+//!   （无 `ui` feature 也能测）。
 //! - `window.rs`：设置窗口视图本体（`SettingsGpui`）+ `Render`。
 //! - `nav.rs`：左栏 15 项导航。
 //! - `theme_panel.rs`：「外观」面板的主题三档选择。
+//! - `security_panel.rs`：「安全中心」面板的能力位**只读**清单。
 //! - `tests.rs`：单元测试（显式导入，不用 `use super::*`）。
 //!
 //! 硬约定：
 //! - **改即生效，无保存按钮**：点主题档位立刻调 `Theme::change`，全窗口重绘。
 //! - **颜色一律取自 `cx.theme()`**，不硬编码。
 //! - **不引入任何组件库**（`Setting` / `Select` 一律不用），全部用 `div()` 自搭。
-//! - 除「外观」外的 14 个面板**只有导航 + 占位文案**，功能待实现，
+//! - 除「外观」「安全中心」外的 13 个面板**只有导航 + 占位文案**，功能待实现，
 //!   详见 `docs/settings-window-status.md`。
+//! - 「安全中心」**只读**展示服务端下发的 `can_*` 标记，⛔ 不做授权推理。
 
 pub mod view;
 
 #[cfg(feature = "ui")]
 mod nav;
+#[cfg(feature = "ui")]
+mod security_panel;
 #[cfg(feature = "ui")]
 mod theme_panel;
 #[cfg(feature = "ui")]

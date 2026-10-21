@@ -9,9 +9,11 @@
 
 use std::collections::HashSet;
 
+use crate::state::org_perm::{Capability, CapabilityFlags, DenialReason};
 use crate::theme::tokens::Theme as SemanticTheme;
 use crate::ui::settings_gpui::view::{
-    theme_label, PanelId, SettingsView, ThemeChoice, PANELS, THEME_CHOICES,
+    capability_label, capability_rows, has_delivered_marks, theme_label, CapabilityStatus, PanelId,
+    SettingsView, ThemeChoice, PANELS, THEME_CHOICES,
 };
 
 #[test]
@@ -105,4 +107,120 @@ fn panel_slugs_are_unique_and_stable() {
     assert!(slugs.iter().all(|slug| slug
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')));
+}
+
+#[test]
+fn capability_labels_cover_all_nine_capabilities() {
+    assert_eq!(Capability::ALL.len(), 9, "能力位必须正好 9 个");
+    for cap in Capability::ALL {
+        let label = capability_label(cap);
+        assert!(!label.trim().is_empty(), "{cap:?} 缺中文名");
+        // 中文名不得直接抄服务端字段名（`can_view_members` 之类）。
+        assert!(
+            !label.starts_with("can_"),
+            "{cap:?} 的中文名不该是服务端字段名"
+        );
+    }
+    // 文案互不相同：9 个能力不能共用一个名字。
+    let unique: HashSet<&str> = Capability::ALL
+        .iter()
+        .copied()
+        .map(capability_label)
+        .collect();
+    assert_eq!(unique.len(), 9, "9 个能力位的中文名必须互不相同");
+}
+
+#[test]
+fn empty_flags_mean_not_delivered_not_denied() {
+    // 空标记集合 ⇒ 服务端**什么都没说** ⇒ 一律「未下发」。
+    let flags = CapabilityFlags::default();
+    assert!(!has_delivered_marks(&flags), "空集合不得被当成已下发");
+
+    let rows = capability_rows(&flags);
+    assert_eq!(rows.len(), 9, "9 个能力位都要列出来");
+    for row in &rows {
+        assert_eq!(
+            row.status,
+            CapabilityStatus::NotDelivered,
+            "{} 必须显示「未下发」而不是「不可用」",
+            row.label
+        );
+        assert_eq!(row.status.text(), "服务端未下发");
+    }
+}
+
+#[test]
+fn delivered_flags_distinguish_available_denied_and_missing() {
+    let flags = CapabilityFlags::from_payload(&serde_json::json!({
+        "can_view_members": true,
+        "can_delete_role": false,
+        "deny_reasons": {"can_delete_role": "NO_PERMISSION"}
+    }));
+
+    assert!(has_delivered_marks(&flags), "下发了标记");
+    let rows = capability_rows(&flags);
+    assert_eq!(rows.len(), 9);
+
+    let status_of = |cap: Capability| {
+        rows.iter()
+            .find(|row| row.capability == cap)
+            .map(|row| row.status)
+            .expect("9 个能力位都必须列全")
+    };
+
+    assert_eq!(
+        status_of(Capability::ViewMembers),
+        CapabilityStatus::Available
+    );
+    assert_eq!(
+        status_of(Capability::DeleteRole),
+        CapabilityStatus::Denied(Some(DenialReason::NoPermission))
+    );
+    // 服务端没下发的那个 ⇒ 未下发（**不是**不可用）。
+    assert_eq!(
+        status_of(Capability::EditRole),
+        CapabilityStatus::NotDelivered
+    );
+
+    // 文案必须能区分开：可用 / 被拒（有原因）/ 未下发。
+    assert_eq!(CapabilityStatus::Available.text(), "可用");
+    assert_eq!(
+        CapabilityStatus::Denied(Some(DenialReason::NoPermission)).text(),
+        "不可用：你没有该操作权限"
+    );
+    assert_eq!(
+        CapabilityStatus::Denied(Some(DenialReason::NoEntitlement)).text(),
+        "不可用：当前套餐不包含此功能"
+    );
+    assert_eq!(
+        CapabilityStatus::Denied(Some(DenialReason::PolicyDenied)).text(),
+        "不可用：该操作已被企业策略禁止"
+    );
+    assert_eq!(CapabilityStatus::NotDelivered.text(), "服务端未下发");
+}
+
+#[test]
+fn denied_without_server_reason_does_not_fabricate_one() {
+    // 服务端只给了 `false`，没给原因码 ⇒ 不编造原因，但仍不是「未下发」。
+    let flags = CapabilityFlags::from_payload(&serde_json::json!({"can_edit_role": false}));
+    let rows = capability_rows(&flags);
+    let row = rows
+        .iter()
+        .find(|row| row.capability == Capability::EditRole)
+        .expect("编辑角色必须在清单里");
+    assert_eq!(row.status, CapabilityStatus::Denied(None));
+    assert_eq!(row.status.text(), "不可用");
+}
+
+#[test]
+fn the_ui_never_infers_permissions_from_roles_or_entitlement() {
+    // 载荷自称管理员 / 有权益，但**没有** `can_*` ⇒ 一律「未下发」，不可用。
+    let flags = CapabilityFlags::from_payload(&serde_json::json!({
+        "roles": ["admin"],
+        "is_admin": true,
+        "entitled": true
+    }));
+    for row in capability_rows(&flags) {
+        assert_eq!(row.status, CapabilityStatus::NotDelivered);
+    }
 }

@@ -19,9 +19,11 @@ use gpui_kit::*;
 // 组件层的 `Theme` 与本仓语义层同名 ⇒ 改名引入，不混进 `use` 名单。
 use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 
+use crate::state::org_perm::CapabilityFlags;
 use crate::ui::settings_gpui::view::{PanelId, SettingsView, ThemeChoice};
 
 use super::nav;
+use super::security_panel;
 use super::theme_panel;
 
 /// 设置窗口视图。
@@ -32,6 +34,10 @@ pub struct SettingsGpui {
     ///
     /// `pub(super)`：同模块的 `nav.rs` / `theme_panel.rs` 要读它写回选中态。
     pub(super) view: SettingsView,
+    /// 服务端下发的能力标记（**只读快照**）：「安全中心」面板的数据源。
+    ///
+    /// ⛔ 本字段只承载服务端结果，界面**不做授权推理**。
+    flags: CapabilityFlags,
     /// 窗口自身的焦点句柄：Esc 关闭设置窗口靠它。
     focus: FocusHandle,
 }
@@ -43,6 +49,9 @@ impl SettingsGpui {
     /// 若设置窗口还显示「跟随系统」被选中，用户看到的会自相矛盾；
     /// 更要命的是点「跟随系统」会被 `set_theme` 判成「没变化」⇒ 直接返回，
     /// 用户在暗色下**再也点不回亮色**。
+    ///
+    /// 能力标记用**空集合**初始化 ⇒ 「安全中心」面板显示「服务端未下发能力标记」。
+    /// 宿主要带真实标记 ⇒ 用 [`Self::with_flags`]。
     #[must_use]
     pub fn new(cx: &mut Context<Self>) -> Self {
         let view = SettingsView {
@@ -51,7 +60,17 @@ impl SettingsGpui {
         };
         Self {
             view,
+            flags: CapabilityFlags::default(),
             focus: cx.focus_handle(),
+        }
+    }
+
+    /// 带能力标记构造（宿主/测试用；默认构造 ⇒ 空标记 ⇒ 面板显示「服务端未下发」）。
+    #[must_use]
+    pub fn with_flags(cx: &mut Context<Self>, flags: CapabilityFlags) -> Self {
+        Self {
+            flags,
+            ..Self::new(cx)
         }
     }
 
@@ -114,9 +133,11 @@ impl Render for SettingsGpui {
         // 左栏：15 个面板导航项。
         let sidebar = nav::render_sidebar(&self.view, &theme, cx);
 
-        // 右栏：外观面板给三档主题；其余面板给占位文案。
+        // 右栏：外观面板给三档主题；安全中心给能力位只读清单；
+        // 其余面板给占位文案。
         let content: AnyElement = match self.view.selected {
             PanelId::Appearance => theme_panel::render_theme_picker(&self.view, &theme, cx),
+            PanelId::Security => security_panel::render_security_panel(&self.flags, &theme, cx),
             _ => div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
@@ -182,7 +203,16 @@ impl Render for SettingsGpui {
                     .flex()
                     .flex_1()
                     .child(sidebar)
-                    .child(div().flex_1().p_4().child(content)),
+                    // 内容区自己滚动：「安全中心」有 9 行能力位，
+                    // 窗口不够高时不能把行裁掉。
+                    .child(
+                        div()
+                            .id("settings-content")
+                            .flex_1()
+                            .p_4()
+                            .overflow_y_scroll()
+                            .child(content),
+                    ),
             )
             .into_any_element()
     }
