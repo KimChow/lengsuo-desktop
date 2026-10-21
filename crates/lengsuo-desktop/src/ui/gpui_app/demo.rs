@@ -3,58 +3,22 @@
 //! 数据全部来自 [`crate::state`]，根视图不持有业务语义。
 
 use crate::state::hotkeys::{Binding, HotkeyRegistry};
-use crate::state::session_stream::{
-    MessageRole, PendingApproval, SessionMessage, SessionStreamState,
-};
+use crate::state::session_stream::SessionStreamState;
 use crate::ui::env_gpui::EnvViewGpui;
 use crate::ui::org_gpui::OrgViewGpui;
 use crate::ui::org_view::OrgViewState;
 
-/// 一根演示消息。
-fn message(role: MessageRole, content: &str, tool: Option<&str>) -> SessionMessage {
-    SessionMessage {
-        role,
-        content: content.into(),
-        tool: tool.map(str::to_owned),
-        ts_ms: 0,
-    }
-}
-
-/// 演示用会话流：手工构造，**不接真实数据源**。
+/// 演示用会话流：五类工具调用 + 一个挂起审批，**不接真实数据源**。
 ///
-/// 覆盖四类消息与一个挂起审批，供根视图组装时验证各渲染分支都有内容。
+/// 数据来自 [`crate::state::session_demo`]（e15 产出）：五类工具调用各一条，
+/// 用来在真机窗口里验证工具卡片的所有渲染分支。
+/// 主界面与 [`crate::ui::session_gpui::SessionStreamGpui::demo`] 消费**同一份**数据
+/// —— 否则「工具卡片五类真实触发」在窗口里看不到，即「实现齐了但没人用」。
+/// 详见 `docs/session-render-status.md` §9.6。
 #[must_use]
 pub fn demo_session() -> SessionStreamState {
-    let mut state = SessionStreamState::new();
-    state.push_message(
-        1,
-        message(MessageRole::User, "帮我看一下构建脚本为什么失败", None),
-    );
-    state.push_message(
-        2,
-        message(MessageRole::Assistant, "好的，我先读取入口脚本。", None),
-    );
-    state.push_message(
-        3,
-        message(MessageRole::ToolCall, "scripts/card_guard.py", Some("Read")),
-    );
-    state.push_message(
-        4,
-        message(
-            MessageRole::ToolResult,
-            "#!/usr/bin/env python3\nprint('ok')",
-            Some("Read"),
-        ),
-    );
-    state.push_approval(PendingApproval {
-        id: "demo-approval-1".into(),
-        tool: "Bash".into(),
-        summary: "运行 cargo test --workspace".into(),
-        resolved: None,
-    });
-    state
+    crate::state::session_demo::demo_session()
 }
-
 /// 内置快捷键表；内置表若自相冲突则退化为空表（不 panic）。
 pub(super) fn default_registry() -> HotkeyRegistry {
     HotkeyRegistry::with_defaults().unwrap_or_else(|_| {
