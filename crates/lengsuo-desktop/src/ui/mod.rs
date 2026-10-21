@@ -21,6 +21,7 @@ pub mod gpui_app;
 pub mod gpui_input;
 pub mod input_area;
 pub mod layout;
+pub mod main_view;
 pub mod org_view;
 pub mod right_panel;
 pub mod session_render;
