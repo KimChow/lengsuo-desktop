@@ -1,4 +1,86 @@
 //! 主区视图路由：侧栏导航入口 → 主区显示哪一块。
 //!
-//! 占位文件（主理人预落）：`e29-nav-view-switch` 卡将实现本模块。
-//! 预落目的是让各卡只改自己新建的文件，避免多卡共改 `ui/mod.rs` 造成路径归属冲突。
+//! **只做界面**：本模块只决定「主区当前显示哪个视图」，⛔ 不实现频道收发、
+//! 不实现智能体创建（那是运行时 / 业务语义，本仓不碰）。
+//!
+//! 纯数据、无 GPUI 依赖 ⇒ 可在无窗口环境直接测。
+//!
+//! 对齐规格 `ui-parity-spec.md` §1 条目 **A15**：边栏的频道入口与智能体管理入口
+//! 已就位（e19），但入口点击后主区**没有消费者** —— 本模块补上这段路由。
+
+use crate::ui::sidebar::nav::NavKind;
+
+/// 主区当前显示的视图。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainView {
+    /// 会话流（默认；还没选任何导航入口时）。
+    Sessions,
+    /// 频道视图（点侧栏「频道」入口）。
+    Channels,
+    /// 智能体管理视图（点侧栏「智能体管理」入口）。
+    Agents,
+}
+
+/// 频道视图的说明文案（数据源在运行时侧，本仓未接）。
+pub const CHANNELS_PLACEHOLDER: &str = "频道：数据源在运行时侧，本仓暂不提供";
+/// 智能体管理视图的说明文案。
+pub const AGENTS_PLACEHOLDER: &str = "智能体管理：数据源在运行时侧，本仓暂不提供";
+
+/// 根据侧栏选中的导航入口，决定主区显示什么。
+///
+/// - `None` ⇒ [`MainView::Sessions`]（还没选任何入口 ⇒ 显示会话流）。
+/// - `Some(Channels)` ⇒ [`MainView::Channels`]。
+/// - `Some(Agents)` ⇒ [`MainView::Agents`]。
+#[must_use]
+pub fn resolve(selected_nav: Option<NavKind>) -> MainView {
+    match selected_nav {
+        None => MainView::Sessions,
+        Some(NavKind::Channels) => MainView::Channels,
+        Some(NavKind::Agents) => MainView::Agents,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::main_view::{resolve, MainView};
+    use crate::ui::sidebar::nav::NavKind;
+    use crate::ui::sidebar::SidebarState;
+
+    #[test]
+    fn no_nav_selected_shows_sessions() {
+        assert_eq!(resolve(None), MainView::Sessions);
+    }
+
+    #[test]
+    fn channels_nav_switches_to_channels() {
+        assert_eq!(resolve(Some(NavKind::Channels)), MainView::Channels);
+    }
+
+    #[test]
+    fn agents_nav_switches_to_agents() {
+        assert_eq!(resolve(Some(NavKind::Agents)), MainView::Agents);
+    }
+
+    /// 端到端契约（纯逻辑版）：侧栏点击写入的**那个** `NavKind`，
+    /// 必须正好是主区路由读到的那个。
+    ///
+    /// 侧栏的点击处理走的就是 [`crate::ui::sidebar_gpui::select_nav`] 这一条路径；
+    /// 根视图的 [`crate::ui::gpui_app`] 观察侧栏后读 `state().selected_nav()`
+    /// 再交给 [`resolve`]。此测试锁住两者的**类型一致性** ——
+    /// 之前入口是死按钮，就是因为这段链路根本不存在。
+    #[test]
+    fn the_nav_kind_written_by_the_sidebar_click_drives_the_main_view() {
+        let mut state = SidebarState::new();
+        assert!(crate::ui::sidebar_gpui::select_nav(
+            &mut state,
+            NavKind::Channels
+        ));
+        assert_eq!(resolve(state.selected_nav()), MainView::Channels);
+
+        assert!(crate::ui::sidebar_gpui::select_nav(
+            &mut state,
+            NavKind::Agents
+        ));
+        assert_eq!(resolve(state.selected_nav()), MainView::Agents);
+    }
+}
