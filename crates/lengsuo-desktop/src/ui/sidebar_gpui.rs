@@ -121,20 +121,44 @@ pub fn demo_state() -> SidebarState {
 #[cfg(feature = "ui")]
 pub struct SidebarViewGpui {
     state: SidebarState,
+    /// 侧栏实际宽度（px）。
+    ///
+    /// **必须由宿主下发**：2026-10-21 Windows 真机实测发现，此前渲染时写死
+    /// `SIDEBAR_DEFAULT_WIDTH`（260），导致拖动左分隔条后侧栏内容仍按 260 画 ——
+    /// 表现为「左边拖不动 / 不联动」，而右栏（用自身 `layout`）正常。
+    width: f32,
 }
 
 #[cfg(feature = "ui")]
 impl SidebarViewGpui {
-    /// 用一份会话列表状态构造视图。
+    /// 用一份会话列表状态构造视图（宽度取默认值）。
     #[must_use]
     pub fn new(state: SidebarState) -> Self {
-        Self { state }
+        Self {
+            state,
+            width: crate::ui::layout::SIDEBAR_DEFAULT_WIDTH,
+        }
     }
 
     /// 从只读引用构造视图（内部克隆一份状态）。
     #[must_use]
     pub fn from_state(state: &SidebarState) -> Self {
         Self::new(state.clone())
+    }
+
+    /// 宿主下发侧栏实际宽度（拖动分隔条后由根视图调用）。
+    ///
+    /// 非有限值（NaN / ∞）被忽略，保持原宽度（fail-closed）。
+    pub fn set_width(&mut self, width: f32) {
+        if width.is_finite() && width > 0.0 {
+            self.width = width;
+        }
+    }
+
+    /// 当前侧栏宽度。
+    #[must_use]
+    pub fn width(&self) -> f32 {
+        self.width
     }
 
     /// 演示用视图：手工构造的会话条目，**不接真实数据源**。
@@ -327,8 +351,9 @@ impl Render for SidebarViewGpui {
         let theme = cx.theme();
         let entity = cx.entity();
         // 描述层产出渲染描述；本文件只做「描述 → 元素」的映射。
-        let view =
-            crate::ui::sidebar::render(&self.state, crate::ui::layout::SIDEBAR_DEFAULT_WIDTH);
+        // 宽度用**宿主下发的实际宽度**（`self.width`），不再写死默认值 ——
+        // 写死会让拖动分隔条后侧栏内容仍按默认宽渲染（2026-10-21 真机实测）。
+        let view = crate::ui::sidebar::render(&self.state, self.width);
 
         let header = div()
             .flex()

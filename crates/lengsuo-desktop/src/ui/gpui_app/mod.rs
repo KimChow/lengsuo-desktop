@@ -48,7 +48,10 @@ mod tests;
 
 pub use demo::{demo_session, secondary_views};
 pub use launch::{launch, LaunchError, HOTKEY_HINT, NO_DISPLAY_MESSAGE, WINDOW_TITLE};
-use sync::{approvals_in_sync, echo_message, next_echo_seq, regions_for, should_finish_send};
+use sync::{
+    adopt_right_panel_selection, approvals_in_sync, echo_message, next_echo_seq, regions_for,
+    should_finish_send,
+};
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::ActiveTheme as _;
@@ -121,9 +124,13 @@ impl AppShell {
                 shell.sync_layout(cx)
             }),
             cx.observe(&right_divider, |shell: &mut Self, _, cx| {
-                shell.sync_layout(cx)
+                shell.adopt_right_divider(cx);
+                shell.sync_layout(cx);
             }),
-            cx.observe(&tab_strip, |shell: &mut Self, _, cx| shell.sync_layout(cx)),
+            cx.observe(&tab_strip, |shell: &mut Self, _, cx| {
+                shell.adopt_tab_strip(cx);
+                shell.sync_layout(cx);
+            }),
         ];
 
         // 会话流推进 ⇒ 解除等待态 + 审批读取侧同步。
@@ -212,6 +219,41 @@ impl AppShell {
         });
     }
 
+    /// tab 条刚被点击 ⇒ 把它的选中态 / 折叠态**回写**给权威版式（左分隔条）。
+    ///
+    /// 为什么必须有这一步：`sync_layout` 是「以左分隔条为唯一来源**下发**」，
+    /// 而 tab 条自己的点击改的是它私有的 `RightPanelLayout`。若只观察 tab 条就直接
+    /// `sync_layout`，下发会用权威版式里**旧的** tab 选中态把刚点出来的新状态覆盖掉
+    /// —— 表现就是「点 tab 完全没反应」（2026-10-21 Windows 真机实测到的缺陷，
+    /// 编译与单元测试都发现不了，因为纯函数 `tab_strip_layout` 本身是对的）。
+    ///
+    /// 只回写 tab 选中态与折叠态，**不动宽度**：宽度归分隔条管。
+    fn adopt_tab_strip(&mut self, cx: &mut Context<Self>) {
+        let incoming = self.tab_strip.read(cx).layout().clone();
+        self.left_divider.update(cx, |divider, cx| {
+            if adopt_right_panel_selection(divider.layout_mut(), &incoming) {
+                cx.notify();
+            }
+        });
+    }
+
+    /// 右分隔条刚被拖动 ⇒ 把它算出的右栏宽度**回写**给权威版式（左分隔条）。
+    ///
+    /// 与 [`Self::adopt_tab_strip`] 同一类修复：`sync_layout` 只做「权威 → 子视图」
+    /// 下发，而右分隔条的拖拽改的是它私有副本里的 `right_panel` 宽度。
+    /// 若只下发不回收，下一次同步会用权威里的旧宽度把拖动结果覆盖回去
+    /// ⇒ 表现成「右分隔条被锁死、拖不动」。2026-10-21 Windows 真机实测发现。
+    fn adopt_right_divider(&mut self, cx: &mut Context<Self>) {
+        let incoming_width = self.right_divider.read(cx).layout().right_panel().width();
+        self.left_divider.update(cx, |divider, cx| {
+            let panel = divider.layout_mut().right_panel_mut();
+            if panel.width() != incoming_width {
+                panel.set_width(incoming_width);
+                cx.notify();
+            }
+        });
+    }
+
     /// 把版式（左分隔条 —— 唯一来源）下发到右分隔条与右侧面板。
     ///
     /// - 右分隔条整份覆盖：它只负责拖拽，不持有独立的版式主张。
@@ -220,13 +262,23 @@ impl AppShell {
     ///   这里不动它的宽度字段。
     ///
     /// 回写前先比较，没变化就不 `notify()`，避免 observe → notify → observe 的循环。
+    ///
+    /// **最后必须 `cx.notify()` 自己**：三区宽度是根视图渲染时从左分隔条读回的，
+    /// 子实体的 `notify()` 只会重绘子视图本身；没有这一步，拖动分隔条后
+    /// 根视图不会重排三区 —— 表现成「分隔条跟手走、面板宽度不动」（2026-10-21
+    /// Windows 真机实测：分隔条元素位置变了，侧栏右边界纹丝不动）。
+    /// GPUI 对重复 `notify` 幂等，这里无条件调用是安全的。
     fn sync_layout(&mut self, cx: &mut Context<Self>) {
         let authority = self.left_divider.read(cx).layout().clone();
 
+        // 右分隔条**只下发宽度**，不整份覆盖：它自己也是拖拽的输入源，
+        // 整份覆盖会把它刚拖出来的结果冲掉（同 `adopt_right_divider` 的注释）。
         let right_divider = self.right_divider.clone();
+        let authority_width = authority.right_panel().width();
         right_divider.update(cx, |divider, cx| {
-            if divider.layout() != &authority {
-                *divider.layout_mut() = authority.clone();
+            let panel = divider.layout_mut().right_panel_mut();
+            if panel.width() != authority_width {
+                panel.set_width(authority_width);
                 cx.notify();
             }
         });
@@ -248,6 +300,8 @@ impl AppShell {
                 cx.notify();
             }
         });
+
+        cx.notify();
     }
 
     /// 处理根视图的按键：只做快捷键转换与面板开关，其余按键放行。
@@ -303,15 +357,23 @@ impl Render for AppShell {
         // 这里在组装元素树之前再消费一次，保证同一帧内回显已写入会话流。只读消费，不投递。
         self.drain_outbox(cx);
 
-        let theme = cx.theme();
         let viewport_width = f32::from(window.viewport_size().width);
         // 三区宽度**每次渲染都从左分隔条读回**（拖拽结果落在它内部），
         // 根视图不另存版式，因此不存在第二份不同步的副本。
         let widths = regions_for(self.left_divider.read(cx).layout(), viewport_width);
+        // 把实际宽度**下发给侧栏视图**：它此前写死 `SIDEBAR_DEFAULT_WIDTH` 渲染
+        // 自身内容，导致拖动后内容仍按 260 画（2026-10-21 真机实测）。
+        // 必须在 `cx.theme()` 之前做（那里开始借用 `cx`）。
+        self.sidebar
+            .update(cx, |view, _| view.set_width(widths.sidebar));
 
+        let theme = cx.theme();
         // 左侧边栏：宽度来自分隔条持有的版式（默认 260px，可拖拽）。
+        // **必须 `flex_none()`**：在 flex 行里默认 `flex_shrink: 1`，只写 `.w()` 会被
+        // 收缩，表现成「拖了分隔条、边栏宽度却没变」（2026-10-21 真机实测）。
         let sidebar = div()
             .w(px(widths.sidebar))
+            .flex_none()
             .h_full()
             .child(self.sidebar.clone());
 
@@ -323,10 +385,12 @@ impl Render for AppShell {
             .child(self.session.clone());
 
         // 右侧面板：上方是 tab 条（点击切换面板内容），下方是面板本身。
+        // 同 sidebar：必须 `flex_none()`，否则拖拽改的宽度会被 flex 收缩吞掉。
         let right_panel = div()
             .flex()
             .flex_col()
             .w(px(widths.right_panel))
+            .flex_none()
             .h_full()
             .child(self.tab_strip.clone())
             .child(div().flex_1().child(self.right_panel.clone()));

@@ -23,6 +23,36 @@ pub(super) fn regions_for(layout: &WorkbenchLayout, viewport_width: f32) -> Regi
     layout.regions(available)
 }
 
+/// 把 tab 条 / 右侧面板刚产生的选中态与折叠态**收回**给权威版式。
+///
+/// 与 [`tab_strip_layout`] 方向相反，两者必须成对使用：
+/// - `tab_strip_layout` 是**下发**（权威 → 子视图）；
+/// - 本函数是**回收**（子视图 → 权威），在子视图自己 `notify()` 之后、下发之前调用。
+///
+/// 2026-10-21 Windows 真机实测教训：只做下发不做回收时，tab 条的点击会改它私有的
+/// `RightPanelLayout`，紧接着 `sync_layout` 用权威版式里**旧的**选中态覆盖回去，
+/// 表现为「点 tab 完全没反应」。当时编译、clippy、289 个单元测试全绿 ——
+/// 因为纯函数 `tab_strip_layout` 本身没错，错的是**调用顺序**缺了一环。
+///
+/// 只回写选中 tab 与折叠态，**不动宽度**（宽度归分隔条管）。
+/// 返回是否真的发生了改变，供调用方决定要不要 `notify()`（避免 observe 死循环）。
+pub(super) fn adopt_right_panel_selection(
+    authority: &mut WorkbenchLayout,
+    incoming: &RightPanelLayout,
+) -> bool {
+    let panel = authority.right_panel_mut();
+    let changed = panel.tab() != incoming.tab() || panel.is_collapsed() != incoming.is_collapsed();
+    if changed {
+        panel.select_tab(incoming.tab());
+        if incoming.is_collapsed() {
+            panel.collapse();
+        } else {
+            panel.expand();
+        }
+    }
+    changed
+}
+
 /// 渲染右侧面板 / tab 条时应使用的版式：以左分隔条持有的版式为准。
 ///
 /// 回写到左侧时保留 `current` 的宽度（宽度归分隔条管，tab 条只管选中 / 折叠），
@@ -87,4 +117,129 @@ pub(super) fn should_finish_send(pending: Option<u64>, state: &SessionStreamStat
 #[must_use]
 pub(super) fn approvals_in_sync(authority: &SessionStreamState, copy: &SessionStreamState) -> bool {
     authority.approvals() == copy.approvals()
+}
+
+#[cfg(test)]
+mod tests {
+    // 显式导入（不用 `use super::*`）：父模块的 glob 会把 GPUI 的 `test` 属性宏
+    // 带进作用域并遮蔽标准 `#[test]`（速查表 §12.3）。
+    use super::{adopt_right_panel_selection, tab_strip_layout};
+    use crate::ui::layout::{RightPanelLayout, RightPanelTab, WorkbenchLayout};
+
+    /// 回归测试：**只下发不回收** ⇒ 点 tab 的选中态会被下一次下发覆盖回去。
+    ///
+    /// 这正是 2026-10-21 Windows 真机实测发现的缺陷（编译 + 289 测试全绿也测不到，
+    /// 因为错的不是纯函数，而是根视图少了一次「回收」）。
+    #[test]
+    fn without_adopt_a_tab_click_is_lost() {
+        let mut authority = WorkbenchLayout::new();
+        // tab 条被点击：它自己的版式变成 Preview
+        let mut strip = RightPanelLayout::new();
+        strip.select_tab(RightPanelTab::Preview);
+        // 缺了「回收」这一步，直接下发：权威版式里仍是旧 tab
+        let pushed = tab_strip_layout(&authority, &strip);
+        assert_eq!(
+            pushed.tab(),
+            RightPanelTab::Tasks,
+            "没有回收时，下发应把点击覆盖回旧 tab（这就是 bug 的表现）"
+        );
+        // 补上回收后，权威版式才跟上
+        let changed = adopt_right_panel_selection(&mut authority, &strip);
+        assert!(changed, "回收必须报告发生了改变");
+        assert_eq!(authority.right_panel().tab(), RightPanelTab::Preview);
+        assert_eq!(
+            tab_strip_layout(&authority, &strip).tab(),
+            RightPanelTab::Preview
+        );
+    }
+
+    /// 回收必须**幂等**：同一状态再收一次返回 false（否则 observe 会死循环）。
+    #[test]
+    fn adopt_is_idempotent() {
+        let mut authority = WorkbenchLayout::new();
+        let mut strip = RightPanelLayout::new();
+        strip.select_tab(RightPanelTab::Approvals);
+        assert!(adopt_right_panel_selection(&mut authority, &strip));
+        assert!(
+            !adopt_right_panel_selection(&mut authority, &strip),
+            "第二次回收不应再报告改变"
+        );
+    }
+
+    /// 回收**不许动宽度**：宽度归分隔条管，tab 条无权改。
+    #[test]
+    fn adopt_does_not_touch_width() {
+        let mut authority = WorkbenchLayout::new();
+        let before = authority.right_panel().width();
+        let mut strip = RightPanelLayout::new();
+        strip.select_tab(RightPanelTab::Preview);
+        adopt_right_panel_selection(&mut authority, &strip);
+        assert_eq!(
+            authority.right_panel().width(),
+            before,
+            "回收只改选中/折叠，不应改宽度"
+        );
+    }
+
+    /// 折叠态也要能被回收（否则折叠后点 tab 恢复不了展开）。
+    #[test]
+    fn adopt_carries_collapsed_state() {
+        let mut authority = WorkbenchLayout::new();
+        let mut strip = RightPanelLayout::new();
+        strip.collapse();
+        assert!(adopt_right_panel_selection(&mut authority, &strip));
+        assert!(authority.right_panel().is_collapsed());
+        assert!(authority.right_panel().is_collapsed());
+    }
+}
+
+#[cfg(test)]
+mod width_sync_tests {
+    // 显式导入（不用 `use super::*`），理由见速查表 §12.3。
+    use crate::ui::layout::{WorkbenchLayout, RIGHT_PANEL_MAX_WIDTH, RIGHT_PANEL_MIN_WIDTH};
+
+    /// 回归测试：右分隔条拖出来的宽度必须能**回收**给权威版式。
+    ///
+    /// 2026-10-21 Windows 真机实测：只做「权威 → 右分隔条」下发、不做回收时，
+    /// 右分隔条拖完立刻被旧宽度覆盖 ⇒ 表现成「右栏被锁死、拖不动」。
+    #[test]
+    fn right_divider_width_round_trips_through_authority() {
+        let mut authority = WorkbenchLayout::new();
+        let mut right_divider = WorkbenchLayout::new();
+
+        // 模拟右分隔条被拖动：它自己的宽度变小
+        let target = authority.right_panel().width() - 60.0;
+        right_divider.right_panel_mut().set_width(target);
+        assert_eq!(right_divider.right_panel().width(), target);
+
+        // 回收：把它写回权威
+        let incoming = right_divider.right_panel().width();
+        let panel = authority.right_panel_mut();
+        if panel.width() != incoming {
+            panel.set_width(incoming);
+        }
+
+        // 下发：权威 → 右分隔条应保持 target，而不是退回默认值
+        assert_eq!(
+            authority.right_panel().width(),
+            target,
+            "回收后权威必须是拖动结果"
+        );
+        assert_eq!(
+            authority.right_panel().width(),
+            right_divider.right_panel().width(),
+            "两侧必须一致，否则下一次下发会把拖动冲掉"
+        );
+    }
+
+    /// 宽度夹取仍由描述层独占：回收越界值不会突破 min/max。
+    #[test]
+    fn adopted_width_is_still_clamped() {
+        let mut authority = WorkbenchLayout::new();
+        authority.right_panel_mut().set_width(99_999.0);
+        assert_eq!(authority.right_panel().width(), RIGHT_PANEL_MAX_WIDTH);
+
+        authority.right_panel_mut().set_width(-500.0);
+        assert_eq!(authority.right_panel().width(), RIGHT_PANEL_MIN_WIDTH);
+    }
 }

@@ -44,8 +44,11 @@ use crate::ui::layout::RightPanelLayout;
 use crate::ui::layout::WorkbenchLayout;
 
 /// 分隔条宽度（逻辑像素），也是拖拽的命中区域。
+///
+/// 4px 在真机上几乎点不中（2026-10-21 Windows 实测：鼠标必须分毫不差地落在
+/// 这 4px 里才能开始拖）；8px 是桌面软件常见的手感下限。
 #[cfg(feature = "ui")]
-pub const DIVIDER_WIDTH: f32 = 4.0;
+pub const DIVIDER_WIDTH: f32 = 8.0;
 
 /// 一条可拖拽分隔条。
 ///
@@ -107,12 +110,20 @@ impl DividerGpui {
         self.drag.is_dragging()
     }
 
-    /// 按下与移动的共用处理：未在拖拽时先 `begin`，随后 `drag_to`。
+    /// 按下：显式进入拖拽态并记录起点。
     ///
-    /// 返回宽度是否发生变化（调用方据此决定是否 `notify()`）。
-    fn pointer_at(&mut self, x: f32) -> bool {
+    /// **只有 `on_mouse_down` 能进入拖拽态**（配合窗口级 move 监听里的
+    /// `pressed_button` 判断）。历史上这里叫 `pointer_at`，会在「未拖拽时自动
+    /// begin」并被窗口级 MouseMove 无条件调用 ⇒ 鼠标一划过分隔条就锁进拖拽态，
+    /// 从而「一直处于拖动状态」。现在拆成 `begin_drag` / `drag_to` 两个语义。
+    fn begin_drag(&mut self, x: f32) -> bool {
+        self.drag.begin(self.side, x, &self.layout)
+    }
+
+    /// 拖拽中：把鼠标位移换算成宽度变更。未处于拖拽态时**什么都不做**。
+    fn drag_to(&mut self, x: f32) -> bool {
         if !self.drag.is_dragging() {
-            self.drag.begin(self.side, x, &self.layout);
+            return false;
         }
         self.drag.drag_to(x, &mut self.layout)
     }
@@ -209,9 +220,17 @@ impl Element for SeparatorListeners {
                 if !phase.bubble() {
                     return;
                 }
+                // **只有左键按下时才算拖拽**。
+                // 缺这个判断时，窗口级 MouseMove 会把任何鼠标移动都当成拖拽起点
+                // （`pointer_at` 在未拖拽时会自动 `begin`）⇒ 鼠标一划过分隔条就进入
+                // 拖拽态、宽度跟着跑，且松手后再移动又会重新 begin，表现为
+                // 「一直处于拖动状态，无法正常操作」。2026-10-21 Windows 真机实测发现。
+                if event.pressed_button != Some(MouseButton::Left) {
+                    return;
+                }
                 let x: f32 = event.position.x.into();
                 entity.update(cx, |view, cx| {
-                    if view.pointer_at(x) {
+                    if view.drag_to(x) {
                         cx.notify();
                     }
                 });
@@ -243,7 +262,7 @@ impl Render for DividerGpui {
 
         let down = cx.listener(|view: &mut Self, event: &MouseDownEvent, _window, cx| {
             let x: f32 = event.position.x.into();
-            if view.pointer_at(x) || view.drag.is_dragging() {
+            if view.begin_drag(x) {
                 cx.notify();
             }
         });
