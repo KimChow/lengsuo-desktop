@@ -38,10 +38,19 @@ pub struct SettingsGpui {
 
 impl SettingsGpui {
     /// 构造设置窗口视图。
+    ///
+    /// **初始主题取自偏好快照**（`theme.json`）：首帧已经水合成暗色，
+    /// 若设置窗口还显示「跟随系统」被选中，用户看到的会自相矛盾；
+    /// 更要命的是点「跟随系统」会被 `set_theme` 判成「没变化」⇒ 直接返回，
+    /// 用户在暗色下**再也点不回亮色**。
     #[must_use]
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let view = SettingsView {
+            theme: crate::ui::gpui_app::prefs_file::read_theme().0,
+            ..SettingsView::default()
+        };
         Self {
-            view: SettingsView::default(),
+            view,
             focus: cx.focus_handle(),
         }
     }
@@ -72,6 +81,13 @@ impl SettingsGpui {
     ) {
         if !self.view.set_theme(choice) {
             // 取值没变：不必重绘。
+            //
+            // ⚠️ 但**仍要落盘**：设置窗口的主题可能来自偏好快照（见 `new`），
+            // 而快照可能与落盘内容不一致（例如别的进程改过、或文件被手工改坏）。
+            // 这里无条件写一次，保证「磁盘上的偏好 == 用户看到的选择」。
+            if let Err(reason) = crate::ui::gpui_app::prefs_file::write_theme(choice) {
+                eprintln!("[lengsuo-desktop] 主题偏好未落盘：{reason}");
+            }
             return;
         }
         let mode = match choice {
@@ -81,6 +97,10 @@ impl SettingsGpui {
         };
         // `Theme::change` 内部会刷新所有窗口 ⇒ 改完立刻整窗生效。
         GpuiTheme::change(mode, None, cx);
+        // 落盘用户选择 ⇒ 下次启动首帧就是它（A9）。
+        if let Err(reason) = crate::ui::gpui_app::prefs_file::write_theme(choice) {
+            eprintln!("[lengsuo-desktop] 主题偏好未落盘：{reason}");
+        }
         cx.notify();
     }
 }
