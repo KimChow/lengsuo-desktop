@@ -7,13 +7,14 @@
 //! 文件拆分（每个文件单一职责，均 ≤ 400 行）：
 //! - `mod.rs`（本文件）：面板本体 + 打开 / 关闭 / 同步 / 按键 + `Render`。
 //! - `keys.rs`：平台按键 → [`Hotkey`] / [`PaletteKey`] 的转换 + 其测试。
-//! - `layout.rs`：遮罩与尺寸常量、命令列表一行、底部键盘提示。
+//! - `layout.rs`：遮罩与尺寸常量、底部键盘提示。
 //! - `input_box.rs`：搜索框（`Textarea` 绑定与双向同步判据）。
+//! - `search_rows.rs`：多来源搜索结果（分组标题 + 条目）。
 //!
 //! 硬约定：
 //! - 面板关闭时**什么都不渲染**（[`command_palette::render`] 返回 `None`）。
-//! - 命令**按 id 派发**：回执拿到的是 [`PaletteAction::Execute`] 带出的 id；
-//!   本卡**不真正执行**命令，只到回调为止。
+//! - 条目**按 id 派发**：回执拿到的是 [`PaletteAction::Execute`] 带出的 id；
+//!   本卡**不真正执行**条目，只到回调为止。
 //! - 快捷键复用既有的 [`HotkeyRegistry`]，**不新造注册表**；用户改键后依旧生效。
 //! - 颜色一律取自 `cx.theme()`，不硬编码。
 //!
@@ -21,23 +22,24 @@
 //! `docs/palette-gpui-status.md`。**Windows 中文 IME 可用性未验证**。
 #![cfg(feature = "ui")]
 
-/// 命令派发回执的类型：拿到**命令 id** 与面板自己的 [`Context`]。
+/// 条目派发回执的类型：拿到**条目 id** 与面板自己的 [`Context`]。
 ///
 /// 带 `Context` 是因为回执可能要开新窗口，而 `Context` 实现了
 /// `DerefMut<Target = App>` ⇒ `&mut **cx` 即 `&mut App`。
-pub type ExecuteCallback<T> = Box<dyn Fn(&'static str, &mut Context<T>) + 'static>;
+///
+/// id 传 `&str`：非命令来源（技能 / MCP / 文件 / 会话）的 id 在运行时才有，
+/// 不是 `'static`；回执只读不存 ⇒ 传借用即可。
+pub type ExecuteCallback<T> = Box<dyn Fn(&str, &mut Context<T>) + 'static>;
 
 mod input_box;
 mod keys;
 mod layout;
+mod search_rows;
 #[cfg(test)]
 mod tests;
 
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::component::ActiveTheme as _;
-// `overflow_y_scrollbar` 来自 gpui-component 的 `ScrollableElement` trait
-// （不在 gpui-pre 里）⇒ 必须显式导入，否则 E0599。
-use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::*;
 
 use crate::state::hotkeys::HotkeyRegistry;
@@ -45,7 +47,7 @@ use crate::state::palette_state::PaletteState;
 use crate::ui::command_palette::{self, PaletteAction};
 
 use self::input_box::{PanelSync, PanelSyncState, PLACEHOLDER};
-use self::layout::{mask_color, render_footer, render_row, LIST_MAX_HEIGHT, PANEL_WIDTH};
+use self::layout::{mask_color, render_footer, PANEL_WIDTH};
 
 // `gpui_app.rs` 等既有调用方用的路径保持不变。
 pub use self::keys::{hotkey_from_keystroke, palette_key_from_keystroke};
@@ -130,27 +132,21 @@ impl CommandPaletteGpui {
         self.textarea.as_ref()
     }
 
-    /// 设置命令执行回调。回调收到的参数是**命令 id**，不是标题。
+    /// 设置条目执行回调。回调收到的参数是**条目 id**，不是标题。
     ///
     /// 第二个参数是本面板的 [`Context`]：回执要开新窗口就需要它
     /// （`Context` 实现了 `DerefMut<Target = App>` ⇒ `&mut **cx` 即 `&mut App`）。
     #[must_use]
-    pub fn on_execute(
-        mut self,
-        callback: impl Fn(&'static str, &mut Context<Self>) + 'static,
-    ) -> Self {
+    pub fn on_execute(mut self, callback: impl Fn(&str, &mut Context<Self>) + 'static) -> Self {
         self.on_execute = Box::new(callback);
         self
     }
 
-    /// 设置命令执行回调（**原地改**，不需要消费 `self`）。
+    /// 设置条目执行回调（**原地改**，不需要消费 `self`）。
     ///
     /// 与 [`Self::on_execute`] 的区别：那个是构造期用的链式版本（消费 `self`），
     /// 这个给「先构造好、之后再挂回调」的宿主用。
-    pub fn set_on_execute(
-        &mut self,
-        callback: impl Fn(&'static str, &mut Context<Self>) + 'static,
-    ) {
+    pub fn set_on_execute(&mut self, callback: impl Fn(&str, &mut Context<Self>) + 'static) {
         self.on_execute = Box::new(callback);
     }
 
@@ -282,9 +278,9 @@ impl CommandPaletteGpui {
             return;
         };
         match command_palette::handle_key(&mut self.state, key) {
-            // 按 id 派发：本卡**不执行**命令，只把 id 交给回调。
+            // 按 id 派发：本卡**不执行**条目，只把 id 交给回调。
             PaletteAction::Execute(id) => {
-                (self.on_execute)(id, cx);
+                (self.on_execute)(&id, cx);
                 cx.notify();
             }
             PaletteAction::Redraw | PaletteAction::Close | PaletteAction::Open => cx.notify(),
@@ -334,50 +330,8 @@ impl Render for CommandPaletteGpui {
         self.ensure_textarea(window, cx);
         self.sync_search_box(window, cx);
 
-        // 快捷键提示：按命令 **id** 去注册表里查一条提示文案。
-        // id 只用于**查提示**，派发仍由描述层按 id 完成。
-        let hints: Vec<Option<String>> = self
-            .state
-            .filtered()
-            .iter()
-            .map(|command| {
-                self.registry
-                    .bindings()
-                    .iter()
-                    .find(|binding| binding.command_id == command.id)
-                    .map(|binding| binding.hotkey.to_string())
-            })
-            .collect();
-        let rows: Vec<(&command_palette::PaletteRow, Option<&str>)> = view
-            .rows
-            .iter()
-            .zip(hints.iter())
-            .map(|(row, hint)| (row, hint.as_deref()))
-            .collect();
-
-        // 命令列表
-        let mut list = div()
-            .flex()
-            .flex_col()
-            .max_h(px(LIST_MAX_HEIGHT))
-            .overflow_y_scrollbar();
-        if rows.is_empty() {
-            // 空白结果给出显式提示，不静默显示空列表（文案取自描述层）。
-            let empty = view.empty_text.unwrap_or(command_palette::EMPTY_TEXT);
-            list = list.child(
-                div()
-                    .px_3()
-                    .py_4()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child(empty),
-            );
-        } else {
-            list = list.children(
-                rows.iter()
-                    .map(|(row, hint)| render_row(row, *hint, &theme)),
-            );
-        }
+        // 结果列表：按来源分组（命令 / 技能 / MCP / 文件 / 会话）。
+        let list = search_rows::render_results(&view, &theme);
 
         // 搜索框（编辑器已在上面建好；理论上不会是 `None`）。
         let search_box: AnyElement = match self.textarea.as_ref() {

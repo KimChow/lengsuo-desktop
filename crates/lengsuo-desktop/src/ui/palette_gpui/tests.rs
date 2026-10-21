@@ -10,6 +10,11 @@ use crate::ui::command_palette::{self, PaletteKey};
 // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
 use crate::ui::palette_gpui::input_box::{self, PanelSync, PanelSyncState};
 
+/// 结果条目总数（各分组条目之和）。
+fn result_count(state: &PaletteState) -> usize {
+    state.groups().iter().map(|group| group.items.len()).sum()
+}
+
 #[test]
 fn panel_stays_closed_until_opened() {
     let mut state = PaletteState::new();
@@ -18,7 +23,8 @@ fn panel_stays_closed_until_opened() {
     state.open();
     let view = command_palette::render(&state).expect("打开后应有描述");
     assert_eq!(view.query, "", "打开时关键词必须为空");
-    assert_eq!(view.rows.len(), state.filtered().len());
+    let total: usize = view.groups.iter().map(|group| group.items.len()).sum();
+    assert_eq!(total, result_count(&state));
 }
 
 #[test]
@@ -27,12 +33,12 @@ fn selection_stops_at_the_edges() {
     state.open();
     command_palette::handle_key(&mut state, PaletteKey::Up);
     assert_eq!(state.selected_index(), Some(0), "首项上移不变");
-    for _ in 0..state.filtered().len() + 2 {
+    for _ in 0..result_count(&state) + 2 {
         command_palette::handle_key(&mut state, PaletteKey::Down);
     }
     assert_eq!(
         state.selected_index(),
-        Some(state.filtered().len() - 1),
+        Some(result_count(&state) - 1),
         "末项下移不变"
     );
 }
@@ -92,7 +98,8 @@ fn ime_input_filters_like_the_description_layer() {
     }
     let view = command_palette::render(&state).expect("面板打开");
     assert_eq!(view.query, "设置");
-    assert_eq!(view.rows.len(), state.filtered().len());
+    let total: usize = view.groups.iter().map(|group| group.items.len()).sum();
+    assert_eq!(total, result_count(&state));
     assert_eq!(state.selected_id(), Some("app.settings"));
 }
 
