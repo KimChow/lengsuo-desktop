@@ -1,39 +1,62 @@
-//! 命令面板状态：开关、关键词、过滤结果与选中项。
+//! 命令面板状态：开关、关键词、**多来源搜索结果**（按来源分组）与选中项。
 //!
-//! 纯逻辑：不渲染、不派发。执行时只返回命令 id（来自
-//! [`crate::theme::palette::COMMANDS`]），由调用方按 id 派发。
+//! 纯逻辑：不渲染、不派发。执行时只返回条目 id（**按 id 派发**，不用标题），
+//! 由调用方按 id 派发。
 //!
 //! 约定：
 //! - **打开即清空**上次关键词，选中项回到第一项。
 //! - 上下选择到边界不越界：首项上移不变、末项下移不变。
-//! - 没有选中项（过滤为空或面板关闭）时执行返回 `None`，不猜一个命令。
+//! - 没有选中项（过滤为空或面板关闭）时执行返回 `None`，不猜一个条目。
+//! - **选中项按 id 记**（不是按下标）：结果按来源分组后跨组按下标会错位。
+//!
+//! 搜索条目的形状在 [`search_state`]（同文件树下的子模块）；数据由**调用方注入**
+//! —— 命令来自内置命令表，其余四类（技能 / MCP / 文件 / 会话）在本仓用
+//! **演示数据**，⛔ 真实数据源属运行时侧。
 
-use crate::theme::palette::{filter_commands, PaletteCommand, COMMANDS};
+#[path = "search_state.rs"]
+pub mod search_state;
+
+pub use self::search_state::{
+    command_items, demo_items, filter_items, flatten, group_by_source, SearchGroup, SearchItem,
+    SearchSource,
+};
+
+use self::search_state::SearchState;
 
 /// 命令面板状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteState {
     open: bool,
-    keyword: String,
-    filtered: Vec<PaletteCommand>,
-    selected: Option<usize>,
+    /// 全部可搜索条目 + 关键词（**关键词只存这一处**）。
+    search: SearchState,
+    /// 过滤 + 分组后的结果（空分组不出现）。
+    groups: Vec<SearchGroup>,
+    /// 当前选中项的 id（**按 id 记**，跨分组不会错位）。
+    selected_id: Option<String>,
 }
 
 impl Default for PaletteState {
     fn default() -> Self {
-        Self {
-            open: false,
-            keyword: String::new(),
-            filtered: COMMANDS.to_vec(),
-            selected: None,
-        }
+        Self::with_items(demo_items())
     }
 }
 
 impl PaletteState {
+    /// 用**演示条目**建状态（命令来自内置表 + 四类演示数据）。
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 用**注入的条目**建状态：真实数据源接入时的入口。
+    #[must_use]
+    pub fn with_items(items: Vec<SearchItem>) -> Self {
+        Self {
+            open: false,
+            search: SearchState::new(items),
+            groups: Vec::new(),
+            selected_id: None,
+        }
     }
 
     #[must_use]
@@ -44,14 +67,14 @@ impl PaletteState {
     /// 打开面板：清空上次关键词，回到全量列表并选中第一项。
     pub fn open(&mut self) {
         self.open = true;
-        self.keyword.clear();
+        self.search.set_keyword("");
         self.refilter();
     }
 
     /// 关闭面板。关键词保留到下次 [`Self::open`] 时再清空。
     pub fn close(&mut self) {
         self.open = false;
-        self.selected = None;
+        self.selected_id = None;
     }
 
     /// 开 / 关切换。
@@ -65,85 +88,129 @@ impl PaletteState {
 
     #[must_use]
     pub fn keyword(&self) -> &str {
-        &self.keyword
+        self.search.keyword()
     }
 
-    /// 当前过滤结果（顺序与 [`COMMANDS`] 一致）。
+    /// 全部可搜索条目（注入的那一份，未过滤）。
     #[must_use]
-    pub fn filtered(&self) -> &[PaletteCommand] {
-        &self.filtered
+    pub fn all_items(&self) -> &[SearchItem] {
+        self.search.items()
     }
 
+    /// 当前结果**按来源分组**（空分组不出现）。
+    #[must_use]
+    pub fn groups(&self) -> &[SearchGroup] {
+        &self.groups
+    }
+
+    /// 当前结果的**展示顺序**摊平列表（分组顺序 → 组内顺序）。
+    #[must_use]
+    pub fn items(&self) -> Vec<SearchItem> {
+        flatten(&self.groups)
+    }
+
+    /// 当前选中项的 id（派发依据，不是标题）。
+    #[must_use]
+    pub fn selected_id(&self) -> Option<&str> {
+        self.selected_id.as_deref()
+    }
+
+    /// 当前选中项（条目本身）。
+    #[must_use]
+    pub fn selected_item(&self) -> Option<&SearchItem> {
+        let id = self.selected_id.as_deref()?;
+        self.groups
+            .iter()
+            .flat_map(|group| group.items.iter())
+            .find(|item| item.id == id)
+    }
+
+    /// 当前选中项在**展示顺序**里的下标（没有选中项时为 `None`）。
     #[must_use]
     pub fn selected_index(&self) -> Option<usize> {
-        self.selected
+        let id = self.selected_id.as_deref()?;
+        self.flat_ids().iter().position(|x| *x == id)
     }
 
-    #[must_use]
-    pub fn selected_command(&self) -> Option<PaletteCommand> {
-        self.selected
-            .and_then(|index| self.filtered.get(index).copied())
-    }
-
-    /// 当前选中项的命令 id（派发依据，不是标题）。
-    #[must_use]
-    pub fn selected_id(&self) -> Option<&'static str> {
-        self.selected_command().map(|command| command.id)
-    }
-
-    /// 更新关键词并重新过滤；选中项回到第一项，避免索引悬空。
+    /// 更新关键词并重新过滤；选中项回到第一项，避免选中悬空。
     pub fn set_keyword(&mut self, keyword: impl Into<String>) {
-        self.keyword = keyword.into();
+        self.search.set_keyword(keyword);
         self.refilter();
     }
 
     /// 追加一个字符（视图的文本输入）。
     pub fn insert_char(&mut self, c: char) {
-        self.keyword.push(c);
-        self.refilter();
+        let mut keyword = self.keyword().to_owned();
+        keyword.push(c);
+        self.set_keyword(keyword);
     }
 
     /// 删除最后一个字符（按字符而非字节，中文安全）。返回是否发生变化。
     pub fn backspace(&mut self) -> bool {
-        if self.keyword.pop().is_some() {
-            self.refilter();
-            true
-        } else {
-            false
+        let mut keyword = self.keyword().to_owned();
+        if keyword.pop().is_none() {
+            return false;
         }
+        self.set_keyword(keyword);
+        true
     }
 
     fn refilter(&mut self) {
-        self.filtered = filter_commands(&self.keyword, COMMANDS);
-        self.selected = (self.open && !self.filtered.is_empty()).then_some(0);
+        self.groups = self.search.groups();
+        self.selected_id = if self.open {
+            self.flat_ids().first().map(|id| (*id).to_owned())
+        } else {
+            None
+        };
+    }
+
+    /// 展示顺序里的 id 列表（分组顺序 → 组内顺序）。
+    fn flat_ids(&self) -> Vec<&str> {
+        self.groups
+            .iter()
+            .flat_map(|group| group.items.iter().map(|item| item.id.as_str()))
+            .collect()
     }
 
     /// 下移一项；末项不动。
     pub fn select_next(&mut self) {
-        if let Some(index) = self.selected {
-            if index + 1 < self.filtered.len() {
-                self.selected = Some(index + 1);
-            }
-        }
+        self.move_selection(1);
     }
 
     /// 上移一项；首项不动。
     pub fn select_previous(&mut self) {
-        if let Some(index) = self.selected {
-            if index > 0 {
-                self.selected = Some(index - 1);
-            }
-        }
+        self.move_selection(-1);
     }
 
-    /// 执行选中命令：返回命令 id 并关闭面板。
+    /// 在展示顺序里移动选中项；边界不越界。
+    fn move_selection(&mut self, step: isize) {
+        let ids = self.flat_ids();
+        if ids.is_empty() {
+            self.selected_id = None;
+            return;
+        }
+        let current = self
+            .selected_id
+            .as_deref()
+            .and_then(|id| ids.iter().position(|x| *x == id));
+        let index = match current {
+            Some(index) => {
+                let next = index as isize + step;
+                next.clamp(0, ids.len() as isize - 1) as usize
+            }
+            None => 0,
+        };
+        self.selected_id = Some(ids[index].to_owned());
+    }
+
+    /// 执行选中条目：返回条目 id 并关闭面板。
     ///
     /// 无选中项（面板关闭 / 过滤为空）时返回 `None` 且保持原状态。
-    pub fn execute(&mut self) -> Option<&'static str> {
+    pub fn execute(&mut self) -> Option<String> {
         if !self.open {
             return None;
         }
-        let id = self.selected_id()?;
+        let id = self.selected_id.clone()?;
         self.close();
         Some(id)
     }
@@ -161,7 +228,8 @@ impl PaletteState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // 显式导入（不用 `use super::*`）：保持符号来源清晰。
+    use super::{demo_items, PaletteState, SearchItem, SearchSource};
 
     fn opened() -> PaletteState {
         let mut state = PaletteState::new();
@@ -169,87 +237,130 @@ mod tests {
         state
     }
 
+    fn total(state: &PaletteState) -> usize {
+        state.groups().iter().map(|group| group.items.len()).sum()
+    }
+
     #[test]
     fn new_palette_is_closed() {
         let mut state = PaletteState::new();
         assert!(!state.is_open());
         assert_eq!(state.keyword(), "");
-        assert_eq!(state.selected_index(), None);
+        assert_eq!(state.selected_id(), None);
         assert_eq!(state.execute(), None);
     }
 
     #[test]
-    fn opening_selects_first_and_shows_all_commands() {
+    fn opening_selects_first_and_shows_all_items() {
         let state = opened();
         assert!(state.is_open());
-        assert_eq!(state.filtered().len(), COMMANDS.len());
-        assert_eq!(state.selected_index(), Some(0));
-        assert_eq!(state.selected_id(), Some(COMMANDS[0].id));
+        assert_eq!(total(&state), demo_items().len());
+        assert_eq!(state.selected_id(), Some(demo_items()[0].id.as_str()));
     }
 
     #[test]
     fn opening_clears_previous_keyword() {
         let mut state = opened();
         state.set_keyword("会话");
-        assert_eq!(state.filtered().len(), 2);
+        assert!(total(&state) < demo_items().len());
         state.close();
         state.open();
         assert_eq!(state.keyword(), "", "打开时必须清空上次关键词");
-        assert_eq!(state.filtered().len(), COMMANDS.len());
-        assert_eq!(state.selected_index(), Some(0));
+        assert_eq!(total(&state), demo_items().len());
+        assert_eq!(state.selected_id(), Some(demo_items()[0].id.as_str()));
     }
 
     #[test]
-    fn keyword_filters_commands() {
+    fn keyword_filters_across_sources() {
         let mut state = opened();
-        state.set_keyword("org.");
-        assert_eq!(state.filtered().len(), 2);
+        state.set_keyword("app.settings");
+        assert_eq!(total(&state), 1);
+        assert_eq!(state.selected_id(), Some("app.settings"));
         state.set_keyword("设置");
-        assert_eq!(state.filtered().len(), 1);
+        assert_eq!(total(&state), 1);
         assert_eq!(state.selected_id(), Some("app.settings"));
     }
 
     #[test]
     fn selection_stops_at_first_and_last() {
         let mut state = opened();
+        let count = total(&state);
         assert_eq!(state.selected_index(), Some(0));
         state.select_previous();
         assert_eq!(state.selected_index(), Some(0), "首项上移不变");
 
-        for _ in 0..COMMANDS.len() + 3 {
+        for _ in 0..count + 3 {
             state.select_next();
         }
+        assert_eq!(state.selected_index(), Some(count - 1), "末项下移不变");
+        state.select_next();
+        assert_eq!(state.selected_index(), Some(count - 1));
+    }
+
+    #[test]
+    fn selection_is_tracked_by_id_across_groups() {
+        let mut state = opened();
+        // 走过整个命令分组 ⇒ 落到第二个分组（技能）里：按 id 记选中才不会错位。
+        let command_count = state
+            .groups()
+            .iter()
+            .find(|g| g.source == SearchSource::Command)
+            .expect("命令分组必须存在")
+            .items
+            .len();
+        for _ in 0..command_count {
+            state.select_next();
+        }
+        let id = state.selected_id().expect("必须有选中项").to_owned();
+        let group = state
+            .groups()
+            .iter()
+            .find(|g| g.items.iter().any(|i| i.id == id))
+            .expect("选中项必须落在某个分组里");
+        assert_eq!(group.source, SearchSource::Skill);
+        let flat = state.items();
+        let position = flat.iter().position(|i| i.id == id).unwrap();
         assert_eq!(
             state.selected_index(),
-            Some(COMMANDS.len() - 1),
-            "末项下移不变"
+            Some(position),
+            "下标必须与展示顺序一致"
         );
-        state.select_next();
-        assert_eq!(state.selected_index(), Some(COMMANDS.len() - 1));
     }
 
     #[test]
     fn empty_result_has_no_selection_and_cannot_execute() {
         let mut state = opened();
         state.set_keyword("zzz-nothing");
-        assert!(state.filtered().is_empty());
-        assert_eq!(state.selected_index(), None);
+        assert_eq!(total(&state), 0);
+        assert!(state.groups().is_empty());
         assert_eq!(state.selected_id(), None);
         state.select_next();
         state.select_previous();
-        assert_eq!(state.selected_index(), None);
+        assert_eq!(state.selected_id(), None);
         assert_eq!(state.execute(), None);
-        assert!(state.is_open(), "没有可执行项时不得关闭或猜命令");
+        assert!(state.is_open(), "没有可执行项时不得关闭或猜条目");
     }
 
     #[test]
     fn execute_returns_id_and_closes() {
         let mut state = opened();
-        state.set_keyword("设置");
+        state.set_keyword("app.settings");
         let id = state.execute().expect("应能执行");
         assert_eq!(id, "app.settings", "派发依据是 id，不是标题");
         assert!(!state.is_open());
         assert_eq!(state.execute(), None, "关闭后不得再次执行");
+    }
+
+    #[test]
+    fn execute_returns_non_command_ids_too() {
+        let mut state = PaletteState::with_items(vec![SearchItem {
+            source: SearchSource::Skill,
+            id: "demo.skill.review".to_owned(),
+            title: "代码审查".to_owned(),
+            hint: None,
+        }]);
+        state.open();
+        assert_eq!(state.execute().as_deref(), Some("demo.skill.review"));
     }
 
     #[test]
@@ -275,7 +386,7 @@ mod tests {
         state.select_next();
         state.select_next();
         assert_eq!(state.selected_index(), Some(2));
-        state.set_keyword("org.");
+        state.set_keyword("app.settings");
         assert_eq!(
             state.selected_index(),
             Some(0),

@@ -53,16 +53,25 @@ pub const COMMANDS: &[PaletteCommand] = &[
     },
 ];
 
+/// 关键词匹配规则：大小写不敏感的子串匹配，匹配**标题或 id**。
+///
+/// 全局搜索（命令 / 技能 / MCP / 文件 / 会话五类来源）复用同一条规则
+/// ⇒ 只在这里实现一次，命令过滤与多来源过滤不会漂移。
+#[must_use]
+pub fn matches_keyword(keyword: &str, title: &str, id: &str) -> bool {
+    let kw = keyword.trim().to_lowercase();
+    if kw.is_empty() {
+        return true;
+    }
+    title.to_lowercase().contains(&kw) || id.to_lowercase().contains(&kw)
+}
+
 /// 按关键词过滤命令：大小写不敏感的子串匹配；空关键词返回全部。
 #[must_use]
 pub fn filter_commands(keyword: &str, commands: &[PaletteCommand]) -> Vec<PaletteCommand> {
-    let kw = keyword.trim().to_lowercase();
-    if kw.is_empty() {
-        return commands.to_vec();
-    }
     commands
         .iter()
-        .filter(|c| c.title.to_lowercase().contains(&kw) || c.id.to_lowercase().contains(&kw))
+        .filter(|c| matches_keyword(keyword, c.title, c.id))
         .copied()
         .collect()
 }
