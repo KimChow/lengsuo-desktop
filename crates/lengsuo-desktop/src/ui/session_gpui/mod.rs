@@ -16,7 +16,6 @@
 
 #![cfg(feature = "ui")]
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 use gpui_kit::component::{ActiveTheme as _, Theme};
@@ -31,17 +30,25 @@ pub mod approval_intent;
 #[cfg(test)]
 mod approval_intent_tests;
 mod approval_render;
+mod block_ctx;
 mod blocks;
 pub mod diff_lines;
 pub mod markdown;
 mod markdown_view;
 #[cfg(test)]
 mod render_tests;
+#[cfg(test)]
+mod tool_card_tests;
+mod tool_card_view;
+pub mod tool_fold;
+#[cfg(test)]
+mod tool_fold_tests;
 
-use crate::state::session_stream::{PendingApproval, SessionStreamState};
+pub use block_ctx::BlockCtx;
+
+use crate::state::session_stream::SessionStreamState;
 use crate::ui::approval_card::ApprovalAction;
 use crate::ui::session_render::{self, Block};
-use crate::ui::tool_card::ToolCard;
 
 /// 正文最大宽度（助手正文用，避免长行铺满屏幕）。
 pub(super) const CONTENT_MAX_W: f32 = 720.0;
@@ -50,14 +57,12 @@ pub(super) const BUBBLE_MAX_W: f32 = 560.0;
 /// 文件卡片宽度（网格按此换行）。
 pub(super) const FILE_CARD_W: f32 = 180.0;
 
-/// 会话流的**局部界面态**：展开 / 选中 / 审批按钮的本地选择。
+/// 会话流的**局部界面态**：折叠 / 选中 / 审批按钮的本地选择。
 ///
 /// 这些都是**界面态**，不写回 [`SessionStreamState`]：审批的真正决策仍要走
 /// `resolve_approval`（本卡不接）。
 #[derive(Debug, Clone, Default)]
 pub struct SessionUiState {
-    /// 工具调用卡片的展开状态（键为块序号）。
-    pub expanded: HashMap<usize, bool>,
     /// 审批按钮的本地选择（键为审批 id）。
     pub approval_choice: HashMap<String, ApprovalAction>,
     /// 本地选中的文件路径。
@@ -69,24 +74,16 @@ pub struct SessionUiState {
     pub always_allow_scope: approval_intent::AlwaysAllowMap,
     /// 选过「总是允许」的**本审批 id**（键为审批 id）；只用于该卡重绘后回显选中态。
     pub always_choice: HashMap<String, ApprovalAction>,
+    /// 工具卡片的折叠态（键为**消息 id**，见 [`tool_fold::tool_call_id`]）。
+    ///
+    /// 只在内存、只在界面层；**不落盘**（重启回到默认折叠）。
+    ///
+    /// ⚠️ 键**必须**是消息 id 而不是块序号：块序号会随新消息插入而位移，
+    /// 折叠态就会记到别的卡片上。
+    pub tool_folded: HashMap<String, bool>,
 }
 
 impl SessionUiState {
-    /// 某块工具调用卡片是否展开（默认收起）。
-    #[must_use]
-    pub fn is_expanded(&self, index: usize, default_folded: bool) -> bool {
-        self.expanded
-            .get(&index)
-            .copied()
-            .unwrap_or(!default_folded)
-    }
-
-    /// 切换某块工具调用卡片的展开态。
-    pub fn toggle_expanded(&mut self, index: usize, default_folded: bool) {
-        let next = !self.is_expanded(index, default_folded);
-        self.expanded.insert(index, next);
-    }
-
     /// 记下审批按钮的本地选择（**不**代表真实决策）。
     pub fn choose_approval(&mut self, id: &str, action: ApprovalAction) {
         self.approval_choice.insert(id.to_owned(), action);
@@ -180,6 +177,12 @@ impl SessionStreamGpui {
         }
     }
 
+    /// 演示用视图：手工构造的会话流（含**五类真实工具调用**），**不接真实数据源**。
+    #[must_use]
+    pub fn demo() -> Self {
+        Self::new(crate::state::session_demo::demo_session())
+    }
+
     /// 只读地取会话状态。
     #[must_use]
     pub fn state(&self) -> &SessionStreamState {
@@ -197,9 +200,9 @@ impl SessionStreamGpui {
         &self.ui
     }
 
-    /// 切换某块工具调用卡片的展开态。
-    pub fn toggle_expanded(&mut self, index: usize, default_folded: bool) {
-        self.ui.toggle_expanded(index, default_folded);
+    /// 切换某张工具卡片的折叠态（按**消息 id**；只在内存，**不落盘**）。
+    pub fn toggle_tool_fold(&mut self, id: &str) {
+        self.ui.toggle_tool_fold(id);
     }
 
     /// 记下审批按钮的本地选择（**不**触发真实决策）。
@@ -213,78 +216,6 @@ impl SessionStreamGpui {
         request: &approval_intent::ApprovalRequest<'_>,
     ) -> approval_intent::ApprovalIntent {
         self.ui.record_intent(request)
-    }
-}
-
-/// 渲染一个块所需的上下文。
-///
-/// - `theme`：颜色来源，一律取自 `cx.theme()`；
-/// - `ui`：视图的局部界面态；
-/// - `host`：交互宿主。给了才能点击（展开 / 选文件 / 审批按钮）；
-/// - `index`：块在会话流中的序号（折叠态的键，也是元素 id 的唯一性来源）；
-/// - `approvals`：渲染时的审批源（只读）。用于**只**取「审批 id → 工具名」，
-///   让点击「总是允许」时能产出带作用域的意图；不参与任何放行判断。
-pub struct BlockCtx<'a> {
-    theme: &'a Theme,
-    ui: Cow<'a, SessionUiState>,
-    host: Option<&'a Entity<SessionStreamGpui>>,
-    index: usize,
-    approvals: Option<&'a [PendingApproval]>,
-}
-
-impl<'a> BlockCtx<'a> {
-    /// 无交互的静态上下文（预览 / 测试用）。
-    #[must_use]
-    pub fn passive(theme: &'a Theme) -> Self {
-        Self {
-            theme,
-            ui: Cow::Owned(SessionUiState::default()),
-            host: None,
-            index: 0,
-            approvals: None,
-        }
-    }
-
-    /// 交互上下文（`Render` 实现里用）。
-    #[must_use]
-    pub fn interactive(
-        theme: &'a Theme,
-        ui: &'a SessionUiState,
-        host: &'a Entity<SessionStreamGpui>,
-        index: usize,
-    ) -> Self {
-        Self {
-            theme,
-            ui: Cow::Borrowed(ui),
-            host: Some(host),
-            index,
-            approvals: None,
-        }
-    }
-
-    /// 挂上审批源（只用于取工具名，供意图使用）。
-    #[must_use]
-    pub fn with_approvals(mut self, approvals: &'a [PendingApproval]) -> Self {
-        self.approvals = Some(approvals);
-        self
-    }
-
-    /// 某审批 id 的工具名（缺失返回 `None`；不伪造）。
-    fn tool_of(&self, approval_id: &str) -> Option<&'a str> {
-        self.approvals?
-            .iter()
-            .find(|a| a.id == approval_id)
-            .map(|a| a.tool.as_str())
-    }
-
-    /// 该块是否处于展开态（工具调用卡片）。
-    fn expanded(&self, card: &ToolCard) -> bool {
-        self.ui.is_expanded(self.index, card.folded)
-    }
-
-    /// 生成一个在本视图内唯一的元素 id。
-    fn element_id(&self, kind: &str, sub: usize) -> String {
-        format!("session-{kind}-{}-{sub}", self.index)
     }
 }
 
@@ -344,6 +275,8 @@ impl Render for SessionStreamGpui {
         let theme = cx.theme().clone();
         let host = cx.entity();
         let blocks = session_render::render(&self.state);
+        // 工具调用的接线细节（消息 id + 完整参数）：与 `Block::ToolCall` 块一一对应。
+        let tools = tool_fold::tool_call_details(self.state.messages());
 
         let mut root = div()
             .flex()
@@ -364,9 +297,15 @@ impl Render for SessionStreamGpui {
             );
         }
 
+        let mut tool_ordinal = 0usize;
         for (index, block) in blocks.iter().enumerate() {
             let ctx = BlockCtx::interactive(&theme, &self.ui, &host, index)
-                .with_approvals(self.state.approvals());
+                .with_approvals(self.state.approvals())
+                .with_tools(&tools)
+                .with_tool_ordinal(tool_ordinal);
+            if matches!(block, Block::ToolCall(_)) {
+                tool_ordinal += 1;
+            }
             root = root.child(render_block_with(block, &ctx));
         }
         root
