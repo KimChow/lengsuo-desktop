@@ -403,45 +403,15 @@ mod handshake_tests {
     use super::*;
     use crate::kernel_pipe::keys::{self, k_machine, EnvelopeError};
     use crate::kernel_pipe::tests::{
-        fixed_k_machine, hex_bytes32, CONTAINER_ID, EXPIRES_UNIX, GCM_NONCE, HELLO_NONCE,
-        K_MACHINE_HEX, SESSION_KEY_HEX,
+        envelope_frame, fixed_k_machine, handshake_in_handshake, hex_bytes32, CONTAINER_ID,
+        ENVELOPE_AAD, EXPIRES_UNIX, GCM_NONCE, HELLO_NONCE, SESSION_KEY_HEX,
     };
-
-    /// 造一个能推进到 `Handshake` 状态的机。
-    fn handshake_in_handshake(k: &[u8; K_MACHINE_LEN]) -> Handshake {
-        let mut hs = Handshake::new(*k);
-        hs.on_frame(&hello_frame(PROTOCOL_VERSION, &HELLO_NONCE))
-            .expect("Hello 应被接受");
-        hs
-    }
 
     /// 造一个 `Hello` 帧（JSON `{version, nonce}`，nonce 用十六进制字符串）。
     fn hello_frame(version: u32, nonce: &[u8; HELLO_NONCE_LEN]) -> Frame {
         let nonce_hex: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
         let payload = format!(r#"{{"version":{version},"nonce":"{nonce_hex}"}}"#);
         Frame::new(FrameType::Hello, payload.into_bytes())
-    }
-
-    /// 造一个 `KeyEnvelope` 帧，**AAD 与帧头自洽**（len 字段 = 载荷实际长度）。
-    ///
-    /// ⚠️ 这与线协议 §3.1 **钉死的** AAD（`len` = `0x55`）不同——原因见
-    /// `tests.rs` 头部「一处契约内部的矛盾」一节。契约钉死的那组 AAD
-    /// 只在 `tests.rs` 的集成测试里使用。
-    fn envelope_frame(k: &[u8; K_MACHINE_LEN]) -> Frame {
-        let payload_len = keys::envelope_payload_len(CONTAINER_ID.len());
-        let aad = envelope_aad(payload_len, &HELLO_NONCE);
-        let envelope = keys::seal_envelope(
-            k,
-            &aad,
-            &EnvelopePlain {
-                session_key: hex_bytes32(SESSION_KEY_HEX),
-                container_id: CONTAINER_ID.to_vec(),
-                expires_unix: EXPIRES_UNIX,
-            },
-            GCM_NONCE,
-        )
-        .expect("应可封装");
-        Frame::new(FrameType::KeyEnvelope, envelope.encode())
     }
 
     #[test]
@@ -596,58 +566,39 @@ mod handshake_tests {
     }
 
     #[test]
-    fn failure_messages_never_contain_key_material() {
+    fn the_self_consistent_aad_equals_the_pinned_contract_aad() {
+        // ⭐ 关键回归守卫：按「载荷实际长度」自洽算出的 AAD，
+        // 必须与契约 §3.1 钉死的那 16 字节**逐字节相同**。
+        //
+        // 这正是契约裁定 85 字节的依据：GCM 的 tag 覆盖 AAD，
+        // 而 AAD 首 4 字节就是帧头 len（= 载荷字节数）⇒ 长度必须自洽。
+        // 两边若不一致 ⇒ 密文/标签对不上契约 ⇒ 跨仓握手失败。
+        let payload_len = keys::envelope_payload_len(CONTAINER_ID.len());
+        assert_eq!(payload_len, 85, "container_id = ct-01 时载荷必须是 85 字节");
+        assert_eq!(
+            envelope_aad(payload_len, &HELLO_NONCE),
+            ENVELOPE_AAD,
+            "自洽 AAD 必须与契约钉死的 AAD 逐字节相同"
+        );
+    }
+
+    #[test]
+    fn a_payload_of_the_wrong_length_cannot_authenticate() {
+        // ⛔ 载荷长度与 AAD 里的 len 不符 ⇒ 认证必失败（这正是契约裁定的机制）。
         let k = fixed_k_machine();
-        let session_bytes = hex_bytes32(SESSION_KEY_HEX);
+        let plain = EnvelopePlain {
+            session_key: hex_bytes32(SESSION_KEY_HEX),
+            container_id: CONTAINER_ID.to_vec(),
+            expires_unix: EXPIRES_UNIX,
+        };
+        let envelope = keys::seal_envelope(&k, &ENVELOPE_AAD, &plain, GCM_NONCE).expect("应可封装");
 
-        // 收集所有失败路径的错误文本。
-        let mut messages: Vec<String> = Vec::new();
-
-        let mut hs = Handshake::new(k);
-        messages.push(
-            hs.on_frame(&hello_frame(PROTOCOL_VERSION + 1, &HELLO_NONCE))
-                .expect_err("版本不匹配必须失败")
-                .to_string(),
+        // 按错误的 len（102）算 AAD ⇒ 认证失败。
+        let wrong_aad = envelope_aad(102, &HELLO_NONCE);
+        assert_eq!(
+            keys::open_envelope(&k, &wrong_aad, &envelope)
+                .expect_err("AAD 的 len 与实际载荷长度不符必须失败"),
+            keys::EnvelopeError::DecryptFailed
         );
-
-        let mut hs = Handshake::new(k);
-        messages.push(
-            hs.on_frame(&Frame::new(FrameType::Hello, b"{".to_vec()))
-                .expect_err("非法 Hello 必须失败")
-                .to_string(),
-        );
-
-        let mut hs = handshake_in_handshake(&k);
-        let other = k_machine("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-        messages.push(
-            hs.on_frame(&envelope_frame(&other))
-                .expect_err("解密失败必须失败")
-                .to_string(),
-        );
-
-        let mut hs = handshake_in_handshake(&k);
-        messages.push(
-            hs.on_frame(&Frame::new(FrameType::Event, b"payload".to_vec()))
-                .expect_err("帧类型不对必须失败")
-                .to_string(),
-        );
-
-        for message in &messages {
-            assert!(
-                !message.contains(SESSION_KEY_HEX),
-                "错误文本不得含会话密钥的十六进制：{message}"
-            );
-            for byte in session_bytes {
-                let needle = format!("{byte:02x}");
-                assert!(
-                    !message.contains(&needle),
-                    "错误文本不得含会话密钥字节 {needle}：{message}"
-                );
-            }
-            assert!(
-                !message.contains(K_MACHINE_HEX),
-                "错误文本不得含 k_machine：{message}"
-            );
-        }
     }
 }

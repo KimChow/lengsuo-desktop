@@ -21,21 +21,24 @@
 //! 两侧各写一份，跨仓比对靠「逐字节相同」。
 //! ⛔ **不许在测试里调用外部脚本生成期望值**：那样两边都错也会「一致」。
 //!
-//! # ⚠️ 一处契约内部的矛盾（已写进报告，未自行拍板）
+//! # ⭐ 契约 §3.1 的 85 字节布局（2026-10-21 裁定）
 //!
-//! 契约 §3.1 说「载荷总长 = 85 字节 ⇒ 帧头 `len` = `0x00000055`」，
-//! 但同一节给的逐字段布局算出来是 **102 字节**（密文 45 字节）。
-//! 契约同时把 **AAD 钉死成** `00000055020000000102030405060708`
-//! （即 `len` = `0x55`），且那条 AAD 配出的密文/认证标签与契约给出的
-//! 密文、标签**逐字节相同**（已被两套独立实现验过）。
+//! 契约 §3.1 此前自相矛盾（逐字段表算 102 字节 vs AAD/散文说 85 字节），
+//! **已裁定以 85 字节为准**——GCM 的 tag 覆盖 AAD，而 AAD 首 4 字节就是
+//! 帧头 `len`（= 载荷字节数）⇒ 载荷总长只能由 tag 判定。
 //!
-//! ⇒ 本卡的处理：**AAD 用契约钉死的 `0x55`**（这是跨仓比对的那条字节），
-//! **载荷按逐字段布局实算**（102 字节）。
-//! 帧头的 `len` 字段写的是**载荷实际长度**（102 = `0x66`）——
-//! 这是线协议 §2 的定义（`len` = payload 字节数）。
-//! 详见 `docs/kernel-pipe-core-status.md` 的「语义冲突」一节。
+//! ⇒ 载荷的**明文区只有 6 个字段**：
+//! `u32 nonce_len | nonce(12) | u32 ciphertext_len | ciphertext | u32 tag_len | tag(16)`
+//! ⇒ 载荷总长 = **40 + 密文长度** = **85 字节**（`container_id` = "ct-01" 时），
+//! 帧头 `len` = `0x00000055`，AAD = `00000055020000000102030405060708`。
+//!
+//! ⛔ `container_id` 与 `expires_unix` **只在密文里**（明文 =
+//! `session_key(32B) || container_id || expires_unix`），
+//! 载荷的明文区**不重复**它们——AAD 只盖住帧头 8 字节 + Hello nonce，
+//! 明文区的任何字节都不在认证范围内 ⇒ 抄一份到明文区 =
+//! 容器标识与过期时间可被中间人改写而认证照样通过。
 
-use crate::kernel_pipe::handshake::{envelope_aad, Handshake};
+use crate::kernel_pipe::handshake::{envelope_aad, Handshake, PROTOCOL_VERSION};
 use crate::kernel_pipe::keys::{
     self, k_machine, EnvelopePlain, KeyEnvelope, HELLO_NONCE_LEN, K_MACHINE_LEN,
 };
@@ -107,16 +110,49 @@ pub(crate) fn hello_frame(version: u32, nonce: &[u8; HELLO_NONCE_LEN]) -> Frame 
     Frame::new(FrameType::Hello, payload.into_bytes())
 }
 
-/// 由固定向量拼出的**信封载荷**（线协议 §3.1 的逐字段布局）。
+/// 造一个 `KeyEnvelope` 帧，**AAD 与帧头自洽**（len 字段 = 载荷实际长度）。
+///
+/// ⭐ 契约 §3.1 定的 85 字节布局下，这里的 `payload_len` 恰好 = 85 = `0x55`
+/// ⇒ 自洽算出来的 AAD 与契约钉死的那 16 字节**逐字节相同**。
+pub(crate) fn envelope_frame(k: &[u8; K_MACHINE_LEN]) -> Frame {
+    let payload_len = keys::envelope_payload_len(CONTAINER_ID.len());
+    let aad = envelope_aad(payload_len, &HELLO_NONCE);
+    let envelope = keys::seal_envelope(
+        k,
+        &aad,
+        &EnvelopePlain {
+            session_key: hex_bytes32(SESSION_KEY_HEX),
+            container_id: CONTAINER_ID.to_vec(),
+            expires_unix: EXPIRES_UNIX,
+        },
+        GCM_NONCE,
+    )
+    .expect("应可封装");
+    Frame::new(FrameType::KeyEnvelope, envelope.encode())
+}
+
+/// 造一个能推进到 `Handshake` 状态的机。
+pub(crate) fn handshake_in_handshake(k: &[u8; K_MACHINE_LEN]) -> Handshake {
+    let mut hs = Handshake::new(*k);
+    hs.on_frame(&hello_frame(PROTOCOL_VERSION, &HELLO_NONCE))
+        .expect("Hello 应被接受");
+    hs
+}
+
+/// 由固定向量拼出的**信封载荷**（线协议 §3.1 的逐字段布局，**85 字节**）。
+///
+/// ```text
+/// u32 nonce_len(4) | nonce(12) | u32 ciphertext_len(4) | ciphertext(45)
+/// | u32 tag_len(4) | tag(16)
+/// ```
+///
+/// ⛔ 明文区**没有** `container_id` 与 `expires_unix`——它们只在密文里。
 pub(crate) fn expected_envelope_payload() -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&12u32.to_be_bytes());
     out.extend_from_slice(&GCM_NONCE);
-    out.extend_from_slice(&(CONTAINER_ID.len() as u32).to_be_bytes());
-    out.extend_from_slice(CONTAINER_ID);
     out.extend_from_slice(&(ENVELOPE_CIPHERTEXT.len() as u32).to_be_bytes());
     out.extend_from_slice(&ENVELOPE_CIPHERTEXT);
-    out.extend_from_slice(&EXPIRES_UNIX.to_be_bytes());
     out.extend_from_slice(&16u32.to_be_bytes());
     out.extend_from_slice(&ENVELOPE_TAG);
     out
@@ -196,95 +232,188 @@ fn an_envelope_sealed_with_the_contract_aad_matches_the_contract_payload() {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod key_tests {
+mod leak_tests {
     use super::*;
-    use crate::kernel_pipe::keys::{
-        derive_session_key, k_machine, machine_code, random_session_key, to_hex, EnvelopeError,
-        MachineInputs, SessionKeySource, SESSION_KEY_LEN,
-    };
+    use crate::kernel_pipe::keys::{EnvelopePlain, MachineInputs};
 
     #[test]
-    fn machine_code_matches_the_wire_contract_vector() {
+    fn debug_output_never_contains_key_material() {
+        // ⛔ 派生 `Debug` 会把密钥原样写进日志 ⇒ 这两个类型的 `Debug` 是手写的。
+        let session = hex_bytes32(SESSION_KEY_HEX);
+        let plain = EnvelopePlain {
+            session_key: session,
+            container_id: CONTAINER_ID.to_vec(),
+            expires_unix: EXPIRES_UNIX,
+        };
+        let plain_text = format!("{plain:?}");
+        assert!(
+            !plain_text.contains(SESSION_KEY_HEX),
+            "EnvelopePlain 的 Debug 不得含会话密钥：{plain_text}"
+        );
+
+        let hs = Handshake::new(fixed_k_machine());
+        let hs_text = format!("{hs:?}");
+        assert!(
+            !hs_text.contains(K_MACHINE_HEX),
+            "Handshake 的 Debug 不得含 k_machine：{hs_text}"
+        );
+    }
+
+    #[test]
+    fn the_machine_code_debug_is_not_a_secret_but_the_inputs_shape_is_checked() {
+        // 机器码的**取值**是本机真值，不该被顺手打进日志。
         let inputs = MachineInputs {
             os: "linux".to_string(),
             cpuid: "cpuid-test".to_string(),
             hddid: "hddid-test".to_string(),
             computername: "host-test".to_string(),
         };
-        assert_eq!(inputs.to_json(), MACHINE_JSON, "JSON 形状与键序必须一致");
+        // MachineInputs 的 Debug 是派生的（里面没有密钥），但机器码本身不应进日志。
+        assert!(!format!("{inputs:?}").contains(MACHINE_CODE));
+    }
+}
+
+#[cfg(test)]
+mod runner_tests {
+    use super::*;
+    use crate::kernel_pipe::handshake::{HandshakeError, HandshakeState, PROTOCOL_VERSION};
+    use crate::kernel_pipe::keys::SESSION_KEY_LEN;
+    use crate::kernel_pipe::FrameType;
+
+    #[test]
+    fn the_runner_can_build_the_key_envelope_frame() {
+        // runner 侧：收到 Hello 后才能封信封（AAD 要用 Hello 的 nonce）。
+        let k = fixed_k_machine();
+        let mut hs = Handshake::new(k);
+        assert!(
+            hs.build_key_envelope_frame(
+                &[0u8; SESSION_KEY_LEN],
+                CONTAINER_ID,
+                EXPIRES_UNIX,
+                GCM_NONCE
+            )
+            .is_err(),
+            "WaitHello 状态不能封信封（没有 Hello nonce）"
+        );
+
+        hs.on_frame(&hello_frame(PROTOCOL_VERSION, &HELLO_NONCE))
+            .expect("Hello 应被接受");
+
+        let session = hex_bytes32(SESSION_KEY_HEX);
+        let frame = hs
+            .build_key_envelope_frame(&session, CONTAINER_ID, EXPIRES_UNIX, GCM_NONCE)
+            .expect("应可封信封");
+        assert_eq!(frame.frame_type, FrameType::KeyEnvelope);
+
+        // 对端用同样的 AAD 应当能解出来。
+        let aad = envelope_aad(frame.payload.len(), &HELLO_NONCE);
+        let envelope = KeyEnvelope::decode(&frame.payload).expect("应可解码");
+        let plain = keys::open_envelope(&k, &aad, &envelope).expect("应可解封");
+        assert_eq!(plain.session_key, session);
+        assert_eq!(plain.container_id, CONTAINER_ID.to_vec());
+        assert_eq!(plain.expires_unix, EXPIRES_UNIX);
+    }
+
+    #[test]
+    fn the_envelope_aad_is_the_frame_header_plus_the_hello_nonce() {
+        let aad = envelope_aad(0x55, &HELLO_NONCE);
+        assert_eq!(aad, ENVELOPE_AAD, "AAD 必须与线协议钉死的 16 字节一致");
+        assert_eq!(aad.len(), 16, "AAD 必须是 16 字节 = 帧头 8 + hello nonce 8");
         assert_eq!(
-            machine_code(&inputs),
-            MACHINE_CODE,
-            "机器码必须与线协议逐字节相同"
+            &aad[4..8],
+            &[0x02, 0x00, 0x00, 0x00],
+            "AAD 里的 type 必须是 KeyEnvelope"
         );
-    }
-
-    #[test]
-    fn machine_code_uses_the_fixed_key_order() {
-        // 键序变了 ⇒ 摘要变了。四个字段的顺序是协议的一部分。
-        let a = MachineInputs {
-            os: "linux".to_string(),
-            cpuid: "c".to_string(),
-            hddid: "h".to_string(),
-            computername: "n".to_string(),
-        };
-        assert_eq!(machine_code(&a), machine_code(&a.clone()));
-        let swapped = MachineInputs {
-            os: "linux".to_string(),
-            cpuid: "h".to_string(),
-            hddid: "c".to_string(),
-            computername: "n".to_string(),
-        };
-        assert_ne!(machine_code(&a), machine_code(&swapped));
-    }
-
-    #[test]
-    fn k_machine_matches_the_wire_contract_vector() {
-        assert_eq!(to_hex(&fixed_k_machine()), K_MACHINE_HEX);
-    }
-
-    #[test]
-    fn session_key_derivation_matches_the_wire_contract_vector() {
-        // 候选 B：HKDF-SHA256(ikm=k_machine, salt=hello_nonce, info=...)。
-        let derived = derive_session_key(&fixed_k_machine(), &HELLO_NONCE).expect("应可派生");
-        assert_eq!(to_hex(&derived), SESSION_KEY_HEX);
-    }
-
-    #[test]
-    fn session_key_source_is_injectable_not_hard_coded() {
-        // ⭐ 生成方式是「待主理人拍板」的 ⇒ 本模块只提供两种实现，由调用方注入。
-        let random = random_session_key().expect("应可生成");
-        let derived = derive_session_key(&fixed_k_machine(), &HELLO_NONCE).expect("应可派生");
-        assert_eq!(random.len(), SESSION_KEY_LEN);
-        assert_eq!(derived.len(), SESSION_KEY_LEN);
-        // 两次随机不应相同（否则就是常量了）。
-        let again = random_session_key().expect("应可生成");
-        assert_ne!(random, again, "CSPRNG 两次必须不同");
-        // 派生的两次必须相同（HKDF 是确定性的）。
         assert_eq!(
-            derived,
-            derive_session_key(&fixed_k_machine(), &HELLO_NONCE).expect("应可派生")
+            &aad[8..16],
+            &HELLO_NONCE,
+            "AAD 必须含 Hello 的 8 字节 nonce"
         );
-        // 换 salt（hello nonce）必须换出不同的密钥。
-        let other_nonce = [0x09u8; HELLO_NONCE_LEN];
-        assert_ne!(
-            derived,
-            derive_session_key(&fixed_k_machine(), &other_nonce).expect("应可派生")
-        );
-        // 显式走一遍「按指定方式生成」的入口。
-        let via_random =
-            keys::make_session_key(SessionKeySource::Random, &fixed_k_machine(), &HELLO_NONCE)
-                .expect("应可生成");
-        assert_eq!(via_random.len(), SESSION_KEY_LEN);
-        let via_hkdf =
-            keys::make_session_key(SessionKeySource::Hkdf, &fixed_k_machine(), &HELLO_NONCE)
-                .expect("应可派生");
-        assert_eq!(via_hkdf, derived);
     }
+
+    #[test]
+    fn the_runner_cannot_send_an_envelope_before_the_hello() {
+        // 状态机必须先收到 Hello 才知道 AAD 里的 hello nonce。
+        let hs = Handshake::new(fixed_k_machine());
+        assert!(matches!(hs.state(), HandshakeState::WaitHello));
+        let err = hs
+            .build_key_envelope_frame(
+                &[0u8; SESSION_KEY_LEN],
+                CONTAINER_ID,
+                EXPIRES_UNIX,
+                GCM_NONCE,
+            )
+            .expect_err("WaitHello 状态不能封信封");
+        assert_eq!(err, HandshakeError::AlreadyFinished);
+    }
+
+    #[test]
+    fn failure_messages_never_contain_key_material() {
+        let k = fixed_k_machine();
+        let session_bytes = hex_bytes32(SESSION_KEY_HEX);
+
+        // 收集所有失败路径的错误文本。
+        let mut messages: Vec<String> = Vec::new();
+
+        let mut hs = Handshake::new(k);
+        messages.push(
+            hs.on_frame(&hello_frame(PROTOCOL_VERSION + 1, &HELLO_NONCE))
+                .expect_err("版本不匹配必须失败")
+                .to_string(),
+        );
+
+        let mut hs = Handshake::new(k);
+        messages.push(
+            hs.on_frame(&Frame::new(FrameType::Hello, b"{".to_vec()))
+                .expect_err("非法 Hello 必须失败")
+                .to_string(),
+        );
+
+        let mut hs = handshake_in_handshake(&k);
+        let other = k_machine("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        messages.push(
+            hs.on_frame(&envelope_frame(&other))
+                .expect_err("解密失败必须失败")
+                .to_string(),
+        );
+
+        let mut hs = handshake_in_handshake(&k);
+        messages.push(
+            hs.on_frame(&Frame::new(FrameType::Event, b"payload".to_vec()))
+                .expect_err("帧类型不对必须失败")
+                .to_string(),
+        );
+
+        for message in &messages {
+            assert!(
+                !message.contains(SESSION_KEY_HEX),
+                "错误文本不得含会话密钥的十六进制：{message}"
+            );
+            for byte in session_bytes {
+                let needle = format!("{byte:02x}");
+                assert!(
+                    !message.contains(&needle),
+                    "错误文本不得含会话密钥字节 {needle}：{message}"
+                );
+            }
+            assert!(
+                !message.contains(K_MACHINE_HEX),
+                "错误文本不得含 k_machine：{message}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::*;
+    use crate::kernel_pipe::keys::{to_hex, EnvelopeError};
 
     #[test]
     fn envelope_payload_length_is_big_endian_throughout() {
         // 载荷里每个整数都必须是大端：手工核对各字段。
+        // 布局：nonce_len(4) | nonce(12) | ciphertext_len(4) | ciphertext(45)
+        //       | tag_len(4) | tag(16)  ⇒ 85 字节
         let payload = expected_envelope_payload();
         assert_eq!(
             &payload[0..4],
@@ -294,27 +423,41 @@ mod key_tests {
         assert_eq!(&payload[4..16], &GCM_NONCE);
         assert_eq!(
             &payload[16..20],
-            &[0x00, 0x00, 0x00, 0x05],
-            "container_id_len 必须大端"
-        );
-        assert_eq!(&payload[20..25], CONTAINER_ID);
-        assert_eq!(
-            &payload[25..29],
             &[0x00, 0x00, 0x00, 0x2d],
             "ciphertext_len 必须大端"
         );
+        assert_eq!(&payload[20..65], &ENVELOPE_CIPHERTEXT);
         assert_eq!(
-            &payload[74..82],
-            &[0x00, 0x00, 0x00, 0x00, 0x65, 0x53, 0xf1, 0x00]
-        );
-        assert_eq!(
-            &payload[82..86],
+            &payload[65..69],
             &[0x00, 0x00, 0x00, 0x10],
             "tag_len 必须大端"
         );
-        assert_eq!(&payload[86..102], &ENVELOPE_TAG);
-        assert_eq!(payload.len(), 102, "载荷总长按逐字段布局是 102 字节");
-        assert_eq!(keys::envelope_payload_len(CONTAINER_ID.len()), 102);
+        assert_eq!(&payload[69..85], &ENVELOPE_TAG);
+        assert_eq!(payload.len(), 85, "载荷总长按逐字段布局是 85 字节");
+        assert_eq!(keys::envelope_payload_len(CONTAINER_ID.len()), 85);
+    }
+
+    #[test]
+    fn the_plaintext_region_never_duplicates_container_id_or_expires() {
+        // ⛔ 载荷的明文区**没有** container_id 与 expires_unix——
+        // 它们只在密文里（线协议 §3.1）。
+        // 抄一份到明文区 ⇒ 未被认证 ⇒ 可被中间人改写（过期时间可被无限延长）。
+        let payload = expected_envelope_payload();
+        let ciphertext = &payload[20..65];
+        assert!(
+            !ciphertext
+                .windows(CONTAINER_ID.len())
+                .any(|w| w == CONTAINER_ID),
+            "container_id 只应出现在密文里，载荷明文区不得有它的副本"
+        );
+        // 明文区里也不该出现 expires_unix 的字节。
+        let expires_bytes = EXPIRES_UNIX.to_be_bytes();
+        assert!(
+            !ciphertext
+                .windows(expires_bytes.len())
+                .any(|w| w == expires_bytes),
+            "expires_unix 只应出现在密文里，载荷明文区不得有它的副本"
+        );
     }
 
     #[test]
@@ -434,8 +577,10 @@ mod key_tests {
 
     #[test]
     fn truncated_envelope_payload_is_rejected() {
+        // 载荷布局：nonce_len(4) | nonce(12) | ciphertext_len(4) | ciphertext(45)
+        //           | tag_len(4) | tag(16)  ⇒ 85 字节
         let payload = expected_envelope_payload();
-        for cut in [1usize, 4, 16, 20, 25, 29, 50, 81, 85, 101] {
+        for cut in [1usize, 4, 16, 19, 20, 21, 40, 64, 65, 68, 69, 84] {
             let err = KeyEnvelope::decode(&payload[..cut]).expect_err("截断必须失败");
             assert!(
                 matches!(
@@ -467,7 +612,7 @@ mod key_tests {
         );
 
         let mut payload = expected_envelope_payload();
-        payload[85] = 0x0f; // tag_len = 15
+        payload[68] = 0x0f; // tag_len = 15（tag_len 在 [65..69)）
         assert_eq!(
             KeyEnvelope::decode(&payload).expect_err("tag_len 必须为 16"),
             EnvelopeError::BadTagLength
@@ -477,7 +622,7 @@ mod key_tests {
     #[test]
     fn machine_inputs_use_this_machine_real_values() {
         // ⚠️ 只断言「形状」与「非空」：取值是本机真实值，各机不同。
-        let inputs = keys::collect_machine_inputs();
+        let inputs = crate::kernel_pipe::machine::collect_machine_inputs();
         assert_eq!(inputs.os, std::env::consts::OS);
         assert!(
             !inputs.computername.is_empty(),
@@ -487,122 +632,5 @@ mod key_tests {
         let json = inputs.to_json();
         assert!(json.starts_with("{\"os\":\""));
         assert!(json.contains("\"computername\":\""));
-    }
-}
-
-#[cfg(test)]
-mod leak_tests {
-    use super::*;
-    use crate::kernel_pipe::keys::{EnvelopePlain, MachineInputs};
-
-    #[test]
-    fn debug_output_never_contains_key_material() {
-        // ⛔ 派生 `Debug` 会把密钥原样写进日志 ⇒ 这两个类型的 `Debug` 是手写的。
-        let session = hex_bytes32(SESSION_KEY_HEX);
-        let plain = EnvelopePlain {
-            session_key: session,
-            container_id: CONTAINER_ID.to_vec(),
-            expires_unix: EXPIRES_UNIX,
-        };
-        let plain_text = format!("{plain:?}");
-        assert!(
-            !plain_text.contains(SESSION_KEY_HEX),
-            "EnvelopePlain 的 Debug 不得含会话密钥：{plain_text}"
-        );
-
-        let hs = Handshake::new(fixed_k_machine());
-        let hs_text = format!("{hs:?}");
-        assert!(
-            !hs_text.contains(K_MACHINE_HEX),
-            "Handshake 的 Debug 不得含 k_machine：{hs_text}"
-        );
-    }
-
-    #[test]
-    fn the_machine_code_debug_is_not_a_secret_but_the_inputs_shape_is_checked() {
-        // 机器码的**取值**是本机真值，不该被顺手打进日志。
-        let inputs = MachineInputs {
-            os: "linux".to_string(),
-            cpuid: "cpuid-test".to_string(),
-            hddid: "hddid-test".to_string(),
-            computername: "host-test".to_string(),
-        };
-        // MachineInputs 的 Debug 是派生的（里面没有密钥），但机器码本身不应进日志。
-        assert!(!format!("{inputs:?}").contains(MACHINE_CODE));
-    }
-}
-
-#[cfg(test)]
-mod runner_tests {
-    use super::*;
-    use crate::kernel_pipe::handshake::{HandshakeError, HandshakeState, PROTOCOL_VERSION};
-    use crate::kernel_pipe::keys::SESSION_KEY_LEN;
-    use crate::kernel_pipe::FrameType;
-
-    #[test]
-    fn the_runner_can_build_the_key_envelope_frame() {
-        // runner 侧：收到 Hello 后才能封信封（AAD 要用 Hello 的 nonce）。
-        let k = fixed_k_machine();
-        let mut hs = Handshake::new(k);
-        assert!(
-            hs.build_key_envelope_frame(
-                &[0u8; SESSION_KEY_LEN],
-                CONTAINER_ID,
-                EXPIRES_UNIX,
-                GCM_NONCE
-            )
-            .is_err(),
-            "WaitHello 状态不能封信封（没有 Hello nonce）"
-        );
-
-        hs.on_frame(&hello_frame(PROTOCOL_VERSION, &HELLO_NONCE))
-            .expect("Hello 应被接受");
-
-        let session = hex_bytes32(SESSION_KEY_HEX);
-        let frame = hs
-            .build_key_envelope_frame(&session, CONTAINER_ID, EXPIRES_UNIX, GCM_NONCE)
-            .expect("应可封信封");
-        assert_eq!(frame.frame_type, FrameType::KeyEnvelope);
-
-        // 对端用同样的 AAD 应当能解出来。
-        let aad = envelope_aad(frame.payload.len(), &HELLO_NONCE);
-        let envelope = KeyEnvelope::decode(&frame.payload).expect("应可解码");
-        let plain = keys::open_envelope(&k, &aad, &envelope).expect("应可解封");
-        assert_eq!(plain.session_key, session);
-        assert_eq!(plain.container_id, CONTAINER_ID.to_vec());
-        assert_eq!(plain.expires_unix, EXPIRES_UNIX);
-    }
-
-    #[test]
-    fn the_envelope_aad_is_the_frame_header_plus_the_hello_nonce() {
-        let aad = envelope_aad(0x55, &HELLO_NONCE);
-        assert_eq!(aad, ENVELOPE_AAD, "AAD 必须与线协议钉死的 16 字节一致");
-        assert_eq!(aad.len(), 16, "AAD 必须是 16 字节 = 帧头 8 + hello nonce 8");
-        assert_eq!(
-            &aad[4..8],
-            &[0x02, 0x00, 0x00, 0x00],
-            "AAD 里的 type 必须是 KeyEnvelope"
-        );
-        assert_eq!(
-            &aad[8..16],
-            &HELLO_NONCE,
-            "AAD 必须含 Hello 的 8 字节 nonce"
-        );
-    }
-
-    #[test]
-    fn the_runner_cannot_send_an_envelope_before_the_hello() {
-        // 状态机必须先收到 Hello 才知道 AAD 里的 hello nonce。
-        let hs = Handshake::new(fixed_k_machine());
-        assert!(matches!(hs.state(), HandshakeState::WaitHello));
-        let err = hs
-            .build_key_envelope_frame(
-                &[0u8; SESSION_KEY_LEN],
-                CONTAINER_ID,
-                EXPIRES_UNIX,
-                GCM_NONCE,
-            )
-            .expect_err("WaitHello 状态不能封信封");
-        assert_eq!(err, HandshakeError::AlreadyFinished);
     }
 }

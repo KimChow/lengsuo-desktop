@@ -106,145 +106,6 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-/// 采集本机的真实机器码素材。
-///
-/// ⛔ **取值必须是本机真实值**——不复制任何一方的常量字符串。
-/// 线协议 §1 只固定**形状**（四个字段、同样的键序），不固定取值。
-///
-/// # 采集源
-///
-/// | 字段 | Linux | Windows | macOS |
-/// |---|---|---|---|
-/// | `os` | `std::env::consts::OS` | 同左 | 同左 |
-/// | `cpuid` | `/proc/cpuinfo` 的 `vendor_id`+`model name` | `PROCESSOR_IDENTIFIER` 环境变量 | `sysctl -n machdep.cpu.brand_string` 的等效环境变量 |
-/// | `hddid` | `/sys/block/*/device/serial` | `COMPUTERNAME`+系统盘标识的等效环境变量 | 同左 |
-/// | `computername` | `HOSTNAME` 环境变量 / `/etc/hostname` | `COMPUTERNAME` 环境变量 | `HOSTNAME` 环境变量 |
-///
-/// ⚠️ 采集**失败不 panic**：取不到就退化成该字段的空串。
-/// 机器码的**形状**是协议的一部分，**取值**只用于「同一台机器算出一致的密钥」，
-/// 因此采集不全不该让整个握手崩掉。
-/// ⇒ 但两侧（runner 与内核）必须采到**同一组值**才能互认，
-/// 所以采集源必须在本仓与内核仓**写死成同一份**（见报告 §6）。
-#[must_use]
-pub fn collect_machine_inputs() -> MachineInputs {
-    MachineInputs {
-        os: std::env::consts::OS.to_string(),
-        cpuid: collect_cpuid(),
-        hddid: collect_hddid(),
-        computername: collect_computername(),
-    }
-}
-
-/// 计算机名：环境变量优先，退到 `/etc/hostname`。
-fn collect_computername() -> String {
-    for key in ["COMPUTERNAME", "HOSTNAME"] {
-        if let Ok(value) = std::env::var(key) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-    }
-    if let Ok(text) = std::fs::read_to_string("/etc/hostname") {
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-    String::new()
-}
-
-/// CPU 标识。
-///
-/// Linux：读 `/proc/cpuinfo` 的 `vendor_id` 与 `model name`（拼起来更稳）。
-/// Windows：`PROCESSOR_IDENTIFIER` 环境变量。
-/// 其它平台：留空（形状不变）。
-fn collect_cpuid() -> String {
-    if let Some(value) = env_non_empty("PROCESSOR_IDENTIFIER") {
-        return value;
-    }
-    if let Some(text) = read_small_file("/proc/cpuinfo") {
-        let vendor = cpuinfo_field(&text, "vendor_id");
-        let model = cpuinfo_field(&text, "model name");
-        let joined = [vendor, model]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !joined.is_empty() {
-            return joined;
-        }
-    }
-    String::new()
-}
-
-/// 磁盘标识。
-///
-/// Linux：扫 `/sys/block/*/device/serial`（取第一个非空的）。
-/// Windows / macOS：无依赖可读 ⇒ 用 `SYSTEMDRIVE` / `HOME` 的等效环境变量兜底。
-fn collect_hddid() -> String {
-    if let Some(serial) = scan_sys_block_serial() {
-        return serial;
-    }
-    for key in ["SYSTEMDRIVE", "DISKNUMBER"] {
-        if let Some(value) = env_non_empty(key) {
-            return value;
-        }
-    }
-    String::new()
-}
-
-/// 扫 `/sys/block/*/device/serial`，取第一个非空值。
-fn scan_sys_block_serial() -> Option<String> {
-    let entries = std::fs::read_dir("/sys/block").ok()?;
-    let mut found: Vec<String> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path().join("device").join("serial");
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
-                found.push(trimmed.to_string());
-            }
-        }
-    }
-    found.sort();
-    found.into_iter().next()
-}
-
-/// 从 `/proc/cpuinfo` 里取某个字段的值。
-fn cpuinfo_field(text: &str, key: &str) -> Option<String> {
-    for line in text.lines() {
-        // 不是 `名: 值` 形状的行（如空行）直接跳过。
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        if name.trim() == key {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// 读一个存在且不大的文本文件。
-fn read_small_file(path: &str) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(text)
-}
-
-/// 取一个非空的环境变量。
-fn env_non_empty(key: &str) -> Option<String> {
-    let value = std::env::var(key).ok()?;
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
 /// 机器码 = `SHA-256(UTF-16LE(固定键序 JSON))` 的**小写十六进制**。
 ///
 /// ⭐ 编码是 **UTF-16LE 且无 BOM**（线协议 §1 + §2 固定向量）。
@@ -345,18 +206,29 @@ impl std::fmt::Debug for EnvelopePlain {
 
 /// 密钥信封的**载荷**（线协议 §3.1 逐字段布局）。
 ///
-/// 字段顺序：nonce → container_id → ciphertext → expires → tag。
+/// ```text
+/// 偏移   长度    字段
+/// 0      4       nonce_len      u32 大端，固定 12
+/// 4      12      nonce          GCM nonce（每次信封独立随机）
+/// 16     4       ciphertext_len u32 大端
+/// 20     M       ciphertext     GCM 密文
+/// 20+M   4       tag_len        u32 大端，固定 16
+/// 24+M   16      tag            GCM 认证标签
+/// ```
+///
+/// ⛔ **载荷的明文区只有 6 个字段**：`container_id` 与 `expires_unix`
+/// **只出现在密文里面**，接收方解密后从明文取。
+/// ⛔ **不要把它们再抄一份到载荷的明文头部**——AAD 只盖住帧头 8 字节 +
+/// Hello nonce，**明文区的任何字节都不在认证范围内** ⇒ 抄一份到明文区 =
+/// 容器标识与过期时间可被中间人改写而认证照样通过（过期时间可被无限延长）。
+///
 /// **所有整数一律大端。**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEnvelope {
     /// GCM nonce（12 字节）。
     pub nonce: [u8; GCM_NONCE_LEN],
-    /// 容器 id（UTF-8 字节）。
-    pub container_id: Vec<u8>,
-    /// GCM 密文。
+    /// GCM 密文（明文 = `session_key(32B) || container_id || expires_unix`）。
     pub ciphertext: Vec<u8>,
-    /// 过期时间（Unix 秒）。
-    pub expires_unix: u64,
     /// GCM 认证标签（16 字节）。
     pub tag: [u8; GCM_TAG_LEN],
 }
@@ -365,14 +237,11 @@ impl KeyEnvelope {
     /// 按线协议 §3.1 的布局编码成载荷字节。
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(64 + self.container_id.len() + self.ciphertext.len());
+        let mut out = Vec::with_capacity(ENVELOPE_FIXED_LEN + self.ciphertext.len());
         out.extend_from_slice(&(self.nonce.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.nonce);
-        out.extend_from_slice(&(self.container_id.len() as u32).to_be_bytes());
-        out.extend_from_slice(&self.container_id);
         out.extend_from_slice(&(self.ciphertext.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.ciphertext);
-        out.extend_from_slice(&self.expires_unix.to_be_bytes());
         out.extend_from_slice(&(self.tag.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.tag);
         out
@@ -392,13 +261,8 @@ impl KeyEnvelope {
         let mut nonce = [0u8; GCM_NONCE_LEN];
         nonce.copy_from_slice(nonce_bytes);
 
-        let container_id_len = cursor.take_u32()? as usize;
-        let container_id = cursor.take(container_id_len)?.to_vec();
-
         let ciphertext_len = cursor.take_u32()? as usize;
         let ciphertext = cursor.take(ciphertext_len)?.to_vec();
-
-        let expires_unix = cursor.take_u64()?;
 
         let tag_len = cursor.take_u32()? as usize;
         if tag_len != GCM_TAG_LEN {
@@ -415,33 +279,35 @@ impl KeyEnvelope {
 
         Ok(Self {
             nonce,
-            container_id,
             ciphertext,
-            expires_unix,
             tag,
         })
     }
 }
+
+/// 密钥信封载荷里**与密文长度无关**的那部分字节数：
+/// `nonce_len(4) + nonce(12) + ciphertext_len(4) + tag_len(4) + tag(16)` = **40**。
+pub const ENVELOPE_FIXED_LEN: usize = 4 + GCM_NONCE_LEN + 4 + 4 + GCM_TAG_LEN;
 
 /// 密钥信封**载荷**的字节数（给定 `container_id` 长度）。
 ///
 /// 载荷布局（线协议 §3.1）：
 ///
 /// ```text
-/// u32 nonce_len(4) | nonce(12) | u32 container_id_len(4) | container_id(N)
-/// | u32 ciphertext_len(4) | ciphertext(M) | u64 expires(8) | u32 tag_len(4) | tag(16)
+/// u32 nonce_len(4) | nonce(12) | u32 ciphertext_len(4) | ciphertext(M)
+/// | u32 tag_len(4) | tag(16)
 /// ```
 ///
-/// 密文长度 M == 明文长度 == `32 + N + 8`（GCM 是流模式）。
-/// ⇒ 载荷总长 = `52 + N + M` = `92 + 2N`。
+/// 密文长度 M == 明文长度 == `32 + N + 8`（GCM 是流模式，N = container_id 长度）。
+/// ⇒ 载荷总长 = **40 + M** = `80 + N`。
+/// （契约 §3.1 的固定向量：N = 5 ⇒ M = 45 ⇒ 载荷 85 字节 ⇒ 帧头 `len` = `0x55`。）
 ///
 /// ⭐ 这个长度会进 **AAD**（帧头的 `len` 字段），
 /// 所以发送方与接收方必须算出**同一个值**——否则认证必失败。
 #[must_use]
 pub fn envelope_payload_len(container_id_len: usize) -> usize {
-    const FIXED: usize = 4 + GCM_NONCE_LEN + 4 + 4 + 8 + 4 + GCM_TAG_LEN;
     const PLAINTEXT_OVERHEAD: usize = SESSION_KEY_LEN + 8;
-    FIXED + container_id_len + (PLAINTEXT_OVERHEAD + container_id_len)
+    ENVELOPE_FIXED_LEN + (PLAINTEXT_OVERHEAD + container_id_len)
 }
 
 /// 载荷游标：只做「取固定长度 / 取 u32 / 取 u64」，越界即失败。
@@ -468,13 +334,6 @@ impl<'a> Cursor<'a> {
     fn take_u32(&mut self) -> Result<u32, EnvelopeError> {
         let bytes = self.take(4)?;
         Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-    }
-
-    fn take_u64(&mut self) -> Result<u64, EnvelopeError> {
-        let bytes = self.take(8)?;
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(bytes);
-        Ok(u64::from_be_bytes(buf))
     }
 
     fn is_exhausted(&self) -> bool {
@@ -523,9 +382,7 @@ pub fn seal_envelope(
 
     let envelope = KeyEnvelope {
         nonce: gcm_nonce,
-        container_id: plain.container_id.clone(),
         ciphertext: ciphertext.to_vec(),
-        expires_unix: plain.expires_unix,
         tag,
     };
 
@@ -539,6 +396,10 @@ pub fn seal_envelope(
 ///
 /// ⛔ **失败绝不降级**：密钥不对、密文被改 1 字节、AAD 不对、载荷被截断——
 /// 全部返回 `Err`，**不返回任何部分明文**。
+///
+/// ⭐ `container_id` 与 `expires_unix` **从明文里取**——
+/// 载荷的明文区**没有**这两个字段（线协议 §3.1），
+/// 所以它们**在认证范围内**（明文被 GCM 盖住）。
 pub fn open_envelope(
     k_machine: &[u8; K_MACHINE_LEN],
     aad: &[u8],
@@ -556,28 +417,28 @@ pub fn open_envelope(
         .decrypt(nonce, Payload { msg: &sealed, aad })
         .map_err(|_| EnvelopeError::DecryptFailed)?;
 
-    let result = split_plaintext(&plaintext, envelope.container_id.len());
+    // 明文 = session_key(32B) || container_id || expires_unix(u64 大端)。
+    // container_id 的长度**不在载荷里** ⇒ 从尾部倒推：
+    // 末尾 8 字节是 expires_unix，其余（去掉 32 字节会话密钥）就是 container_id。
+    let result = split_plaintext(&plaintext);
     plaintext.zeroize();
     result
 }
 
 /// 拆明文：`session_key(32B) || container_id || expires_unix(u64 大端)`。
-fn split_plaintext(
-    plaintext: &[u8],
-    container_id_len: usize,
-) -> Result<EnvelopePlain, EnvelopeError> {
-    let expected = SESSION_KEY_LEN
-        .checked_add(container_id_len)
-        .and_then(|v| v.checked_add(8))
-        .ok_or(EnvelopeError::BadPlaintext)?;
-    if plaintext.len() != expected {
+///
+/// ⭐ `container_id` 的长度由明文长度**倒推**（末尾 8 字节固定是 `expires_unix`），
+/// 因为载荷里**没有** `container_id_len` 字段（线协议 §3.1）。
+fn split_plaintext(plaintext: &[u8]) -> Result<EnvelopePlain, EnvelopeError> {
+    if plaintext.len() < SESSION_KEY_LEN + 8 {
         return Err(EnvelopeError::BadPlaintext);
     }
 
     let mut session_key = [0u8; SESSION_KEY_LEN];
     session_key.copy_from_slice(&plaintext[..SESSION_KEY_LEN]);
 
-    let container_end = SESSION_KEY_LEN + container_id_len;
+    // 末尾 8 字节 = expires_unix（大端）。
+    let container_end = plaintext.len() - 8;
     let container_id = plaintext[SESSION_KEY_LEN..container_end].to_vec();
 
     let mut exp_bytes = [0u8; 8];
@@ -650,5 +511,91 @@ pub fn envelope_error_from_frame(err: FrameError) -> EnvelopeError {
         FrameError::PayloadTooLarge { .. }
         | FrameError::ReservedNotZero
         | FrameError::UnknownType { .. } => EnvelopeError::InconsistentLength,
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+    use crate::kernel_pipe::tests::{
+        fixed_k_machine, HELLO_NONCE, K_MACHINE_HEX, MACHINE_CODE, MACHINE_JSON, SESSION_KEY_HEX,
+    };
+
+    #[test]
+    fn machine_code_matches_the_wire_contract_vector() {
+        let inputs = MachineInputs {
+            os: "linux".to_string(),
+            cpuid: "cpuid-test".to_string(),
+            hddid: "hddid-test".to_string(),
+            computername: "host-test".to_string(),
+        };
+        assert_eq!(inputs.to_json(), MACHINE_JSON, "JSON 形状与键序必须一致");
+        assert_eq!(
+            machine_code(&inputs),
+            MACHINE_CODE,
+            "机器码必须与线协议逐字节相同"
+        );
+    }
+
+    #[test]
+    fn machine_code_uses_the_fixed_key_order() {
+        // 键序变了 ⇒ 摘要变了。四个字段的顺序是协议的一部分。
+        let a = MachineInputs {
+            os: "linux".to_string(),
+            cpuid: "c".to_string(),
+            hddid: "h".to_string(),
+            computername: "n".to_string(),
+        };
+        assert_eq!(machine_code(&a), machine_code(&a.clone()));
+        let swapped = MachineInputs {
+            os: "linux".to_string(),
+            cpuid: "h".to_string(),
+            hddid: "c".to_string(),
+            computername: "n".to_string(),
+        };
+        assert_ne!(machine_code(&a), machine_code(&swapped));
+    }
+
+    #[test]
+    fn k_machine_matches_the_wire_contract_vector() {
+        assert_eq!(to_hex(&fixed_k_machine()), K_MACHINE_HEX);
+    }
+
+    #[test]
+    fn session_key_derivation_matches_the_wire_contract_vector() {
+        // 候选 B：HKDF-SHA256(ikm=k_machine, salt=hello_nonce, info=...)。
+        let derived = derive_session_key(&fixed_k_machine(), &HELLO_NONCE).expect("应可派生");
+        assert_eq!(to_hex(&derived), SESSION_KEY_HEX);
+    }
+
+    #[test]
+    fn session_key_source_is_injectable_not_hard_coded() {
+        // ⭐ 生成方式是「待主理人拍板」的 ⇒ 本模块只提供两种实现，由调用方注入。
+        let random = random_session_key().expect("应可生成");
+        let derived = derive_session_key(&fixed_k_machine(), &HELLO_NONCE).expect("应可派生");
+        assert_eq!(random.len(), SESSION_KEY_LEN);
+        assert_eq!(derived.len(), SESSION_KEY_LEN);
+        // 两次随机不应相同（否则就是常量了）。
+        let again = random_session_key().expect("应可生成");
+        assert_ne!(random, again, "CSPRNG 两次必须不同");
+        // 派生的两次必须相同（HKDF 是确定性的）。
+        assert_eq!(
+            derived,
+            derive_session_key(&fixed_k_machine(), &HELLO_NONCE).expect("应可派生")
+        );
+        // 换 salt（hello nonce）必须换出不同的密钥。
+        let other_nonce = [0x09u8; HELLO_NONCE_LEN];
+        assert_ne!(
+            derived,
+            derive_session_key(&fixed_k_machine(), &other_nonce).expect("应可派生")
+        );
+        // 显式走一遍「按指定方式生成」的入口。
+        let via_random =
+            make_session_key(SessionKeySource::Random, &fixed_k_machine(), &HELLO_NONCE)
+                .expect("应可生成");
+        assert_eq!(via_random.len(), SESSION_KEY_LEN);
+        let via_hkdf = make_session_key(SessionKeySource::Hkdf, &fixed_k_machine(), &HELLO_NONCE)
+            .expect("应可派生");
+        assert_eq!(via_hkdf, derived);
     }
 }
