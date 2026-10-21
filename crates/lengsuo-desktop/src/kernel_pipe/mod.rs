@@ -26,9 +26,13 @@
 //!
 //! - [`keys`]：机器码派生、密钥信封编解码（纯逻辑）。
 //! - [`handshake`]：握手状态机（纯状态，不碰 IO）。
+//! - [`server`]：**IO 层**——管道服务端（监听 + 收发循环）。
+//! - [`launch`]：启动内核进程并拼命令行。
 
 pub mod handshake;
 pub mod keys;
+pub mod launch;
+pub mod server;
 
 #[cfg(test)]
 pub(crate) mod tests;
