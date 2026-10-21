@@ -19,6 +19,19 @@ thiserror = { workspace = true }
 # 均可 fetch 与 check 通过。许可证 Apache-2.0（源码），符合 AGENTS.md §6。
 gpui-kit = { version = "0.8", optional = true }
 
+# 内核管道加密依赖（p0-kernel-pipe-deps 引入，p1-kernel-pipe-core 使用）：
+#   aes-gcm   —— KeyEnvelope 的 AES-256-GCM 认证加密
+#   sha2      —— 机器码摘要 k_machine = SHA-256(machine_code)
+#   hkdf      —— session_key = HKDF(k_machine, nonce, info=...)
+#   getrandom —— 会话密钥的随机源（0.2 那套，与 rand-0.8.8 配套）
+#   zeroize   —— 密钥材料离开作用域时清零
+# 本卡只引入依赖、不写逻辑；实际使用在 p1-kernel-pipe-core。
+aes-gcm = { workspace = true }
+sha2 = { workspace = true }
+hkdf = { workspace = true }
+getrandom = { workspace = true }
+zeroize = { workspace = true }
+
 # 桌面二进制入口：只在开 `ui` feature 时构建（否则 lib 里没有 GPUI 依赖，
 # 这个 bin 编不过）。运行 `cargo run --features ui --bin lengsuo-desktop`。
 [[bin]]
