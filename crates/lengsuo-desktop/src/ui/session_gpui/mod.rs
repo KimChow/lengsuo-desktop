@@ -33,6 +33,11 @@ mod approval_render;
 mod block_ctx;
 mod blocks;
 pub mod diff_lines;
+pub mod diff_split;
+#[cfg(test)]
+mod diff_split_tests;
+mod diff_split_view;
+mod file_card;
 pub mod markdown;
 mod markdown_view;
 #[cfg(test)]
@@ -46,6 +51,7 @@ mod tool_fold_tests;
 
 pub use block_ctx::BlockCtx;
 
+use crate::state::file_intent::{FileIntent, FileIntentSource, FileIntentState};
 use crate::state::session_stream::SessionStreamState;
 use crate::ui::approval_card::ApprovalAction;
 use crate::ui::session_render::{self, Block};
@@ -81,6 +87,11 @@ pub struct SessionUiState {
     /// ⚠️ 键**必须**是消息 id 而不是块序号：块序号会随新消息插入而位移，
     /// 折叠态就会记到别的卡片上。
     pub tool_folded: HashMap<String, bool>,
+    /// 「点文件 → 跳预览」的**跳转意图**（只留最近一次）。
+    ///
+    /// ⛔ **预览器未实现**（属 P3，见 `ui-parity-spec.md` A14）：这里只记**意图**，
+    /// 不读文件、不开窗口、**不落盘**。宿主将来消费它即可。
+    pub file_intent: FileIntentState,
 }
 
 impl SessionUiState {
@@ -157,6 +168,19 @@ impl SessionUiState {
             self.selected_file = Some(path.to_owned());
         }
     }
+
+    /// 当前「点文件 → 跳预览」的**跳转意图**（没点过时是 `None`）。
+    #[must_use]
+    pub fn file_intent(&self) -> Option<&FileIntent> {
+        self.file_intent.intent()
+    }
+
+    /// 记下一次跳转意图（**替换**旧的，不累积）。
+    ///
+    /// ⛔ 预览器未实现（P3）：只记意图，**不**读文件、**不**落盘。
+    pub fn request_file_preview(&mut self, path: &str, source: FileIntentSource) {
+        self.file_intent.request(path, source);
+    }
 }
 
 /// 会话流的 GPUI 视图。
@@ -208,6 +232,19 @@ impl SessionStreamGpui {
     /// 记下审批按钮的本地选择（**不**触发真实决策）。
     pub fn choose_approval(&mut self, id: &str, action: ApprovalAction) {
         self.ui.choose_approval(id, action);
+    }
+
+    /// 当前「点文件 → 跳预览」的**跳转意图**（没点过时是 `None`）。
+    ///
+    /// ⛔ **预览器未实现**（属 P3）：宿主将来读它去开预览器；本卡只产出意图。
+    #[must_use]
+    pub fn file_intent(&self) -> Option<&FileIntent> {
+        self.ui.file_intent()
+    }
+
+    /// 记下一次跳转意图（**替换**旧的，不累积；⛔ 不落盘、不读文件）。
+    pub fn request_file_preview(&mut self, path: &str, source: FileIntentSource) {
+        self.ui.request_file_preview(path, source);
     }
 
     /// 产出并记下一次审批意图（**不**触发真实决策、不落盘）；返回的意图交宿主 / 运行时消费。
