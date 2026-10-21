@@ -3,29 +3,45 @@
 //! 分层约定（与 [`crate::ui::env_gpui`] 黄金范例一致）：
 //! - **描述层**（`input_area`）：纯数据、无 GPUI 依赖；「空白禁发 / 等待确认期间禁重发」
 //!   这些语义由它保证，接线层**不重新实现**。
-//! - **接线层**（本文件）：只做「描述字段 → 样式」的映射。
+//! - **接线层**（本模块）：只做「描述字段 → 样式」的映射。
 //!
 //! 三条硬约束：
 //! - **不写网络**：发送只产出 [`OutgoingInput`]，放进回调或公共队列，**不投递**。
 //! - **颜色走 `cx.theme()`**：不硬编码。
 //! - **不得声称中文输入可用**：IME 修复未完成，中文输入在此只用于**复现**问题。
 //!
-//! 纯逻辑（模式切换、高亮判定、产出待投递输入）不依赖 GPUI，因此**始终可编译、可测**；
-//! 只有 GPUI 元素部分受 `feature = "ui"` 隔离。
+//! 本卡（e17）对齐 A5 / A11 / A12：
+//! - **A11 模式下拉**：一个触发器 + 展开的 5 项列表（[`mode_menu`]）。
+//! - **A5 发送后变停止按钮**：等待确认期间按钮变「停止」，点击只**产出停止意图**
+//!   （[`StopIntent`]），**不执行** `agent:stop`（属运行时职责）。
+//! - **A12 `@` 文件引用**：草稿里出现 `@词` 时弹快选层，候选路径**由调用方注入**
+//!   （[`InputAreaGpui::set_candidates`]），本仓**不读盘**。
+//!
+//! 弹层一律用 `div().absolute()` 自搭，**不引入任何组件库**（零新依赖）。
+
+#[cfg(feature = "ui")]
+mod logic;
+#[cfg(feature = "ui")]
+mod mention;
+#[cfg(feature = "ui")]
+mod mode_menu;
+#[cfg(feature = "ui")]
+mod send_button;
+#[cfg(all(test, feature = "ui"))]
+mod tests;
 
 use crate::ui::input_area::{InputAreaState, InputMode, OutgoingInput};
 
 #[cfg(feature = "ui")]
-use gpui_kit::base::StyledExt as _;
+use crate::ui::gpui_input::PLACEHOLDER;
+#[cfg(feature = "ui")]
+use crate::ui::input_area::StopIntent;
 #[cfg(feature = "ui")]
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 #[cfg(feature = "ui")]
 use gpui_kit::component::ActiveTheme as _;
 #[cfg(feature = "ui")]
 use gpui_kit::*;
-
-#[cfg(feature = "ui")]
-use crate::ui::gpui_input::PLACEHOLDER;
 
 /// 模式按钮的渲染描述。
 ///
@@ -77,7 +93,7 @@ pub fn take_outgoing(state: &mut InputAreaState) -> Option<OutgoingInput> {
 /// 输入区的 GPUI 视图。
 #[cfg(feature = "ui")]
 pub struct InputAreaGpui {
-    /// 描述层状态：草稿 / 模式 / 等待确认。
+    /// 描述层状态：草稿 / 模式 / 等待确认 / 候选路径。
     state: InputAreaState,
     /// 多行编辑器状态（复用 `Textarea` 组件，与 `gpui_input` 的骨架同一套）。
     textarea: Entity<TextareaState>,
@@ -85,6 +101,12 @@ pub struct InputAreaGpui {
     outbox: Vec<OutgoingInput>,
     /// 可选的发送回调：拿到 [`OutgoingInput`] 后由调用方决定怎么用。
     on_send: Option<Box<dyn FnMut(OutgoingInput) + 'static>>,
+    /// 模式弹层是否展开。
+    mode_menu_open: bool,
+    /// `@` 快选弹层是否展开。
+    mention_open: bool,
+    /// 停止意图队列：与 outbox 同构，**由调用方取走**。
+    stop_outbox: Vec<StopIntent>,
     /// 订阅必须随视图一起存活，drop 即退订。
     _subscription: Subscription,
 }
@@ -123,6 +145,9 @@ impl InputAreaGpui {
             textarea,
             outbox: Vec::new(),
             on_send: None,
+            mode_menu_open: false,
+            mention_open: false,
+            stop_outbox: Vec::new(),
             _subscription: subscription,
         }
     }
@@ -179,6 +204,30 @@ impl InputAreaGpui {
         Some(self.outbox.remove(0))
     }
 
+    /// 注入候选文件路径（调用方提供；本仓**不读盘**、不扫描文件系统）。
+    pub fn set_candidates(
+        &mut self,
+        paths: impl IntoIterator<Item = String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.state.set_candidates(paths);
+        cx.notify();
+    }
+
+    /// 取走最早的停止意图（界面层只上报意图，**不执行** `agent:stop`）。
+    pub fn take_stop(&mut self) -> Option<StopIntent> {
+        if self.stop_outbox.is_empty() {
+            return None;
+        }
+        Some(self.stop_outbox.remove(0))
+    }
+
+    /// 待处理的停止意图队列（只读）。
+    #[must_use]
+    pub fn pending_stops(&self) -> &[StopIntent] {
+        &self.stop_outbox
+    }
+
     /// 编辑器里的实际内容（调试用；不等同于草稿，IME 组字期间可能领先）。
     #[must_use]
     pub fn textarea_value(&self, cx: &App) -> SharedString {
@@ -191,8 +240,14 @@ impl InputAreaGpui {
         let current = self.state.draft().to_owned();
         if current != text {
             self.state.set_draft(text);
+            self.sync_mention_state();
             cx.notify();
         }
+    }
+
+    /// 草稿变化后同步 `@` 快选层的开关：有 `@查询词` 就自动展开，无则收起。
+    fn sync_mention_state(&mut self) {
+        self.mention_open = self.state.mention_query().is_some();
     }
 
     /// 产出一次待投递输入并入队。空白或等待确认期间什么都不做。
@@ -212,88 +267,33 @@ impl InputAreaGpui {
         }
         cx.notify();
     }
+
+    /// 把描述层草稿写回编辑器（插入 `@` 路径后调用，避免旧文本被 `sync_draft` 写回）。
+    fn write_back_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.state.draft().to_owned();
+        self.textarea.update(cx, |textarea, textarea_cx| {
+            textarea.set_value(&text, window, textarea_cx);
+        });
+    }
 }
 
 #[cfg(feature = "ui")]
 impl Render for InputAreaGpui {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let buttons = mode_buttons(self.state.mode());
+        // `theme` 需要独占借用 `cx`，因此先 clone 一份再往下传。
+        let theme = cx.theme().clone();
 
-        // 模式切换条：当前模式高亮，点击切换。
-        let mut mode_elements: Vec<AnyElement> = Vec::with_capacity(buttons.len());
-        for button in buttons {
-            let mode = button.mode;
-            let listener = cx.listener(
-                move |this: &mut InputAreaGpui, _: &ClickEvent, _window: &mut Window, cx| {
-                    this.select_mode(mode, cx);
-                },
-            );
-            let element = if button.selected {
-                div()
-                    .id(format!("input-mode-{}", button.mode.id()))
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .text_sm()
-                    .font_bold()
-                    .bg(theme.accent)
-                    .text_color(theme.accent_foreground)
-                    .cursor_pointer()
-                    .on_click(listener)
-                    .child(button.label)
-                    .into_any_element()
-            } else {
-                div()
-                    .id(format!("input-mode-{}", button.mode.id()))
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .text_sm()
-                    .bg(theme.button)
-                    .text_color(theme.button_foreground)
-                    .cursor_pointer()
-                    .on_click(listener)
-                    .child(button.label)
-                    .into_any_element()
-            };
-            mode_elements.push(element);
-        }
+        // 模式条：触发器 + 展开时下拉的 5 个选项（A11）。
+        let mode_elements = mode_menu::render(self, &theme, cx);
 
-        // 发送按钮：描述层判定不可发送时置灰，且不注册点击（点了也没反应）。
-        let send = self.state.send_button();
-        let send_listener = cx.listener(
-            |this: &mut InputAreaGpui, _: &ClickEvent, window: &mut Window, cx| {
-                this.submit_and_queue(window, cx);
-            },
-        );
-        let send_element: AnyElement = if send.enabled {
-            div()
-                .id("input-send-button")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .text_sm()
-                .font_bold()
-                .bg(theme.button_primary)
-                .text_color(theme.button_primary_foreground)
-                .cursor_pointer()
-                .on_click(send_listener)
-                .child(send.label)
-                .into_any_element()
-        } else {
-            div()
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .text_sm()
-                .bg(theme.button_secondary)
-                .text_color(theme.muted_foreground)
-                .child(send.label)
-                .into_any_element()
-        };
+        // 发送 / 停止按钮（A5）。
+        let send_element = send_button::render(self, &theme, cx);
+
+        // `@` 快选层（A12）。
+        let mention_element = mention::render(self, &theme, cx);
 
         div()
+            .relative()
             .flex()
             .flex_col()
             .gap_2()
@@ -301,84 +301,29 @@ impl Render for InputAreaGpui {
             .p_3()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .child(div().flex().flex_row().gap_1().children(mode_elements))
+            .child(
+                // 快选层以输入框为坐标系（`relative` 锚点），
+                // 绝对定位在输入框左下角，浮在输入区之上。
+                div()
+                    .relative()
+                    .w_full()
+                    .child(Textarea::new(&self.textarea).h(px(120.)))
+                    .child(mention_element),
+            )
+            // 底部行：左下是模式下拉（A11 原文「底部：模式下拉」），
+            // 右下是发送/停止按钮（A5）。
+            //
+            // ⚠️ 绘制顺序 = 树序（gpui 无 z-index），所以模式下拉这一行
+            // **必须排在多行输入框之后**，向上展开的面板才不会被输入框盖住。
             .child(
                 div()
-                    .w_full()
-                    .child(Textarea::new(&self.textarea).h(px(120.))),
+                    .flex()
+                    .flex_row()
+                    .items_end()
+                    .justify_between()
+                    .gap_2()
+                    .child(mode_elements)
+                    .child(send_element),
             )
-            .child(div().flex().justify_end().child(send_element))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
-    // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
-    use super::{apply_mode, mode_buttons, take_outgoing};
-    use crate::ui::input_area::{InputAreaState, InputMode};
-
-    #[test]
-    fn mode_bar_renders_five_modes_with_exactly_one_selected() {
-        let buttons = mode_buttons(InputMode::Ask);
-        assert_eq!(buttons.len(), 5);
-        assert_eq!(buttons.map(|b| b.mode), InputMode::ALL);
-        assert_eq!(
-            buttons.map(|b| b.label),
-            ["快速", "问答", "规划", "执行", "专家"]
-        );
-        let selected: Vec<InputMode> = buttons
-            .iter()
-            .filter(|b| b.selected)
-            .map(|b| b.mode)
-            .collect();
-        assert_eq!(selected, vec![InputMode::Ask]);
-    }
-
-    #[test]
-    fn switching_mode_updates_state_and_highlight() {
-        let mut state = InputAreaState::new();
-        assert_eq!(state.mode(), InputMode::Ask);
-        for mode in InputMode::ALL {
-            assert!(apply_mode(&mut state, mode), "切换到 {mode:?} 应生效");
-            assert_eq!(state.mode(), mode);
-            let selected: Vec<InputMode> = mode_buttons(state.mode())
-                .iter()
-                .filter(|b| b.selected)
-                .map(|b| b.mode)
-                .collect();
-            assert_eq!(selected, vec![mode], "高亮必须跟着切换");
-        }
-        assert!(
-            !apply_mode(&mut state, InputMode::Expert),
-            "重复点击不算变化"
-        );
-        assert_eq!(state.mode(), InputMode::Expert);
-    }
-
-    #[test]
-    fn blank_draft_is_never_produced_for_delivery() {
-        let mut state = InputAreaState::new();
-        assert!(take_outgoing(&mut state).is_none());
-        state.set_draft("   \n\t ");
-        assert!(take_outgoing(&mut state).is_none(), "纯空白也不得产出");
-        assert_eq!(state.draft(), "   \n\t ", "未发送则草稿保持原样");
-    }
-
-    #[test]
-    fn in_flight_blocks_resending() {
-        let mut state = InputAreaState::new();
-        state.set_mode(InputMode::Plan);
-        state.set_draft("你好\n世界");
-        let outgoing = take_outgoing(&mut state).expect("非空草稿应产出");
-        assert_eq!(outgoing.text, "你好\n世界");
-        assert_eq!(outgoing.mode, InputMode::Plan);
-        assert!(state.is_in_flight());
-        assert!(
-            take_outgoing(&mut state).is_none(),
-            "等待确认期间不得重复产出"
-        );
-        state.finish_send();
-        assert!(take_outgoing(&mut state).is_none(), "草稿已清空");
     }
 }
