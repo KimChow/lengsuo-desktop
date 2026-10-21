@@ -5,9 +5,9 @@
 //!
 //! 硬约定：
 //! - 搜索来源有五类：**命令 / 技能 / MCP / 文件 / 会话**（[`SearchSource`]）。
-//!   命令来自内置命令表（真实数据）；其余四类的**真实数据源在运行时侧**，
-//!   本仓用**演示数据**（[`crate::state::palette_state::demo_items`]），
-//!   ⛔ 不实现运行时接入。
+//!   ⛔ **数据只来自宿主注入**：命令来自内置命令表（真实数据）；其余四类的
+//!   **真实数据源在运行时侧**，本仓不实现 ⇒ **没注入就没有该分组**，
+//!   **绝不显示假条目**（fail-closed）。
 //! - 结果**按来源分组**展示，空分组不出现。
 //! - 列表只展示标题，**不展示 id**；派发由状态层按 id 完成。
 //! - 上下选择、回车执行、Escape 关闭；边界不越界（由 [`PaletteState`] 保证）。
@@ -17,13 +17,19 @@
 //! [`crate::state::hotkeys::HotkeyRegistry`] 匹配按键，命中
 //! `palette.open` 后调用 [`PaletteState::open`]。
 
+/// 描述层门面的**测试视图**（e20 留下的 `ui/search.rs`）。
+///
+/// ⛔ 只在测试构建里存在：它无条件 re-export 了演示条目集合，而演示条目是
+/// `#[cfg(test)]` 符号 ⇒ 生产构建不能引它。生产路径的形状入口在
+/// [`crate::state::palette_state::search_state`]。
+#[cfg(test)]
 #[path = "../search.rs"]
 pub mod search;
 
 use crate::state::hotkeys::{self, Hotkey, HotkeyRegistry};
 use crate::state::palette_state::PaletteState;
 
-pub use self::search::{SearchGroup, SearchItem, SearchSource};
+pub use crate::state::palette_state::search_state::{SearchGroup, SearchItem, SearchSource};
 
 /// 输入框占位文案。
 pub const PLACEHOLDER: &str = "搜索命令 / 技能 / MCP / 文件 / 会话";

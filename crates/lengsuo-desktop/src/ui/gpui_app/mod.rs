@@ -63,6 +63,7 @@ use gpui_kit::*;
 
 use crate::state::hotkeys::HotkeyRegistry;
 use crate::state::layout_prefs::LayoutPrefs;
+use crate::state::palette_state::search_state::real_items;
 use crate::ui::command_palette::{self, PaletteAction};
 use crate::ui::input_gpui::InputAreaGpui;
 use crate::ui::layout::{WorkbenchLayout, STREAM_MIN_WIDTH};
@@ -137,7 +138,11 @@ impl AppShell {
         let right_panel =
             cx.new(|_| RightPanelGpui::from_state(layout.right_panel(), &session_state));
         let input = cx.new(|cx| InputAreaGpui::new(window, cx));
-        let palette = cx.new(CommandPaletteGpui::new);
+        // 命令面板的**真实条目**在此注入：命令来自内置命令表
+        // （`theme::palette::COMMANDS`）。技能 / MCP / 文件 / 会话的真实数据源
+        // 在运行时侧，⛔ 本仓不实现 ⇒ **没有注入就没有那些分组**
+        // （空分组不出现，绝不显示假条目）。
+        let palette = cx.new(|cx| CommandPaletteGpui::with_items(real_items(), cx));
 
         // 版式：左分隔条持有唯一一份；右分隔条与 tab 条各持副本，初始值一致。
         let left_divider = cx.new(|_| DividerGpui::with_layout(DividerSide::Left, layout.clone()));

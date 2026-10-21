@@ -43,7 +43,7 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
 use crate::state::hotkeys::HotkeyRegistry;
-use crate::state::palette_state::PaletteState;
+use crate::state::palette_state::{PaletteState, SearchItem};
 use crate::ui::command_palette::{self, PaletteAction};
 
 use self::input_box::{PanelSync, PanelSyncState, PLACEHOLDER};
@@ -78,15 +78,29 @@ pub struct CommandPaletteGpui {
 }
 
 impl CommandPaletteGpui {
-    /// 用内置快捷键表构造视图。
+    /// 用内置快捷键表构造视图（**空条目**）。
     ///
-    /// **签名保持不变**（`gpui_app.rs` 以 `cx.new(CommandPaletteGpui::new)` 调用，不在本卡
-    /// touches 内）。`Context` 上没有公开的取窗口方法（`update` 是私有的），所以
+    /// **签名保持不变**（`gpui_app.rs` 以 `cx.new(CommandPaletteGpui::new)` 调用）。
+    /// `Context` 上没有公开的取窗口方法（`update` 是私有的），所以
     /// [`TextareaState`] **延迟创建**：第一次渲染时窗口可用，在那里建（见
     /// [`Self::ensure_textarea`]）。选择理由写在 `docs/palette-gpui-status.md`。
+    ///
+    /// ⛔ **不灌演示条目**：没有注入就没有任何分组（fail-closed）。
+    /// 宿主要用真实条目 ⇒ 走 [`Self::with_items`]。
     #[must_use]
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self::with_registry(default_registry(), cx)
+    }
+
+    /// 用**注入的条目**构造视图：真实数据源接入时的入口。
+    ///
+    /// 注入什么就显示什么；**没有被注入的来源不显示任何分组**
+    /// （技能 / MCP / 文件 / 会话的真实数据源在运行时侧，⛔ 本仓不实现）。
+    #[must_use]
+    pub fn with_items(items: Vec<SearchItem>, cx: &mut Context<Self>) -> Self {
+        let mut view = Self::new(cx);
+        view.state = PaletteState::with_items(items);
+        view
     }
 
     /// 用指定快捷键表构造视图（用户改键后由宿主传入新的注册表）。
@@ -95,7 +109,8 @@ impl CommandPaletteGpui {
     #[must_use]
     pub fn with_registry(registry: HotkeyRegistry, cx: &mut Context<Self>) -> Self {
         Self {
-            state: PaletteState::new(),
+            // 空条目：宿主用 [`Self::with_items`] / [`Self::set_items`] 注入真实条目。
+            state: PaletteState::with_items(Vec::new()),
             registry,
             focus: cx.focus_handle(),
             textarea: None,
@@ -104,6 +119,15 @@ impl CommandPaletteGpui {
             on_execute: Box::new(|_, _| {}),
             _subscription: None,
         }
+    }
+
+    /// 换掉面板的条目（宿主拿到新数据时用）。
+    ///
+    /// 换完自动重新过滤并重绘；**关键词保留**（宿主的语义是「同一批关键词下
+    /// 换一批结果」）。没有注入的来源自然不出现分组。
+    pub fn set_items(&mut self, items: Vec<SearchItem>, cx: &mut Context<Self>) {
+        self.state.set_items(items);
+        cx.notify();
     }
 
     /// 首次渲染时按需创建编辑器，并订阅它的事件。

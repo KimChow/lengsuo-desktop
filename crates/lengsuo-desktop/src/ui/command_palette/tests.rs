@@ -5,23 +5,31 @@
 #![cfg(test)]
 
 use crate::state::hotkeys::Hotkey;
-use crate::state::palette_state::{demo_items, PaletteState};
+use crate::state::palette_state::search_state::{demo_items, real_items};
+use crate::state::palette_state::PaletteState;
 use crate::theme::palette::COMMANDS;
-use crate::ui::command_palette::search::SearchSource;
 use crate::ui::command_palette::{
-    handle_hotkey, handle_key, render, PaletteAction, PaletteKey, EMPTY_TEXT, FOOTER_HINT,
-    PLACEHOLDER,
+    handle_hotkey, handle_key, render, PaletteAction, PaletteKey, SearchSource, EMPTY_TEXT,
+    FOOTER_HINT, PLACEHOLDER,
 };
 
+/// 带**演示条目**的状态（测试夹具）：用于验证五类来源的分组形状。
 fn opened() -> PaletteState {
-    let mut state = PaletteState::new();
+    let mut state = PaletteState::with_items(demo_items());
+    state.open();
+    state
+}
+
+/// 带**真实条目**（内置命令表）的状态：生产路径的样子。
+fn opened_real() -> PaletteState {
+    let mut state = PaletteState::with_items(real_items());
     state.open();
     state
 }
 
 #[test]
 fn closed_palette_renders_nothing() {
-    let state = PaletteState::new();
+    let state = PaletteState::with_items(Vec::new());
     assert_eq!(render(&state), None);
 }
 
@@ -36,6 +44,52 @@ fn open_palette_shows_input_and_all_groups() {
     assert_eq!(view.groups.len(), SearchSource::ALL.len());
     let total: usize = view.groups.iter().map(|g| g.items.len()).sum();
     assert_eq!(total, demo_items().len());
+}
+
+#[test]
+fn real_items_show_only_the_command_group() {
+    let state = opened_real();
+    let view = render(&state).expect("打开时应渲染浮层");
+    assert_eq!(view.groups.len(), 1, "只注入了命令 ⇒ 只有一个分组");
+    assert_eq!(view.groups[0].source, SearchSource::Command);
+    assert_eq!(view.groups[0].title, "命令");
+    let total: usize = view.groups.iter().map(|g| g.items.len()).sum();
+    assert_eq!(total, real_items().len());
+}
+
+#[test]
+fn real_items_never_show_a_demo_marker() {
+    let view = render(&opened_real()).expect("打开时应渲染浮层");
+    for group in &view.groups {
+        for item in &group.items {
+            assert!(
+                !item.title.contains("演示数据"),
+                "生产路径不得出现演示数据标题：{}",
+                item.title
+            );
+            assert!(
+                item.hint.as_deref() != Some("演示数据"),
+                "生产路径不得出现演示数据标记"
+            );
+        }
+    }
+}
+
+#[test]
+fn sources_without_injected_items_do_not_appear() {
+    let view = render(&opened_real()).expect("打开时应渲染浮层");
+    for source in [
+        SearchSource::Skill,
+        SearchSource::Mcp,
+        SearchSource::File,
+        SearchSource::Session,
+    ] {
+        assert!(
+            !view.groups.iter().any(|g| g.source == source),
+            "未注入的来源不得出现分组：{:?}",
+            source
+        );
+    }
 }
 
 #[test]
@@ -167,7 +221,7 @@ fn escape_closes_panel() {
 
 #[test]
 fn closed_palette_ignores_all_keys() {
-    let mut state = PaletteState::new();
+    let mut state = PaletteState::with_items(Vec::new());
     for key in [
         PaletteKey::Up,
         PaletteKey::Down,
@@ -198,7 +252,7 @@ fn reopening_clears_query_in_view() {
 fn hotkeys_open_and_close_the_panel() {
     let registry =
         crate::state::hotkeys::HotkeyRegistry::with_defaults().expect("内置快捷键表必须无冲突");
-    let mut state = PaletteState::new();
+    let mut state = PaletteState::with_items(Vec::new());
 
     let ctrl_k = Hotkey::parse("Ctrl+K").unwrap();
     assert_eq!(
@@ -225,7 +279,7 @@ fn hotkeys_open_and_close_the_panel() {
 #[test]
 fn unrelated_hotkeys_are_left_to_the_host() {
     let registry = crate::state::hotkeys::HotkeyRegistry::with_defaults().unwrap();
-    let mut state = PaletteState::new();
+    let mut state = PaletteState::with_items(Vec::new());
     let ctrl_s = Hotkey::parse("Ctrl+S").unwrap();
     assert_eq!(
         handle_hotkey(&mut state, &registry, ctrl_s),
@@ -243,7 +297,7 @@ fn user_rebinding_is_reflected_in_hotkey_wiring() {
             crate::state::hotkeys::HotkeyOverride::parse("palette.open", "Ctrl+P").unwrap(),
         ])
         .unwrap();
-    let mut state = PaletteState::new();
+    let mut state = PaletteState::with_items(Vec::new());
 
     let old = Hotkey::parse("Ctrl+K").unwrap();
     assert_eq!(
