@@ -21,6 +21,12 @@
 //! `docs/palette-gpui-status.md`。**Windows 中文 IME 可用性未验证**。
 #![cfg(feature = "ui")]
 
+/// 命令派发回执的类型：拿到**命令 id** 与面板自己的 [`Context`]。
+///
+/// 带 `Context` 是因为回执可能要开新窗口，而 `Context` 实现了
+/// `DerefMut<Target = App>` ⇒ `&mut **cx` 即 `&mut App`。
+pub type ExecuteCallback<T> = Box<dyn Fn(&'static str, &mut Context<T>) + 'static>;
+
 mod input_box;
 mod keys;
 mod layout;
@@ -63,7 +69,7 @@ pub struct CommandPaletteGpui {
     /// 打开面板时下一个按键留给宿主（见 [`Self::release_next_key`]）。
     release_next_key: bool,
     /// 命令执行回调：收到**命令 id**，本卡只到回调为止。
-    on_execute: Box<dyn Fn(&'static str) + 'static>,
+    on_execute: ExecuteCallback<Self>,
     /// 编辑器事件订阅（经由 `Self::ensure_textarea` 的 `cx.subscribe` 创建）：
     /// 必须随视图存活，drop 即退订。
     _subscription: Option<Subscription>,
@@ -93,7 +99,7 @@ impl CommandPaletteGpui {
             textarea: None,
             sync: PanelSyncState::default(),
             release_next_key: false,
-            on_execute: Box::new(|_| {}),
+            on_execute: Box::new(|_, _| {}),
             _subscription: None,
         }
     }
@@ -125,10 +131,27 @@ impl CommandPaletteGpui {
     }
 
     /// 设置命令执行回调。回调收到的参数是**命令 id**，不是标题。
+    ///
+    /// 第二个参数是本面板的 [`Context`]：回执要开新窗口就需要它
+    /// （`Context` 实现了 `DerefMut<Target = App>` ⇒ `&mut **cx` 即 `&mut App`）。
     #[must_use]
-    pub fn on_execute(mut self, callback: impl Fn(&'static str) + 'static) -> Self {
+    pub fn on_execute(
+        mut self,
+        callback: impl Fn(&'static str, &mut Context<Self>) + 'static,
+    ) -> Self {
         self.on_execute = Box::new(callback);
         self
+    }
+
+    /// 设置命令执行回调（**原地改**，不需要消费 `self`）。
+    ///
+    /// 与 [`Self::on_execute`] 的区别：那个是构造期用的链式版本（消费 `self`），
+    /// 这个给「先构造好、之后再挂回调」的宿主用。
+    pub fn set_on_execute(
+        &mut self,
+        callback: impl Fn(&'static str, &mut Context<Self>) + 'static,
+    ) {
+        self.on_execute = Box::new(callback);
     }
 
     /// 面板状态（只读）。
@@ -261,7 +284,7 @@ impl CommandPaletteGpui {
         match command_palette::handle_key(&mut self.state, key) {
             // 按 id 派发：本卡**不执行**命令，只把 id 交给回调。
             PaletteAction::Execute(id) => {
-                (self.on_execute)(id);
+                (self.on_execute)(id, cx);
                 cx.notify();
             }
             PaletteAction::Redraw | PaletteAction::Close | PaletteAction::Open => cx.notify(),

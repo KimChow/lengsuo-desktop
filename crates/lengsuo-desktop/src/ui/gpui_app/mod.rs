@@ -65,6 +65,12 @@ use crate::ui::layout_gpui::{DividerGpui, DividerSide, RightPanelTabGpui};
 use crate::ui::palette_gpui::{self, CommandPaletteGpui};
 use crate::ui::right_panel_gpui::RightPanelGpui;
 use crate::ui::session_gpui::SessionStreamGpui;
+use crate::ui::settings_gpui::SettingsGpui;
+
+/// 打开设置窗口的命令 id（命令表 `theme::palette` 里的 `app.settings`）。
+const SETTINGS_COMMAND_ID: &str = "app.settings";
+/// 设置窗口的标题栏文案。
+const SETTINGS_WINDOW_TITLE: &str = "设置";
 use crate::ui::sidebar_gpui::{self, SidebarViewGpui};
 
 use demo::default_registry;
@@ -96,6 +102,21 @@ struct AppShell {
     registry: HotkeyRegistry,
     /// 根视图焦点：全局按键先到这里。
     focus: FocusHandle,
+}
+
+/// 打开设置窗口（`app.settings` 命令派发时调用）。
+///
+/// ⛔ 失败不 panic：开窗失败（无显示服务器等）时静默返回，主界面不受影响。
+fn open_settings_window(cx: &mut App) {
+    let options = WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some(SETTINGS_WINDOW_TITLE.into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    // `gpui_kit::open_window` 返回 `Result` ⇒ 失败就放弃这次开窗。
+    let _ = gpui_kit::open_window(options, cx, |_window, cx| cx.new(SettingsGpui::new));
 }
 
 impl AppShell {
@@ -142,6 +163,20 @@ impl AppShell {
             }),
             cx.observe(&input, |shell: &mut Self, _, cx| shell.drain_outbox(cx)),
         ];
+
+        // 命令派发回执：`app.settings` ⇒ 打开设置窗口。
+        //
+        // 回执带 `&mut Context<CommandPaletteGpui>`：开窗需要 `&mut App`，
+        // 而 `Context` 实现了 `DerefMut<Target = App>` ⇒ `&mut **cx` 即 `&mut App`。
+        // 其余命令 id 只上报意图：界面层不实现业务语义。
+        palette.update(cx, |view, _cx| {
+            view.set_on_execute(|id, panel_cx| {
+                if id != SETTINGS_COMMAND_ID {
+                    return;
+                }
+                open_settings_window(panel_cx);
+            });
+        });
 
         Self {
             sidebar,
