@@ -9,6 +9,7 @@ pub mod env_group;
 pub mod env_list;
 pub mod file_intent;
 pub mod hotkeys;
+pub mod layout_prefs;
 pub mod org;
 pub mod org_perm;
 pub mod palette_state;
