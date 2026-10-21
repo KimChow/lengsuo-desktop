@@ -39,13 +39,20 @@
 //! e25 点文件跳预览：**会话流是意图的唯一产生者**，右栏预览 tab 只是**消费者**
 //! （经 [`AppShell::sync_file_intent`] 下发）。⛔ 预览器本体未实现（P3，A14）。
 //!
-//! 文件划分：`demo.rs`（演示数据）、`launch.rs`（窗口启动）、`sync.rs`（纯函数 +
-//! 根视图的同步方法）、`prefs_file.rs`（偏好落盘）、`tests.rs` / `sync_tests.rs`
-//! （单元测试）。
+//! e29 侧栏导航入口切主区（对齐 A15）：侧栏的频道 / 智能体管理入口**不再是死按钮**
+//! —— 根视图 `observe` 侧栏，经 [`AppShell::sync_main_view`] 把选中的入口
+//! （[`crate::ui::main_view`]）同步到主区视图，渲染时由
+//! [`main_area::render_main_area`] 换分支。⛔ 频道 / 智能体管理只显示**占位说明**
+//! （数据源在运行时侧，本仓不实现）。
+//!
+//! 文件划分：`demo.rs`（演示数据）、`launch.rs`（窗口启动）、`main_area.rs`（主区
+//! 三分支渲染）、`sync.rs`（纯函数 + 根视图的同步方法）、`prefs_file.rs`（偏好落盘）、
+//! `tests.rs` / `sync_tests.rs`（单元测试）。
 #![cfg(feature = "ui")]
 
 mod demo;
 mod launch;
+mod main_area;
 pub(crate) mod prefs_file;
 mod sync;
 #[cfg(test)]
@@ -66,8 +73,9 @@ use crate::state::layout_prefs::LayoutPrefs;
 use crate::state::palette_state::search_state::real_items;
 use crate::ui::command_palette::{self, PaletteAction};
 use crate::ui::input_gpui::InputAreaGpui;
-use crate::ui::layout::{WorkbenchLayout, STREAM_MIN_WIDTH};
+use crate::ui::layout::WorkbenchLayout;
 use crate::ui::layout_gpui::{DividerGpui, DividerSide, RightPanelTabGpui};
+use crate::ui::main_view;
 use crate::ui::palette_gpui::{self, CommandPaletteGpui};
 use crate::ui::right_panel_gpui::RightPanelGpui;
 use crate::ui::session_gpui::SessionStreamGpui;
@@ -97,10 +105,14 @@ struct AppShell {
     tab_strip: Entity<RightPanelTabGpui>,
     /// 子视图 `notify()` 时回调：把版式变化下发到右侧面板与右分隔条。
     _layout_sync: Vec<Subscription>,
+    /// 侧栏导航入口变化的订阅：主区据此切换显示会话流 / 频道 / 智能体管理。
+    _nav_sync: Vec<Subscription>,
     /// 会话流 / 输入区变化的订阅（回显、解除等待态、审批与文件意图读取侧同步）。
     _session_sync: Vec<Subscription>,
     /// 已发出、尚未收到运行时确认的回显序号；`Some` 时才允许解除等待态。
     pending_seq: Option<u64>,
+    /// 主区当前显示的视图（由侧栏选中的导航入口决定）。
+    main_view: main_view::MainView,
     /// 与命令面板共用同一套内置快捷键表（按 id 派发）。
     registry: HotkeyRegistry,
     /// 根视图焦点：全局按键先到这里。
@@ -186,6 +198,13 @@ impl AppShell {
             cx.observe(&input, |shell: &mut Self, _, cx| shell.drain_outbox(cx)),
         ];
 
+        // 侧栏导航入口变化 ⇒ 主区跟着切视图。
+        // ⚠️ **必须 observe**：侧栏自己的 `cx.notify()` 只重绘侧栏，
+        // 根视图不 observe 就不会重渲染 ⇒ 点了「频道」主区纹丝不动。
+        let _nav_sync = vec![cx.observe(&sidebar, |shell: &mut Self, _, cx| {
+            shell.sync_main_view(cx);
+        })];
+
         // 命令派发回执：`app.settings` ⇒ 打开设置窗口。
         //
         // 回执带 `&mut Context<CommandPaletteGpui>`：开窗需要 `&mut App`，
@@ -211,7 +230,9 @@ impl AppShell {
             tab_strip,
             _layout_sync,
             _session_sync,
+            _nav_sync,
             pending_seq: None,
+            main_view: main_view::MainView::Sessions,
             registry: default_registry(),
             focus: cx.focus_handle(),
             // 刚落盘过（或刚水合过）的那份偏好：版式没变就不重复写文件。
@@ -334,12 +355,9 @@ impl Render for AppShell {
             .h_full()
             .child(self.sidebar.clone());
 
-        // 中间会话流：吃掉剩余宽度，低于最小值时按最小值算。
-        let stream = div()
-            .flex_1()
-            .min_w(px(STREAM_MIN_WIDTH))
-            .h_full()
-            .child(self.session.clone());
+        // 中间主区：按侧栏选中的导航入口切换显示哪一块。
+        // ⛔ 频道 / 智能体管理**只显示占位说明**（数据源在运行时侧，本仓不实现）。
+        let stream = main_area::render_main_area(self.main_view, &self.session, theme);
 
         // 右侧面板：上方是 tab 条（点击切换面板内容），下方是面板本身。
         // 同 sidebar：必须 `flex_none()`，否则拖拽改的宽度会被 flex 收缩吞掉。

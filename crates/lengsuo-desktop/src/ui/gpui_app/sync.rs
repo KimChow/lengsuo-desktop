@@ -153,6 +153,23 @@ pub(super) fn apply_preview_intent(panel: &mut RightPanelGpui, intent: Option<Fi
 }
 
 impl AppShell {
+    /// 把侧栏选中的导航入口同步到主区视图。
+    ///
+    /// 侧栏点「频道」/「智能体管理」后，主区据此切换显示哪一块
+    /// （对齐 A15：入口不能是死按钮）。
+    ///
+    /// 没变化就不 `notify()`：observe → notify → observe 会绕圈。
+    ///
+    /// ⛔ 只做界面路由：频道 / 智能体管理的数据源在运行时侧，本仓不实现。
+    pub(super) fn sync_main_view(&mut self, cx: &mut Context<Self>) {
+        let selected = self.sidebar.read(cx).state().selected_nav();
+        let view = crate::ui::main_view::resolve(selected);
+        if self.main_view != view {
+            self.main_view = view;
+            cx.notify();
+        }
+    }
+
     /// 审批读取侧同步：根视图（经由会话流）是唯一写入者，右栏只是副本。
     pub(super) fn sync_approvals(&mut self, cx: &mut Context<Self>) {
         let authority = self.session.read(cx).state().clone();
