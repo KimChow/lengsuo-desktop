@@ -56,6 +56,8 @@ fn render_approval_button(
         element.on_click(move |_event, _window, app| {
             entity.update(app, |view, cx| {
                 approval_card::decide(view.session_mut(), &id, action);
+                // 回写队列：右栏只记「用户点了什么」，权威状态由宿主写入（缺口 G1）。
+                view.push_decision(id.clone(), action);
                 cx.notify();
             });
         })

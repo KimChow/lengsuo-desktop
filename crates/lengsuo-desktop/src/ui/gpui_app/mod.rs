@@ -262,6 +262,9 @@ impl AppShell {
             // 面板私有的版式副本 ⇒ 必须**回收**给权威版式，否则下一次下发
             // 会把折叠态覆盖回展开（与 `adopt_tab_strip` 同一类修复）。
             cx.observe(&right_panel, |shell: &mut Self, _, cx| {
+                // 先回写审批决策（右栏 → 会话流），再回收版式：
+                // 顺序反了会被 `sync_approvals` 的单向同步覆盖回去（缺口 G1）。
+                shell.drain_approval_decisions(cx);
                 shell.adopt_right_panel(cx);
                 shell.sync_layout(cx);
             }),
@@ -479,6 +482,10 @@ impl Render for AppShell {
         // 兜底回显：输入区发送后 `cx.notify()` 会经 observe 触发 `drain_outbox`；
         // 这里在组装元素树之前再消费一次，保证同一帧内回显已写入会话流。只读消费，不投递。
         self.drain_outbox(cx);
+
+        // 兜底回写：右栏点审批按钮后 `cx.notify()` 会经 observe 触发 drain；
+        // 这里在组装元素树之前再消费一次，保证同一帧内决策已进会话流。
+        self.drain_approval_decisions(cx);
 
         let viewport_width = f32::from(window.viewport_size().width);
         // 三区宽度**每次渲染都从左分隔条读回**（拖拽结果落在它内部），

@@ -10,7 +10,7 @@ use crate::state::file_intent::FileIntent;
 use crate::state::session_stream::{MessageRole, SessionMessage, SessionStreamState};
 use crate::ui::input_area::OutgoingInput;
 use crate::ui::layout::{RegionWidths, RightPanelLayout, RightPanelTab, WorkbenchLayout};
-use crate::ui::right_panel_gpui::RightPanelGpui;
+use crate::ui::right_panel_gpui::{PendingDecision, RightPanelGpui};
 
 use super::prefs_file;
 use super::AppShell;
@@ -152,7 +152,56 @@ pub(super) fn apply_preview_intent(panel: &mut RightPanelGpui, intent: Option<Fi
     true
 }
 
+/// 把一批待回写决策应用到会话流，返回**实际落地**的条数。
+///
+/// 已决策项由 `SessionStreamState::resolve_approval` 拒绝重复决策（返回 `false`）
+/// ⇒ 重复回写是**幂等**的，不会把已决策项改坏。
+#[must_use]
+pub(super) fn apply_decisions(
+    state: &mut SessionStreamState,
+    decisions: &[PendingDecision],
+) -> usize {
+    let mut applied = 0usize;
+    for decision in decisions {
+        if crate::ui::approval_card::decide(state, &decision.approval_id, decision.action) {
+            applied += 1;
+        }
+    }
+    applied
+}
+
 impl AppShell {
+    /// 把右栏内产生的审批决策**回写**到权威会话流（缺口 G1）。
+    ///
+    /// **顺序要求**：必须在 `sync_approvals` 之前跑。`sync_approvals` 是**单向**
+    /// （权威 → 右栏副本），若先跑它，右栏刚点的决策会被旧权威覆盖回去。
+    ///
+    /// 调用点：`observe(&self.right_panel)`（右栏 `notify()` 触发）与 `render` 的兜底
+    ///（同 `drain_outbox` 的做法）。
+    pub(super) fn drain_approval_decisions(&mut self, cx: &mut Context<Self>) {
+        let right_panel = self.right_panel.clone();
+        let mut decisions: Vec<PendingDecision> = Vec::new();
+        right_panel.update(cx, |panel, _| {
+            while let Some(decision) = panel.take_decision() {
+                decisions.push(decision);
+            }
+        });
+        if decisions.is_empty() {
+            return;
+        }
+        let session = self.session.clone();
+        let applied = session.update(cx, |view, cx| {
+            let count = apply_decisions(view.state_mut(), &decisions);
+            if count > 0 {
+                cx.notify();
+            }
+            count
+        });
+        if applied > 0 {
+            cx.notify();
+        }
+    }
+
     /// 把侧栏选中的导航入口同步到主区视图。
     ///
     /// 侧栏点「频道」/「智能体管理」后，主区据此切换显示哪一块

@@ -6,14 +6,15 @@
 #![cfg(test)]
 
 use crate::state::file_intent::{FileIntent, FileIntentSource};
-use crate::state::session_stream::SessionStreamState;
+use crate::state::session_stream::{PendingApproval, SessionStreamState};
+use crate::ui::approval_card::ApprovalAction;
 use crate::ui::layout::RIGHT_PANEL_MAX_WIDTH;
 use crate::ui::layout::RIGHT_PANEL_MIN_WIDTH;
 use crate::ui::layout::{RightPanelLayout, RightPanelTab, WorkbenchLayout};
-use crate::ui::right_panel_gpui::RightPanelGpui;
+use crate::ui::right_panel_gpui::{PendingDecision, RightPanelGpui};
 
 use crate::ui::gpui_app::sync::{
-    adopt_right_panel_selection, apply_preview_intent, tab_strip_layout,
+    adopt_right_panel_selection, apply_decisions, apply_preview_intent, tab_strip_layout,
 };
 
 /// 回归测试：**只下发不回收** ⇒ 点 tab 的选中态会被下一次下发覆盖回去。
@@ -206,4 +207,59 @@ fn clearing_the_intent_does_not_move_the_tab() {
         RightPanelTab::Preview,
         "清意图不回收 tab 选中态"
     );
+}
+
+// ---- e46：右栏审批决策回写（缺口 G1） ----
+
+fn session_with_pending(id: &str) -> SessionStreamState {
+    let mut state = SessionStreamState::new();
+    state.push_approval(PendingApproval {
+        id: id.into(),
+        tool: "exec".into(),
+        summary: "rm -rf build".into(),
+        resolved: None,
+    });
+    state
+}
+
+#[test]
+fn apply_decisions_writes_into_session_stream() {
+    let mut state = session_with_pending("a1");
+    let decisions = vec![PendingDecision {
+        approval_id: "a1".into(),
+        action: ApprovalAction::Allow,
+    }];
+    assert_eq!(apply_decisions(&mut state, &decisions), 1);
+    assert_eq!(state.approvals()[0].resolved, Some(true));
+}
+
+#[test]
+fn apply_decisions_is_idempotent_for_resolved() {
+    let mut state = session_with_pending("a1");
+    let decisions = vec![PendingDecision {
+        approval_id: "a1".into(),
+        action: ApprovalAction::Allow,
+    }];
+    assert_eq!(apply_decisions(&mut state, &decisions), 1);
+    assert_eq!(
+        apply_decisions(&mut state, &decisions),
+        0,
+        "已决策项重复回写应被拒绝"
+    );
+    assert_eq!(
+        state.approvals()[0].resolved,
+        Some(true),
+        "重复回写不得改坏已有决策"
+    );
+}
+
+#[test]
+fn apply_decisions_ignores_unknown_id() {
+    let mut state = session_with_pending("a1");
+    let decisions = vec![PendingDecision {
+        approval_id: "nope".into(),
+        action: ApprovalAction::Deny,
+    }];
+    assert_eq!(apply_decisions(&mut state, &decisions), 0);
+    assert_eq!(state.approvals()[0].resolved, None);
 }
