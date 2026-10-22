@@ -9,15 +9,16 @@
 - Rust 工具链版本由仓内 `rust-toolchain.toml` 锁定，不得擅自升级。
 - 交付门禁见 `.github/workflows/ci.yml`；本地须与 CI 五条一致。
 
-## 文档放置规则（docs/ 只留本地，不入库）
+## 文档放置规则（docs/ 不进本仓，进 GitLab 私有仓）
 
-**一句话：`docs/` 是本地工作区资产，只给智能体和开发方看，不随仓库分发，也不出现在 git 历史里。**
+**一句话：`docs/` 是本地工作区资产，只给智能体和开发方看，不随本仓库分发，也不出现在本仓 git 历史里；
+它由自己的独立 git 仓同步到 GitLab 私有仓 `kim/lengsuo-docs-<仓名>`。**
 
 ### 什么写哪里
 
 | 内容 | 位置 | 是否入库 |
 |---|---|---|
-| 进度台账、验收记录、任务书、对照资料、研究稿、状态快照 | `docs/` | **不入库** |
+| 进度台账、验收记录、任务书、对照资料、研究稿、状态快照 | `docs/` | **不进本仓**（进私有仓 `kim/lengsuo-docs-<仓名>`）|
 | 对外说明、装了什么、怎么构建、当前状态 | `README.md` | 入库 |
 | 协作规则、门禁、边界、验收判据 | `AGENTS.md` | **只留本地**（本仓 AGENTS.md 从未入库） |
 | 代码里的行为注释、类型说明、错误码语义 | 源码内 | 入库 |
@@ -26,33 +27,35 @@
 
 ### 硬性要求
 
-- `docs/` 全量在 `.gitignore` 里，**取消索引跟踪**；仓库历史中**不得残留**任何 `docs/` 路径。
+- `docs/` 全量在 `.gitignore` 里，**取消索引跟踪**；**本仓**历史中**不得残留**任何 `docs/` 路径。
 - 新增文档**直接写进 `docs/`**，不要先写到仓根再补 gitignore。
 - 写文档前先看 `docs/` 已有同类文件，**更新而不是新建**；确需新建时用 `主题-类型.md`（如 `app-shell-status.md`、`settings-window-status.md`）。
 - 文档里**不写对标产品名**，只用中性代号（`对标端` / `参照平台`）；来源标识只记在本地工作区。
 - 提交前自检：`git status` 里**不应出现 `docs/`**；若出现说明误加，`git rm -r --cached docs` 撤回。
 - 不做 `git add .` / `git add -A` 盲加；**按文件路径逐个 add**。
 
-### 两台机器的文档同步
+### 两台机器的文档同步（git 私有仓）
 
-- 本机与 47 **各有一份 `docs/`**，内容取**并集**（本机独有 + 47 独有），不是互相覆盖。
-- 同步用文件级传输，**不走 git**（git 里已经没有 docs 了）：
-  ```bash
-  # 本机 -> 47
-  (cd <repo> && tar -cf - docs) | ssh 47 "cd <repo> && tar -xf -"
-  # 47 -> 本机
-  ssh 47 "cd <repo> && tar -cf - docs" | (cd <repo> && tar -xf -)
-  ```
-- ⚠️ **tar 同步会产生嵌套**：解包前先 `rm -rf <目标>/docs`，或解包后检查并清理 `docs/docs/`；
-  否则文档会越同步越多（实测出现过 101→202 的翻倍）。
-- 同步**只做文件搬运，不做删除**；清理旧文档由人工在两侧分别处理。
-- 本仓 `AGENTS.md` 同为本地文件，两侧靠**文件级同步**保持一致，不靠 git 传递。
-- 依赖 `docs/` 存在才通过的测试要加 `skipUnless(DOCS.is_dir())`，否则 CI 会因缺文件变红。
+`docs/` **本身是一个独立 git 仓**，origin 指向 GitLab 私有仓 `kim/lengsuo-docs-<仓名>`。
+本机与 47 各有一份，**用 git 同步，不再用 tar**：
+
+```bash
+cd <repo>/docs
+git pull          # 取另一台机器的更新
+git add -A && git commit -m "..." && git push   # 提交本机改动
+```
+
+- 私有仓按仓一个：`kim/lengsuo-docs-network` / `-agent` / `-desktop` / `-browser` / `-mobile`，
+  全部 **private**；另有 `kim/lengsuo-docs-reference` 存放对标/逆向分析资料（密级更高）。
+- 父仓**看不到** `docs/` 里的任何东西：`.gitignore` 排除整个目录，`docs/.git` 是独立仓，
+  父仓的 `git status` / `git ls-files docs` / git 历史全部干净。
+- 提交信息用 `Chow Kim <catch@126.com>`；**提交信息与分支名同样受脱敏约束**。
+- 冲突直接在 `docs/` 仓里解决（普通 git merge），解决后 push。
 
 ### 与门禁的关系
 
 - `scripts/check_no_source_leak.py` 管**内容脱敏**（不许出现对标产品名）。
-- 本节管**边界**（文档不进仓、不进历史）。两者独立，缺一不可。
+- 本节管**边界**（文档不进本仓、不进本仓历史）。两者独立，缺一不可。
 
 <!-- source-privacy:start -->
 ## 参考来源不外泄（2026-10-20 主理人定案，全 lengsuo 仓适用）
