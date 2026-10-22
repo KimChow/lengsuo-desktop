@@ -3,8 +3,8 @@
 //! ⛔ 本模块不碰文件：层约定是「纯逻辑，无 IO」。
 //! 文件读写由 `ui::gpui_app::prefs_file` 负责（那是唯一做 IO 的地方）。
 //!
-//! 格式：与 `state::prefs` 同构的**极简可读 JSON**，一个对象、三个键：
-//! 例：`{"sidebar_width":260.0,"right_width":320.0,"right_collapsed":false}`
+//! 格式：与 `state::prefs` 同构的**极简可读 JSON**，一个对象、四个键：
+//! 例：`{"sidebar_width":260.0,"sidebar_collapsed":false,"right_width":320.0,"right_collapsed":false}`
 //!
 //! 宽度单位是**逻辑像素**（与 `ui::layout` 的尺寸单位一致）。
 //! ⛔ 夹取区间不在本模块实现：本模块只负责**解析原始值**，
@@ -13,6 +13,8 @@
 
 /// 偏好 JSON 的键名：边栏宽度。
 pub const SIDEBAR_WIDTH_KEY: &str = "sidebar_width";
+/// 偏好 JSON 的键名：边栏是否折叠。
+pub const SIDEBAR_COLLAPSED_KEY: &str = "sidebar_collapsed";
 /// 偏好 JSON 的键名：右侧面板**展开态**宽度。
 pub const RIGHT_WIDTH_KEY: &str = "right_width";
 /// 偏好 JSON 的键名：右侧面板是否折叠。
@@ -31,6 +33,8 @@ pub const DEFAULT_RIGHT_WIDTH: f32 = 320.0;
 pub struct LayoutPrefs {
     /// 边栏宽度（逻辑像素）。
     pub sidebar_width: f32,
+    /// 边栏是否折叠。
+    pub sidebar_collapsed: bool,
     /// 右侧面板**展开态**宽度（逻辑像素）。
     ///
     /// 折叠态的实际占位宽度是固定的窄条宽度，不随用户设置变化 ⇒
@@ -44,6 +48,7 @@ impl Default for LayoutPrefs {
     fn default() -> Self {
         Self {
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
+            sidebar_collapsed: false,
             right_width: DEFAULT_RIGHT_WIDTH,
             right_collapsed: false,
         }
@@ -57,8 +62,9 @@ impl Default for LayoutPrefs {
 #[must_use]
 pub fn encode_layout(prefs: LayoutPrefs) -> String {
     format!(
-        "{{\"{SIDEBAR_WIDTH_KEY}\":{:?},\"{RIGHT_WIDTH_KEY}\":{:?},\"{RIGHT_COLLAPSED_KEY}\":{}}}",
+        "{{\"{SIDEBAR_WIDTH_KEY}\":{:?},\"{SIDEBAR_COLLAPSED_KEY}\":{},\"{RIGHT_WIDTH_KEY}\":{:?},\"{RIGHT_COLLAPSED_KEY}\":{}}}",
         finite_or(prefs.sidebar_width, DEFAULT_SIDEBAR_WIDTH),
+        prefs.sidebar_collapsed,
         finite_or(prefs.right_width, DEFAULT_RIGHT_WIDTH),
         prefs.right_collapsed
     )
@@ -80,6 +86,10 @@ pub fn decode_layout(text: &str) -> Result<LayoutPrefs, String> {
         .ok_or_else(|| "版式偏好 JSON 不是对象".to_owned())?;
     Ok(LayoutPrefs {
         sidebar_width: width_or(object.get(SIDEBAR_WIDTH_KEY), DEFAULT_SIDEBAR_WIDTH),
+        sidebar_collapsed: object
+            .get(SIDEBAR_COLLAPSED_KEY)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
         right_width: width_or(object.get(RIGHT_WIDTH_KEY), DEFAULT_RIGHT_WIDTH),
         right_collapsed: object
             .get(RIGHT_COLLAPSED_KEY)
@@ -114,13 +124,14 @@ mod tests {
     // 显式列出符号：不用 `use super::*`（父模块的 `use` 会把测试属性宏带进来遮蔽 `#[test]`）。
     use super::{
         decode_layout, encode_layout, LayoutPrefs, DEFAULT_RIGHT_WIDTH, DEFAULT_SIDEBAR_WIDTH,
-        RIGHT_COLLAPSED_KEY, RIGHT_WIDTH_KEY, SIDEBAR_WIDTH_KEY,
+        RIGHT_COLLAPSED_KEY, RIGHT_WIDTH_KEY, SIDEBAR_COLLAPSED_KEY, SIDEBAR_WIDTH_KEY,
     };
 
     #[test]
-    fn encode_produces_readable_json_with_all_three_keys() {
+    fn encode_produces_readable_json_with_all_four_keys() {
         let text = encode_layout(LayoutPrefs::default());
         assert!(text.contains(SIDEBAR_WIDTH_KEY), "缺边栏宽度键：{text}");
+        assert!(text.contains(SIDEBAR_COLLAPSED_KEY), "缺边栏折叠键：{text}");
         assert!(text.contains(RIGHT_WIDTH_KEY), "缺右栏宽度键：{text}");
         assert!(text.contains(RIGHT_COLLAPSED_KEY), "缺折叠态键：{text}");
         assert!(text.contains("260.0"), "默认边栏宽度应可见：{text}");
@@ -128,9 +139,10 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_keeps_all_three_fields() {
+    fn round_trip_keeps_all_four_fields() {
         let prefs = LayoutPrefs {
             sidebar_width: 300.5,
+            sidebar_collapsed: true,
             right_width: 421.25,
             right_collapsed: false,
         };
@@ -139,15 +151,55 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_keeps_the_collapsed_flag() {
+    fn round_trip_keeps_the_collapsed_flags() {
         for collapsed in [true, false] {
             let prefs = LayoutPrefs {
+                sidebar_collapsed: collapsed,
                 right_collapsed: collapsed,
                 ..LayoutPrefs::default()
             };
             let decoded = decode_layout(&encode_layout(prefs)).expect("折叠态应能往返");
+            assert_eq!(decoded.sidebar_collapsed, collapsed);
             assert_eq!(decoded.right_collapsed, collapsed);
         }
+    }
+
+    #[test]
+    fn sidebar_collapsed_key_is_decoded_when_true() {
+        let decoded = decode_layout("{\"sidebar_collapsed\":true}").expect("合法的布尔值");
+        assert!(decoded.sidebar_collapsed, "true ⇒ 折叠");
+    }
+
+    #[test]
+    fn missing_or_non_bool_sidebar_collapsed_falls_back_to_expanded() {
+        assert!(
+            !decode_layout("{}")
+                .expect("缺键不算坏文件")
+                .sidebar_collapsed
+        );
+        assert!(
+            !decode_layout("{\"sidebar_collapsed\":null}")
+                .expect("null 不算坏文件")
+                .sidebar_collapsed
+        );
+        assert!(
+            !decode_layout("{\"sidebar_collapsed\":\"yes\"}")
+                .expect("字符串不算坏文件")
+                .sidebar_collapsed
+        );
+    }
+
+    /// 旧版本地文件只有三个旧键 ⇒ 必须照常解码，边栏回落「展开」。
+    #[test]
+    fn an_old_three_key_file_still_decodes_as_expanded() {
+        let decoded = decode_layout(
+            "{\"sidebar_width\":280.0,\"right_width\":340.0,\"right_collapsed\":true}",
+        )
+        .expect("旧文件不能报错");
+        assert_eq!(decoded.sidebar_width, 280.0);
+        assert_eq!(decoded.right_width, 340.0);
+        assert!(decoded.right_collapsed);
+        assert!(!decoded.sidebar_collapsed, "旧文件没有边栏折叠键 ⇒ 展开");
     }
 
     #[test]
@@ -198,6 +250,7 @@ mod tests {
         // 编码侧兜底：非有限宽度被替换成默认值 ⇒ 产出仍是合法 JSON。
         let text = encode_layout(LayoutPrefs {
             sidebar_width: f32::NAN,
+            sidebar_collapsed: false,
             right_width: f32::INFINITY,
             right_collapsed: false,
         });

@@ -10,8 +10,9 @@ use crate::state::session_stream::{
 use crate::ui::input_area::{InputAreaState, InputMode};
 use crate::ui::layout::{
     RightPanelLayout, RightPanelTab, SidebarLayout, WorkbenchLayout, RIGHT_PANEL_COLLAPSED_WIDTH,
-    RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MIN_WIDTH, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH,
-    SIDEBAR_MIN_WIDTH, STREAM_EMPTY_TEXT, STREAM_MIN_WIDTH,
+    RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MIN_WIDTH, SIDEBAR_COLLAPSED_WIDTH,
+    SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, STREAM_EMPTY_TEXT,
+    STREAM_MIN_WIDTH,
 };
 use crate::ui::right_panel::RightPanelContent;
 use crate::ui::session_render::{Block, STALE_NOTICE};
@@ -42,6 +43,7 @@ fn defaults_match_the_260px_three_region_spec() {
     let layout = WorkbenchLayout::new();
     assert_eq!(layout.sidebar_width(), SIDEBAR_DEFAULT_WIDTH);
     assert_eq!(SIDEBAR_DEFAULT_WIDTH, 260.0);
+    assert!(!layout.sidebar().is_collapsed(), "边栏默认不折叠");
     let panel = layout.right_panel();
     assert!(!panel.is_collapsed());
     assert_eq!(panel.width(), RIGHT_PANEL_DEFAULT_WIDTH);
@@ -97,6 +99,50 @@ fn collapse_and_expand_keep_the_stored_width() {
     panel.toggle_collapsed();
     assert!(!panel.is_collapsed());
     assert_eq!(panel.effective_width(), RIGHT_PANEL_DEFAULT_WIDTH);
+}
+
+#[test]
+fn sidebar_collapse_keeps_the_stored_width_and_narrows_the_region() {
+    let mut layout = WorkbenchLayout::new();
+    layout.sidebar_mut().collapse();
+    assert!(layout.sidebar().is_collapsed());
+    assert_eq!(
+        layout.sidebar().effective_width(),
+        SIDEBAR_COLLAPSED_WIDTH,
+        "折叠时占位宽度是固定窄条"
+    );
+    assert_eq!(
+        layout.sidebar().width(),
+        SIDEBAR_DEFAULT_WIDTH,
+        "展开宽度要保留"
+    );
+
+    let collapsed = layout.regions(1200.0);
+    assert_eq!(collapsed.sidebar, SIDEBAR_COLLAPSED_WIDTH);
+    assert_eq!(
+        collapsed.stream,
+        1200.0 - SIDEBAR_COLLAPSED_WIDTH - RIGHT_PANEL_DEFAULT_WIDTH,
+        "边栏折叠后会话流变宽"
+    );
+
+    layout.sidebar_mut().resize_by(100.0);
+    assert_eq!(
+        layout.sidebar().width(),
+        SIDEBAR_DEFAULT_WIDTH,
+        "折叠态拖拽不得改动展开宽度"
+    );
+}
+
+#[test]
+fn sidebar_toggle_collapsed_switches_both_ways() {
+    let mut sidebar = SidebarLayout::new();
+    assert!(!sidebar.is_collapsed());
+    sidebar.toggle_collapsed();
+    assert!(sidebar.is_collapsed());
+    assert_eq!(sidebar.effective_width(), SIDEBAR_COLLAPSED_WIDTH);
+    sidebar.toggle_collapsed();
+    assert!(!sidebar.is_collapsed());
+    assert_eq!(sidebar.effective_width(), SIDEBAR_DEFAULT_WIDTH);
 }
 
 #[test]
@@ -258,10 +304,17 @@ fn apply_prefs_restores_clamps_and_round_trips() {
     let mut layout = WorkbenchLayout::new();
     layout.apply_prefs(LayoutPrefs {
         sidebar_width: 300.0,
+        sidebar_collapsed: true,
         right_width: 400.0,
         right_collapsed: true,
     });
     assert_eq!(layout.sidebar_width(), 300.0);
+    assert!(layout.sidebar().is_collapsed());
+    assert_eq!(
+        layout.sidebar().effective_width(),
+        SIDEBAR_COLLAPSED_WIDTH,
+        "偏好里的折叠态要恢复"
+    );
     assert_eq!(layout.right_panel().width(), 400.0);
     assert!(layout.right_panel().is_collapsed());
     assert_eq!(
@@ -273,10 +326,12 @@ fn apply_prefs_restores_clamps_and_round_trips() {
     // 越界 ⇒ 夹取；非有限 ⇒ 忽略（描述层是夹取逻辑的唯一实现处）。
     layout.apply_prefs(LayoutPrefs {
         sidebar_width: 10.0,
+        sidebar_collapsed: false,
         right_width: f32::NAN,
         right_collapsed: false,
     });
     assert_eq!(layout.sidebar_width(), SIDEBAR_MIN_WIDTH);
+    assert!(!layout.sidebar().is_collapsed(), "偏好里的展开态要恢复");
     assert_eq!(
         layout.right_panel().width(),
         400.0,
@@ -286,10 +341,12 @@ fn apply_prefs_restores_clamps_and_round_trips() {
 
     // 导出 → 导入 → 导出：幂等。
     layout.set_sidebar_width(280.0);
+    layout.sidebar_mut().collapse();
     layout.right_panel_mut().set_width(360.0);
     layout.right_panel_mut().collapse();
     let exported = layout.export_prefs();
     assert_eq!(exported.sidebar_width, 280.0);
+    assert!(exported.sidebar_collapsed, "边栏折叠态要导出");
     assert_eq!(exported.right_width, 360.0, "导出的是展开态宽度");
     assert!(exported.right_collapsed);
     let mut restored = WorkbenchLayout::new();

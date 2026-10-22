@@ -25,6 +25,8 @@
 use crate::ui::sidebar::{SessionRow, SidebarState};
 
 #[cfg(feature = "ui")]
+mod collapse;
+#[cfg(feature = "ui")]
 mod nav;
 #[cfg(feature = "ui")]
 mod render;
@@ -150,6 +152,11 @@ pub struct SidebarViewGpui {
     /// `SIDEBAR_DEFAULT_WIDTH`（260），导致拖动左分隔条后侧栏内容仍按 260 画 ——
     /// 表现为「左边拖不动 / 不联动」，而右栏（用自身 `layout`）正常。
     width: f32,
+    /// 边栏是否折叠（窄条态）。
+    ///
+    /// 与右栏同款：这是子视图的**私有副本**，宿主在 `observe` 里把它**回收**给
+    /// 权威版式，否则下一次下发会把折叠态覆盖回展开（点收起会「弹回来」）。
+    collapsed: bool,
 }
 
 #[cfg(feature = "ui")]
@@ -160,6 +167,7 @@ impl SidebarViewGpui {
         Self {
             state,
             width: crate::ui::layout::SIDEBAR_DEFAULT_WIDTH,
+            collapsed: false,
         }
     }
 
@@ -182,6 +190,22 @@ impl SidebarViewGpui {
     #[must_use]
     pub fn width(&self) -> f32 {
         self.width
+    }
+
+    /// 宿主下发边栏折叠态（启动水合 / 权威版式变化后由根视图调用）。
+    pub fn set_collapsed(&mut self, collapsed: bool) {
+        self.collapsed = collapsed;
+    }
+
+    /// 折叠 / 展开边栏。
+    pub fn toggle_collapsed(&mut self) {
+        self.collapsed = !self.collapsed;
+    }
+
+    /// 当前是否折叠。
+    #[must_use]
+    pub fn is_collapsed(&self) -> bool {
+        self.collapsed
     }
 
     /// 演示用视图：手工构造的会话条目，**不接真实数据源**。
@@ -212,6 +236,21 @@ impl Render for SidebarViewGpui {
         // 写死会让拖动分隔条后侧栏内容仍按默认宽渲染（2026-10-21 真机实测）。
         let view = crate::ui::sidebar::render(&self.state, self.width);
 
+        // 折叠态：只渲染窄条与展开入口，**不渲染会话列表**。
+        // 外框与展开态共用（宽度由宿主下发，折叠时是窄条宽度）。
+        if self.collapsed {
+            return div()
+                .flex()
+                .flex_col()
+                .h_full()
+                .w(px(self.width))
+                .bg(theme.sidebar)
+                .text_color(theme.sidebar_foreground)
+                .border_r_1()
+                .border_color(theme.sidebar_border)
+                .child(collapse::render_collapsed_strip(&entity, theme));
+        }
+
         let header = div()
             .flex()
             .items_center()
@@ -233,6 +272,8 @@ impl Render for SidebarViewGpui {
         } else {
             header
         };
+        // 展开态的折叠入口放在标题行末尾。
+        let header = header.child(collapse::render_toggle(false, &entity, theme));
 
         // 顶部两个导航入口：频道 + 智能体管理（A15）。
         let nav = nav::render_nav(&view.nav, &entity, theme);

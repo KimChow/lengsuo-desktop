@@ -184,6 +184,20 @@ fn clicking_a_nav_entry_writes_the_selection_back() {
     assert_eq!(selected, [NavKind::Channels]);
 }
 
+/// e41：边栏视图的折叠态可被宿主读取（回收 / 下发都靠这个入口）。
+#[cfg(feature = "ui")]
+#[test]
+fn sidebar_view_exposes_its_collapsed_state() {
+    use crate::ui::sidebar_gpui::SidebarViewGpui;
+
+    let mut view = SidebarViewGpui::new(demo_state());
+    assert!(!view.is_collapsed(), "默认展开");
+    view.toggle_collapsed();
+    assert!(view.is_collapsed(), "点收起 ⇒ 折叠");
+    view.set_collapsed(false);
+    assert!(!view.is_collapsed(), "宿主下发展开态应生效");
+}
+
 /// A17：点「环境」入口 ⇒ 描述层选中态变成 `NavKind::Environments`。
 #[test]
 fn clicking_the_environment_entry_writes_the_selection_back() {

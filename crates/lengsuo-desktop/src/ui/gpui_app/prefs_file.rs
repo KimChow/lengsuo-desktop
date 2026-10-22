@@ -190,6 +190,7 @@ mod tests {
         let path = dir.join("nested").join("layout.json");
         let prefs = LayoutPrefs {
             sidebar_width: 288.0,
+            sidebar_collapsed: true,
             right_width: 352.0,
             right_collapsed: true,
         };
