@@ -40,6 +40,29 @@ zip = { workspace = true }
 
 # 桌面二进制入口：只在开 `ui` feature 时构建（否则 lib 里没有 GPUI 依赖，
 # 这个 bin 编不过）。运行 `cargo run --features ui --bin lengsuo-desktop`。
+# 渲染断言用的测试支撑（2026-10-22 用户批准引入）：
+#
+# 目的：让「接线层」能做**无窗口渲染断言**（`TestAppContext` / `HeadlessAppContext`），
+# 补上本线长期缺口「只做编译验证、没有渲染验证」。
+#
+# 为什么走 dev-dependencies 而不是塞进 `ui` feature：
+#   resolver = "2" 下 dev-dependencies 的 feature 只在**测试构建**生效
+#   ⇒ `cargo build --release` 的生产二进制**零污染**（实测 normal 依赖树里
+#   test-support 出现 0 次；新增的 18 个包只在 dev 树里）。
+#
+# 为什么只开 `gpui-pre` 的 test-support、**不**开 `gpui-kit` 的：
+#   gpui-kit 的 `test-support` 会强链 `gpui_platform/test-support`
+#   ⇒ 拉进 gpui-fast-platform ⇒ gpui-fast-macos 要求 `cocoa =0.26.0`（精确），
+#   而锁文件里 gpui-pre-macos 要求 `cocoa ^0.26.0`（锁在 0.26.1）
+#   ⇒ 语义不兼容，依赖解析必然失败（还会连带 unicode-properties 冲突）。
+#   `gpui-kit` 做 `pub use ::gpui::*` ⇒ 只开 gpui-pre 的 test-support 即可用
+#   `gpui_kit::TestAppContext`。代价：`gpui_kit::test` 模块（`#[gpui_kit::test]`
+#   宏 / `TestWindowExt::find`）拿不到 —— 它被 gpui-kit 自己的 feature 门住。
+#
+# `package = "gpui-pre"`：gpui-kit 把上游 gpui 重发布成 gpui-pre，其 lib 名就是 `gpui`。
+[dev-dependencies]
+gpui = { version = "=0.3.9", package = "gpui-pre", features = ["test-support"] }
+
 [[bin]]
 name = "lengsuo-desktop"
 path = "src/bin/lengsuo-desktop.rs"
