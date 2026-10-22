@@ -52,6 +52,22 @@ git add -A && git commit -m "..." && git push   # 提交本机改动
 - 提交信息用 `Chow Kim <catch@126.com>`；**提交信息与分支名同样受脱敏约束**。
 - 冲突直接在 `docs/` 仓里解决（普通 git merge），解决后 push。
 
+### 参考资料怎么引用（UI 保真度的基准来源）
+
+**两类资料，处置不同**：
+
+| 类别 | 内容 | 位置 | 是否进我们的仓 |
+|---|---|---|---|
+| 第三方上游源码 | 开源项目本体 | `<ref-root>/upstream/<name>/` | **不进**，各机自 clone |
+| 我方对标/逆向分析产物 | 复现文档、逆向证据、样本集、账本 | `<ref-root>/docs/`（= `kim/lengsuo-docs-reference`） | **进**（私有，密级更高） |
+
+- `<ref-root>`：本机 `D:/OneDrive/project/_ref/`、47 `~/ref/`。两者结构一致，内部相对路径相同。
+- **引用一律写仓内相对路径**（如 `wb/pc-devguide/13-主界面UI与预览.md`），
+  ⛔ **不写绝对路径** —— 跨机必失效，且违反 `source-privacy` 的脱敏条款。
+- UI 保真度基准 = 私有仓的 `wb/pc-devguide/`（基准册 `13-主界面UI与预览.md`）+ `wb/ref-target-10/`；
+  仓内基准是本仓 `docs/ui-parity-spec.md`（A1–A17 条目）。
+- 需要新增对照分析稿 ⇒ 写进 `<ref-root>/docs/` 并 push 私有仓，**不要**散落在仓外的裸目录。
+
 ### 与门禁的关系
 
 - `scripts/check_no_source_leak.py` 管**内容脱敏**（不许出现对标产品名）。
