@@ -153,11 +153,15 @@ fn demo_state_carries_channel_and_agent_counts() {
     assert_eq!(state.agent_count(), 3);
 
     let description = sidebar::render(&state, 260.0);
-    assert_eq!(description.nav.len(), 2);
+    assert_eq!(description.nav.len(), 3);
     assert_eq!(description.nav[0].title, "频道");
     assert_eq!(description.nav[0].count, 2);
     assert_eq!(description.nav[1].title, "智能体管理");
     assert_eq!(description.nav[1].count, 3);
+    // A17：第三个入口是浏览器环境管理（角标 0 ⇒ 不显示）。
+    assert_eq!(description.nav[2].kind, NavKind::Environments);
+    assert_eq!(description.nav[2].title, "环境");
+    assert_eq!(description.nav[2].count, 0);
 }
 
 #[test]
@@ -174,4 +178,21 @@ fn clicking_a_nav_entry_writes_the_selection_back() {
         .map(|entry| entry.kind)
         .collect();
     assert_eq!(selected, [NavKind::Channels]);
+}
+
+/// A17：点「环境」入口 ⇒ 描述层选中态变成 `NavKind::Environments`。
+#[test]
+fn clicking_the_environment_entry_writes_the_selection_back() {
+    let mut state = demo_state();
+    assert!(select_nav(&mut state, NavKind::Environments));
+    assert_eq!(state.selected_nav(), Some(NavKind::Environments));
+
+    let description = sidebar::render(&state, 260.0);
+    let selected: Vec<NavKind> = description
+        .nav
+        .iter()
+        .filter(|entry| entry.selected)
+        .map(|entry| entry.kind)
+        .collect();
+    assert_eq!(selected, [NavKind::Environments]);
 }

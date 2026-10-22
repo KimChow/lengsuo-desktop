@@ -1,4 +1,4 @@
-//! 边栏的两个导航入口：频道入口 + 智能体管理入口。
+//! 边栏的三个导航入口：频道入口 + 智能体管理入口 + 浏览器环境管理入口。
 //!
 //! **只做界面**：入口的标题、计数、选中态。**不实现**频道收发、不实现智能体创建
 //! （那是运行时/业务语义，⛔ 本仓不碰）。
@@ -12,6 +12,8 @@ pub enum NavKind {
     Channels,
     /// 智能体管理入口（多代理组织）。
     Agents,
+    /// **浏览器环境管理入口**（B 域；e35 新增）。
+    Environments,
 }
 
 /// 一个导航入口。
@@ -31,6 +33,8 @@ pub struct NavEntry {
 pub const CHANNELS_TITLE: &str = "频道";
 /// 智能体管理入口的标题。
 pub const AGENTS_TITLE: &str = "智能体管理";
+/// 浏览器环境管理入口的标题。
+pub const ENVIRONMENTS_TITLE: &str = "环境";
 
 /// 构造频道入口。
 #[must_use]
@@ -54,11 +58,28 @@ pub fn agents_entry(count: usize, selected: bool) -> NavEntry {
     }
 }
 
-/// 边栏的两个导航入口（顺序即展示顺序：频道在前，智能体管理在后）。
+/// 构造浏览器环境管理入口。
 #[must_use]
-pub fn nav_entries(channels: usize, agents: usize, selected: Option<NavKind>) -> Vec<NavEntry> {
+pub fn environments_entry(count: usize, selected: bool) -> NavEntry {
+    NavEntry {
+        kind: NavKind::Environments,
+        title: ENVIRONMENTS_TITLE,
+        count,
+        selected,
+    }
+}
+
+/// 边栏的三个导航入口（顺序即展示顺序：频道 → 智能体管理 → 环境）。
+#[must_use]
+pub fn nav_entries(
+    channels: usize,
+    agents: usize,
+    environments: usize,
+    selected: Option<NavKind>,
+) -> Vec<NavEntry> {
     vec![
         channels_entry(channels, selected == Some(NavKind::Channels)),
         agents_entry(agents, selected == Some(NavKind::Agents)),
+        environments_entry(environments, selected == Some(NavKind::Environments)),
     ]
 }

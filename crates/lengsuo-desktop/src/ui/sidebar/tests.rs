@@ -4,7 +4,8 @@
 //! ⛔ 不用 `use super::*`：显式列出符号，测试才读得出依赖。
 
 use crate::ui::sidebar::nav::{
-    agents_entry, channels_entry, nav_entries, NavKind, AGENTS_TITLE, CHANNELS_TITLE,
+    agents_entry, channels_entry, environments_entry, nav_entries, NavKind, AGENTS_TITLE,
+    CHANNELS_TITLE, ENVIRONMENTS_TITLE,
 };
 use crate::ui::sidebar::{
     render, SessionEntry, SessionRow, SidebarState, ARCHIVED_SECTION, ARCHIVED_TOGGLE_HIDE,
@@ -169,20 +170,25 @@ fn unread_count_ignores_archived_sessions() {
 
 #[test]
 fn nav_entries_expose_channels_and_agents_in_order() {
-    let entries = nav_entries(2, 3, None);
-    assert_eq!(entries.len(), 2);
+    let entries = nav_entries(2, 3, 0, None);
+    assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].kind, NavKind::Channels);
     assert_eq!(entries[0].count, 2);
     assert_eq!(entries[0].title, CHANNELS_TITLE);
     assert_eq!(entries[1].kind, NavKind::Agents);
     assert_eq!(entries[1].count, 3);
     assert_eq!(entries[1].title, AGENTS_TITLE);
+    // A17：第三个入口是浏览器环境管理（顺序在频道 / 智能体管理之后）。
+    assert_eq!(entries[2].kind, NavKind::Environments);
+    assert_eq!(entries[2].count, 0);
+    assert_eq!(entries[2].title, ENVIRONMENTS_TITLE);
 }
 
 #[test]
 fn nav_entry_count_zero_is_not_rendered() {
     assert_eq!(channels_entry(0, false).count, 0);
     assert_eq!(agents_entry(0, false).count, 0);
+    assert_eq!(environments_entry(0, false).count, 0);
 }
 
 #[test]
@@ -191,7 +197,7 @@ fn select_nav_marks_only_the_target_entry() {
     assert!(state.select_nav(NavKind::Channels));
     assert_eq!(state.selected_nav(), Some(NavKind::Channels));
 
-    let entries = nav_entries(2, 3, state.selected_nav());
+    let entries = nav_entries(2, 3, 0, state.selected_nav());
     let selected: Vec<NavKind> = entries
         .iter()
         .filter(|entry| entry.selected)
@@ -217,7 +223,7 @@ fn nav_counts_come_from_state_and_reach_the_view() {
     assert_eq!(state.agent_count(), 3);
 
     let view = render(&state, 260.0);
-    assert_eq!(view.nav.len(), 2);
+    assert_eq!(view.nav.len(), 3);
     assert_eq!(view.nav[0].count, 2);
     assert_eq!(view.nav[1].count, 3);
     assert!(!view.nav[0].selected);
@@ -231,4 +237,37 @@ fn selecting_a_nav_entry_marks_it_in_the_view() {
     let view = render(&state, 260.0);
     assert!(!view.nav[0].selected);
     assert!(view.nav[1].selected);
+}
+
+// === A17：浏览器环境管理入口 ===
+
+#[test]
+fn environment_count_is_zero_so_no_badge_is_faked() {
+    let state = SidebarState::new();
+    assert_eq!(state.environment_count(), 0);
+
+    let view = render(&state, 260.0);
+    let entry = view
+        .nav
+        .iter()
+        .find(|entry| entry.kind == NavKind::Environments)
+        .expect("应当有环境入口");
+    assert_eq!(entry.count, 0, "环境条目来自运行时侧，界面层不伪造角标");
+    assert_eq!(entry.title, ENVIRONMENTS_TITLE);
+}
+
+#[test]
+fn selecting_the_environment_entry_marks_only_it() {
+    let mut state = SidebarState::new();
+    assert!(state.select_nav(NavKind::Environments));
+    assert_eq!(state.selected_nav(), Some(NavKind::Environments));
+
+    let view = render(&state, 260.0);
+    let selected: Vec<NavKind> = view
+        .nav
+        .iter()
+        .filter(|entry| entry.selected)
+        .map(|entry| entry.kind)
+        .collect();
+    assert_eq!(selected, [NavKind::Environments]);
 }

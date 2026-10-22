@@ -11,13 +11,13 @@
 //! - 归档会话默认隐藏，只显示数量；显式展开后才出现在「归档」组；
 //! - 未读以 `unread` 标记交给渲染层画圆点，本层不推断已读。
 //!
-//! **边栏现在有三块**（对齐 A15）：会话列表 + 频道入口 + 智能体管理入口。
-//! 后两块只做**界面**（入口、计数、选中态），⛔ 不实现频道收发、不实现智能体
-//! 创建、不实现多代理角色模型（那是运行时与业务语义）。
+//! **边栏现在有四块**（对齐 A15 + A17）：会话列表、频道入口、智能体管理入口、
+//! 浏览器环境管理入口。后三块只做**界面**（入口、计数、选中态），⛔ 不实现频道
+//! 收发、不实现智能体创建、不实现多代理角色模型（那是运行时与业务语义）。
 //!
 //! 目录式子模块（Rust 2018 起 `ui/mod.rs` 里的 `pub mod sidebar;` 自动指向本目录）：
 //! - [`sections`]：会话分组的摊平（置顶 / 全部会话 / 归档）。
-//! - [`nav`]：频道入口 + 智能体管理入口的描述（纯数据）。
+//! - [`nav`]：频道入口 + 智能体管理入口 + 环境入口的描述（纯数据）。
 //! - `tests`：描述层契约测试。
 
 pub mod nav;
@@ -26,7 +26,7 @@ mod sections;
 #[cfg(test)]
 mod tests;
 
-pub use nav::{NavEntry, NavKind};
+pub use nav::{NavEntry, NavKind, ENVIRONMENTS_TITLE};
 pub use sections::{SessionRow, SidebarSection};
 
 /// 边栏标题。
@@ -226,6 +226,15 @@ impl SidebarState {
         self.agent_count
     }
 
+    /// 环境数量（环境入口角标）。
+    ///
+    /// ⚠️ **恒为 0**：环境条目来自运行时侧，界面层拿不到真实列表
+    /// ⇒ 角标为 0 ⇒ **不显示角标**（与「没有环境」的观感一致），**不伪造数据**。
+    #[must_use]
+    pub fn environment_count(&self) -> usize {
+        0
+    }
+
     /// 设置频道数量。
     pub fn set_channel_count(&mut self, count: usize) {
         self.channel_count = count;
@@ -271,7 +280,7 @@ pub struct SidebarView {
     pub archived_toggle_label: &'static str,
     /// 没有任何可见会话时的占位文案。
     pub empty_text: Option<&'static str>,
-    /// 两个导航入口（频道 + 智能体管理）。
+    /// 三个导航入口（频道 + 智能体管理 + 环境）。
     pub nav: Vec<NavEntry>,
 }
 
@@ -334,6 +343,7 @@ pub fn render(state: &SidebarState, width: f32) -> SidebarView {
         nav: nav::nav_entries(
             state.channel_count(),
             state.agent_count(),
+            state.environment_count(),
             state.selected_nav(),
         ),
     }

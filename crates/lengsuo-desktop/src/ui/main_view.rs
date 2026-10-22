@@ -19,6 +19,8 @@ pub enum MainView {
     Channels,
     /// 智能体管理视图（点侧栏「智能体管理」入口）。
     Agents,
+    /// **浏览器环境管理**（B 域；点侧栏「环境」入口）。
+    Environments,
 }
 
 /// 频道视图的说明文案（数据源在运行时侧，本仓未接）。
@@ -31,12 +33,14 @@ pub const AGENTS_PLACEHOLDER: &str = "智能体管理：数据源在运行时侧
 /// - `None` ⇒ [`MainView::Sessions`]（还没选任何入口 ⇒ 显示会话流）。
 /// - `Some(Channels)` ⇒ [`MainView::Channels`]。
 /// - `Some(Agents)` ⇒ [`MainView::Agents`]。
+/// - `Some(Environments)` ⇒ [`MainView::Environments`]。
 #[must_use]
 pub fn resolve(selected_nav: Option<NavKind>) -> MainView {
     match selected_nav {
         None => MainView::Sessions,
         Some(NavKind::Channels) => MainView::Channels,
         Some(NavKind::Agents) => MainView::Agents,
+        Some(NavKind::Environments) => MainView::Environments,
     }
 }
 
@@ -61,6 +65,12 @@ mod tests {
         assert_eq!(resolve(Some(NavKind::Agents)), MainView::Agents);
     }
 
+    /// A17：浏览器环境管理入口 ⇒ 主区切到环境视图。
+    #[test]
+    fn environments_nav_switches_to_environments() {
+        assert_eq!(resolve(Some(NavKind::Environments)), MainView::Environments);
+    }
+
     /// 端到端契约（纯逻辑版）：侧栏点击写入的**那个** `NavKind`，
     /// 必须正好是主区路由读到的那个。
     ///
@@ -82,5 +92,12 @@ mod tests {
             NavKind::Agents
         ));
         assert_eq!(resolve(state.selected_nav()), MainView::Agents);
+
+        // A17：环境入口走的是同一条链路（侧栏点击 → 描述层选中态 → 主区路由）。
+        assert!(crate::ui::sidebar_gpui::select_nav(
+            &mut state,
+            NavKind::Environments
+        ));
+        assert_eq!(resolve(state.selected_nav()), MainView::Environments);
     }
 }

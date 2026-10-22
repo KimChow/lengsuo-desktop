@@ -24,7 +24,11 @@
 //!   [`AppShell::sync_layout`] 就地写给右侧面板与右分隔条。
 //! - 命令面板浮在最上层，快捷键经 `palette_gpui::hotkey_from_keystroke` 转换后
 //!   交给 [`crate::ui::command_palette::handle_hotkey`]。
-//! - 环境 / 组织视图本批**不进主界面**，但通过 [`secondary_views`] 编译进二进制。
+//! - 组织视图**不进主界面**，但通过 [`secondary_views`] 编译进二进制。
+//!
+//! e35 环境管理挂主界面（对齐 A17）：侧栏新增「环境」入口 ⇒ 主区切到
+//! [`EnvViewGpui`]（`MainView::Environments`）。⛔ 组织视图仍未挂（留给后续卡）。
+//! ⚠️ 环境列表当前是**演示数据**（`EnvViewGpui::demo()`）⇒ 真实来源在运行时侧。
 //!
 //! e14 发送回显（**界面层本地回显，不投递**）：
 //! - 输入区发送时把 `OutgoingInput` 入自己的 `outbox` 并 `notify()`；根视图**只读消费**
@@ -81,6 +85,7 @@ use crate::state::hotkeys::HotkeyRegistry;
 use crate::state::layout_prefs::LayoutPrefs;
 use crate::state::palette_state::search_state::real_items;
 use crate::ui::command_palette::{self, PaletteAction};
+use crate::ui::env_gpui::EnvViewGpui;
 use crate::ui::input_gpui::InputAreaGpui;
 use crate::ui::layout::WorkbenchLayout;
 use crate::ui::layout_gpui::{DividerGpui, DividerSide, RightPanelTabGpui};
@@ -118,9 +123,14 @@ struct AppShell {
     /// ⛔ 抽屉状态**只在本视图内存里**（不落盘），⛔ 也不 spawn 进程：
     /// 「运行 / 中断」只登记意图，由 [`AppShell::sync_terminal_drawer`] 消费。
     terminal_drawer: Entity<TerminalDrawerGpui>,
+    /// 浏览器环境管理视图（B 域，e35）：由侧栏「环境」入口切到主区。
+    ///
+    /// ⚠️ 条目内容当前是 [`EnvViewGpui::demo`] 的**演示数据** ——
+    /// 真实环境列表在运行时侧，界面层拿不到。
+    env_view: Entity<EnvViewGpui>,
     /// 子视图 `notify()` 时回调：把版式变化下发到右侧面板与右分隔条。
     _layout_sync: Vec<Subscription>,
-    /// 侧栏导航入口变化的订阅：主区据此切换显示会话流 / 频道 / 智能体管理。
+    /// 侧栏导航入口变化的订阅：主区据此切换显示会话流 / 频道 / 智能体管理 / 环境。
     _nav_sync: Vec<Subscription>,
     /// 终端抽屉变化的订阅：消费「运行 / 中断」意图 + 让根视图重排。
     _terminal_sync: Vec<Subscription>,
@@ -180,6 +190,9 @@ impl AppShell {
         let tab_strip = cx.new(|_| RightPanelTabGpui::from_layout(layout.right_panel()));
         // 底部终端抽屉：**默认收起**（对齐 13 册「底部抽屉式默认收起」）。
         let terminal_drawer = cx.new(|_| TerminalDrawerGpui::new());
+        // 浏览器环境管理视图（B 域，e35）：侧栏「环境」入口 ⇒ 主区切到它。
+        // ⚠️ 条目是**演示数据**（真实环境列表在运行时侧，界面层拿不到）。
+        let env_view = cx.new(|_| EnvViewGpui::demo());
 
         // 任一分隔条或 tab 条 `notify()` ⇒ 把左侧（唯一来源）的版式下发到下游。
         // 分隔条自身的 `notify()` 只重绘自己；根视图的三区宽度在渲染时读回，
@@ -254,6 +267,7 @@ impl AppShell {
             right_divider,
             tab_strip,
             terminal_drawer,
+            env_view,
             _layout_sync,
             _session_sync,
             _nav_sync,
@@ -384,7 +398,9 @@ impl Render for AppShell {
 
         // 中间主区：按侧栏选中的导航入口切换显示哪一块。
         // ⛔ 频道 / 智能体管理**只显示占位说明**（数据源在运行时侧，本仓不实现）。
-        let stream = main_area::render_main_area(self.main_view, &self.session, theme);
+        // ✅ 环境管理是**真实视图**（演示数据），点侧栏「环境」入口即切过去。
+        let stream =
+            main_area::render_main_area(self.main_view, &self.session, &self.env_view, theme);
 
         // 右侧面板：上方是 tab 条（点击切换面板内容），下方是面板本身。
         // 同 sidebar：必须 `flex_none()`，否则拖拽改的宽度会被 flex 收缩吞掉。
