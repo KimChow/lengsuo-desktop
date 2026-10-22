@@ -4,8 +4,8 @@
 //! ⛔ 不用 `use super::*`：显式列出符号，测试才读得出依赖。
 
 use crate::ui::sidebar::nav::{
-    agents_entry, channels_entry, environments_entry, nav_entries, NavKind, AGENTS_TITLE,
-    CHANNELS_TITLE, ENVIRONMENTS_TITLE,
+    agents_entry, channels_entry, environments_entry, nav_entries, organization_entry, NavKind,
+    AGENTS_TITLE, CHANNELS_TITLE, ENVIRONMENTS_TITLE, ORGANIZATION_TITLE,
 };
 use crate::ui::sidebar::{
     render, SessionEntry, SessionRow, SidebarState, ARCHIVED_SECTION, ARCHIVED_TOGGLE_HIDE,
@@ -170,8 +170,8 @@ fn unread_count_ignores_archived_sessions() {
 
 #[test]
 fn nav_entries_expose_channels_and_agents_in_order() {
-    let entries = nav_entries(2, 3, 0, None);
-    assert_eq!(entries.len(), 3);
+    let entries = nav_entries(2, 3, 0, 0, None);
+    assert_eq!(entries.len(), 4);
     assert_eq!(entries[0].kind, NavKind::Channels);
     assert_eq!(entries[0].count, 2);
     assert_eq!(entries[0].title, CHANNELS_TITLE);
@@ -182,6 +182,10 @@ fn nav_entries_expose_channels_and_agents_in_order() {
     assert_eq!(entries[2].kind, NavKind::Environments);
     assert_eq!(entries[2].count, 0);
     assert_eq!(entries[2].title, ENVIRONMENTS_TITLE);
+    // A18：第四个入口是组织与权限可见性（顺序在环境之后）。
+    assert_eq!(entries[3].kind, NavKind::Organization);
+    assert_eq!(entries[3].count, 0);
+    assert_eq!(entries[3].title, ORGANIZATION_TITLE);
 }
 
 #[test]
@@ -189,6 +193,18 @@ fn nav_entry_count_zero_is_not_rendered() {
     assert_eq!(channels_entry(0, false).count, 0);
     assert_eq!(agents_entry(0, false).count, 0);
     assert_eq!(environments_entry(0, false).count, 0);
+    assert_eq!(organization_entry(0, false).count, 0);
+}
+
+/// A18：组织角标恒 0（成员数在运行时侧，本仓**不伪造**）⇒ 界面上不显示角标。
+#[test]
+fn organization_count_is_zero_so_no_fake_badge() {
+    let state = SidebarState::new();
+    assert_eq!(
+        state.organization_count(),
+        0,
+        "组织成员数在运行时侧，本仓不伪造 ⇒ 恒 0（角标不显示）"
+    );
 }
 
 #[test]
@@ -197,7 +213,7 @@ fn select_nav_marks_only_the_target_entry() {
     assert!(state.select_nav(NavKind::Channels));
     assert_eq!(state.selected_nav(), Some(NavKind::Channels));
 
-    let entries = nav_entries(2, 3, 0, state.selected_nav());
+    let entries = nav_entries(2, 3, 0, 0, state.selected_nav());
     let selected: Vec<NavKind> = entries
         .iter()
         .filter(|entry| entry.selected)
@@ -223,7 +239,7 @@ fn nav_counts_come_from_state_and_reach_the_view() {
     assert_eq!(state.agent_count(), 3);
 
     let view = render(&state, 260.0);
-    assert_eq!(view.nav.len(), 3);
+    assert_eq!(view.nav.len(), 4);
     assert_eq!(view.nav[0].count, 2);
     assert_eq!(view.nav[1].count, 3);
     assert!(!view.nav[0].selected);

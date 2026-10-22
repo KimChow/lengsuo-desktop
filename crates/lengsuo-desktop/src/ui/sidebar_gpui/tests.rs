@@ -153,7 +153,7 @@ fn demo_state_carries_channel_and_agent_counts() {
     assert_eq!(state.agent_count(), 3);
 
     let description = sidebar::render(&state, 260.0);
-    assert_eq!(description.nav.len(), 3);
+    assert_eq!(description.nav.len(), 4);
     assert_eq!(description.nav[0].title, "频道");
     assert_eq!(description.nav[0].count, 2);
     assert_eq!(description.nav[1].title, "智能体管理");
@@ -162,6 +162,10 @@ fn demo_state_carries_channel_and_agent_counts() {
     assert_eq!(description.nav[2].kind, NavKind::Environments);
     assert_eq!(description.nav[2].title, "环境");
     assert_eq!(description.nav[2].count, 0);
+    // A18：第四个入口是组织与权限可见性（角标 0 ⇒ 不显示）。
+    assert_eq!(description.nav[3].kind, NavKind::Organization);
+    assert_eq!(description.nav[3].title, "组织");
+    assert_eq!(description.nav[3].count, 0);
 }
 
 #[test]

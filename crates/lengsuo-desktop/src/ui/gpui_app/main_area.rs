@@ -6,6 +6,9 @@
 //! e35（A17）补上第三个入口：环境管理渲染**真实视图**（`EnvViewGpui`），
 //! 不是占位。
 //!
+//! e38（A18）补上第四个入口：组织与权限可见性渲染**真实视图**（`OrgViewGpui`），
+//! 不是占位。
+//!
 //! ⛔ 频道 / 智能体管理**只显示占位说明**：数据源在运行时侧，本仓不实现，
 //! 绝不伪造列表。
 
@@ -17,16 +20,18 @@ use gpui_kit::*;
 use crate::ui::env_gpui::EnvViewGpui;
 use crate::ui::layout::STREAM_MIN_WIDTH;
 use crate::ui::main_view::{self, MainView};
+use crate::ui::org_gpui::OrgViewGpui;
 use crate::ui::session_gpui::SessionStreamGpui;
 
 /// 渲染主区。
 ///
-/// 四个分支**结构完全一样**（都是 `div()`）⇒ 返回类型必然一致（都是 `Div`），
+/// 五个分支**结构完全一样**（都是 `div()`）⇒ 返回类型必然一致（都是 `Div`），
 /// 不需要 `into_any_element()`。
 pub(super) fn render_main_area(
     view: MainView,
     session: &Entity<SessionStreamGpui>,
     env: &Entity<EnvViewGpui>,
+    org: &Entity<OrgViewGpui>,
     theme: &Theme,
 ) -> impl IntoElement {
     match view {
@@ -44,6 +49,13 @@ pub(super) fn render_main_area(
             .min_w(px(STREAM_MIN_WIDTH))
             .h_full()
             .child(env.clone()),
+        // 组织与权限可见性是**真实视图**（挂在 `AppShell.org_view` 上）：
+        // ⚠️ 条目内容当前是 `demo_org_view()` 的演示数据，真实来源在运行时侧。
+        MainView::Organization => div()
+            .flex_1()
+            .min_w(px(STREAM_MIN_WIDTH))
+            .h_full()
+            .child(org.clone()),
     }
 }
 

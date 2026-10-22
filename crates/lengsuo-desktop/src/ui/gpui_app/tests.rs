@@ -16,7 +16,7 @@ use crate::ui::layout::{
 use crate::ui::layout_gpui::{DividerDrag, DividerSide};
 use serde_json::json;
 
-use super::demo::{default_registry, demo_session, secondary_views};
+use super::demo::{default_registry, demo_org_view, demo_session, secondary_views};
 use super::launch::{has_display_server, HOTKEY_HINT, NO_DISPLAY_MESSAGE, WINDOW_TITLE};
 use super::settings_snapshot;
 use super::sync::{echo_message, next_echo_seq, regions_for, should_finish_send, tab_strip_layout};
@@ -166,6 +166,26 @@ fn headless_linux_has_no_display_server() {
 #[test]
 fn secondary_views_are_constructible() {
     let (_env, _org) = secondary_views();
+}
+
+/// A18：挂上主界的组织视图必须有**内容**。
+///
+/// `OrgViewState::default()` 的三张列表都是 `Loading`（e36 改的）⇒ 直接挂
+/// `OrgViewState::default()` 会让界面永远显示「加载中」。演示视图必须先
+/// `apply` 注入条目 ⇒ 状态落到 `Ready` 且有行可渲染。
+#[test]
+fn demo_org_view_has_content_not_an_empty_placeholder() {
+    let org = demo_org_view();
+    let state = org.state();
+    assert!(
+        !state.member_rows().is_empty(),
+        "演示组织视图必须有成员条目，否则挂上去是空的"
+    );
+    assert!(!state.role_rows().is_empty(), "演示组织视图必须有角色条目");
+    assert!(
+        !state.department_rows().is_empty(),
+        "演示组织视图必须有部门条目"
+    );
 }
 
 // ---- e37：宿主把状态快照送进设置窗口 ----

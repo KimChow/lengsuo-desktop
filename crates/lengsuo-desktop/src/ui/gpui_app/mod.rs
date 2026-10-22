@@ -24,11 +24,15 @@
 //!   [`AppShell::sync_layout`] 就地写给右侧面板与右分隔条。
 //! - 命令面板浮在最上层，快捷键经 `palette_gpui::hotkey_from_keystroke` 转换后
 //!   交给 [`crate::ui::command_palette::handle_hotkey`]。
-//! - 组织视图**不进主界面**，但通过 [`secondary_views`] 编译进二进制。
+//! - 组织视图挂在主界面（e38，见下）。
 //!
 //! e35 环境管理挂主界面（对齐 A17）：侧栏新增「环境」入口 ⇒ 主区切到
-//! [`EnvViewGpui`]（`MainView::Environments`）。⛔ 组织视图仍未挂（留给后续卡）。
+//! [`EnvViewGpui`]（`MainView::Environments`）。
 //! ⚠️ 环境列表当前是**演示数据**（`EnvViewGpui::demo()`）⇒ 真实来源在运行时侧。
+//!
+//! e38 组织与权限可见性挂主界面（对齐 A18）：侧栏新增「组织」入口 ⇒ 主区切到
+//! [`OrgViewGpui`]（`MainView::Organization`）。
+//! ⚠️ 组织清单当前是**演示数据**（[`demo::demo_org_view`]）⇒ 真实来源在运行时侧。
 //!
 //! e14 发送回显（**界面层本地回显，不投递**）：
 //! - 输入区发送时把 `OutgoingInput` 入自己的 `outbox` 并 `notify()`；根视图**只读消费**
@@ -91,6 +95,7 @@ use crate::ui::input_gpui::InputAreaGpui;
 use crate::ui::layout::WorkbenchLayout;
 use crate::ui::layout_gpui::{DividerGpui, DividerSide, RightPanelTabGpui};
 use crate::ui::main_view;
+use crate::ui::org_gpui::OrgViewGpui;
 use crate::ui::palette_gpui::{self, CommandPaletteGpui};
 use crate::ui::right_panel_gpui::RightPanelGpui;
 use crate::ui::session_gpui::SessionStreamGpui;
@@ -100,7 +105,7 @@ const SETTINGS_COMMAND_ID: &str = "app.settings";
 use crate::ui::sidebar_gpui::{self, SidebarViewGpui};
 use crate::ui::terminal_gpui::TerminalDrawerGpui;
 
-use demo::default_registry;
+use demo::{default_registry, demo_org_view};
 use launch::open_settings_window;
 
 /// 宿主交给设置窗口的**状态快照**（纯数据，可无窗口测）。
@@ -154,9 +159,15 @@ struct AppShell {
     /// ⚠️ 条目内容当前是 [`EnvViewGpui::demo`] 的**演示数据** ——
     /// 真实环境列表在运行时侧，界面层拿不到。
     env_view: Entity<EnvViewGpui>,
+    /// 组织与权限可见性视图（A 域，e38）：由侧栏「组织」入口切到主区。
+    ///
+    /// ⚠️ 条目内容当前是 [`demo::demo_org_view`] 的**演示数据** ——
+    /// 真实组织清单在运行时侧，界面层拿不到。
+    org_view: Entity<OrgViewGpui>,
     /// 子视图 `notify()` 时回调：把版式变化下发到右侧面板与右分隔条。
     _layout_sync: Vec<Subscription>,
-    /// 侧栏导航入口变化的订阅：主区据此切换显示会话流 / 频道 / 智能体管理 / 环境。
+    /// 侧栏导航入口变化的订阅：主区据此切换显示会话流 / 频道 / 智能体管理 / 环境 /
+    /// 组织。
     _nav_sync: Vec<Subscription>,
     /// 终端抽屉变化的订阅：消费「运行 / 中断」意图 + 让根视图重排。
     _terminal_sync: Vec<Subscription>,
@@ -219,6 +230,9 @@ impl AppShell {
         // 浏览器环境管理视图（B 域，e35）：侧栏「环境」入口 ⇒ 主区切到它。
         // ⚠️ 条目是**演示数据**（真实环境列表在运行时侧，界面层拿不到）。
         let env_view = cx.new(|_| EnvViewGpui::demo());
+        // 组织与权限可见性视图（A 域，e38）：侧栏「组织」入口 ⇒ 主区切到它。
+        // ⚠️ 条目是**演示数据**（真实组织清单在运行时侧，界面层拿不到）。
+        let org_view = cx.new(|_| demo_org_view());
 
         // 任一分隔条或 tab 条 `notify()` ⇒ 把左侧（唯一来源）的版式下发到下游。
         // 分隔条自身的 `notify()` 只重绘自己；根视图的三区宽度在渲染时读回，
@@ -303,6 +317,7 @@ impl AppShell {
             tab_strip,
             terminal_drawer,
             env_view,
+            org_view,
             _layout_sync,
             _session_sync,
             _nav_sync,
@@ -434,8 +449,13 @@ impl Render for AppShell {
         // 中间主区：按侧栏选中的导航入口切换显示哪一块。
         // ⛔ 频道 / 智能体管理**只显示占位说明**（数据源在运行时侧，本仓不实现）。
         // ✅ 环境管理是**真实视图**（演示数据），点侧栏「环境」入口即切过去。
-        let stream =
-            main_area::render_main_area(self.main_view, &self.session, &self.env_view, theme);
+        let stream = main_area::render_main_area(
+            self.main_view,
+            &self.session,
+            &self.env_view,
+            &self.org_view,
+            theme,
+        );
 
         // 右侧面板：上方是 tab 条（点击切换面板内容），下方是面板本身。
         // 同 sidebar：必须 `flex_none()`，否则拖拽改的宽度会被 flex 收缩吞掉。
