@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 use gpui_kit::*;
 
+use crate::state::env_group::EnvGroupState;
+use crate::state::hotkeys::Binding;
 use crate::ui::settings_gpui::view::ThemeChoice;
 use crate::ui::settings_gpui::SettingsGpui;
 
@@ -17,7 +19,11 @@ use super::AppShell;
 /// 打开设置窗口（`app.settings` 命令派发时调用）。
 ///
 /// ⛔ 失败不 panic：开窗失败（无显示服务器等）时静默返回，主界面不受影响。
-pub(super) fn open_settings_window(cx: &mut App) {
+///
+/// `data` / `bindings` 是**宿主当下的真实状态快照**（只读克隆）⇒ 设置窗口的
+/// 「数据管理」「个性化」面板因此**有内容可看**，而不是永远空列表
+/// （`with_data` / `with_bindings` 在此第一次有生产调用者）。
+pub(super) fn open_settings_window(cx: &mut App, data: EnvGroupState, bindings: Vec<Binding>) {
     let options = WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(SETTINGS_WINDOW_TITLE.into()),
@@ -26,7 +32,9 @@ pub(super) fn open_settings_window(cx: &mut App) {
         ..Default::default()
     };
     // `gpui_kit::open_window` 返回 `Result` ⇒ 失败就放弃这次开窗。
-    let _ = gpui_kit::open_window(options, cx, |_window, cx| cx.new(SettingsGpui::new));
+    let _ = gpui_kit::open_window(options, cx, |_window, cx| {
+        cx.new(|cx| SettingsGpui::with_data_and_bindings(cx, data, bindings))
+    });
 }
 
 /// 系统窗口标题。
