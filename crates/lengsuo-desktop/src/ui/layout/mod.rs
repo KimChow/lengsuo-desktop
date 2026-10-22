@@ -49,6 +49,8 @@ pub const RIGHT_PANEL_MIN_WIDTH: f32 = 240.0;
 pub const RIGHT_PANEL_MAX_WIDTH: f32 = 560.0;
 /// 右侧面板折叠后的窄条宽度：只保留 tab 入口。
 pub const RIGHT_PANEL_COLLAPSED_WIDTH: f32 = 44.0;
+/// 边栏折叠态的占位宽度（逻辑像素）—— 与 [`RIGHT_PANEL_COLLAPSED_WIDTH`] 对称。
+pub const SIDEBAR_COLLAPSED_WIDTH: f32 = 44.0;
 
 /// 输入区占位文案（多行输入）。
 pub const INPUT_PLACEHOLDER: &str = "输入消息，可换行；Enter 发送，Shift+Enter 换行";
@@ -97,16 +99,18 @@ impl RightPanelTab {
     }
 }
 
-/// 边栏版式状态：只有宽度（当前卡的折叠项在右侧面板）。
+/// 边栏版式状态：宽度 + 折叠。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SidebarLayout {
     width: f32,
+    collapsed: bool,
 }
 
 impl Default for SidebarLayout {
     fn default() -> Self {
         Self {
             width: SIDEBAR_DEFAULT_WIDTH,
+            collapsed: false,
         }
     }
 }
@@ -117,9 +121,25 @@ impl SidebarLayout {
         Self::default()
     }
 
+    /// 展开态宽度（折叠时仍保留，用于展开后恢复）。
     #[must_use]
     pub fn width(&self) -> f32 {
         self.width
+    }
+
+    /// 当前实际占位宽度：折叠时为窄条宽度。
+    #[must_use]
+    pub fn effective_width(&self) -> f32 {
+        if self.collapsed {
+            SIDEBAR_COLLAPSED_WIDTH
+        } else {
+            self.width
+        }
+    }
+
+    #[must_use]
+    pub fn is_collapsed(&self) -> bool {
+        self.collapsed
     }
 
     /// 设置宽度并夹到 [`SIDEBAR_MIN_WIDTH`, `SIDEBAR_MAX_WIDTH`]。
@@ -130,9 +150,23 @@ impl SidebarLayout {
         }
     }
 
-    /// 按增量调整宽度（拖拽分隔条）。
+    /// 按增量调整宽度（拖拽分隔条）。折叠态下不调整（窄条不可拖拽），也不自动展开。
     pub fn resize_by(&mut self, delta: f32) {
-        self.set_width(self.width + delta);
+        if !self.collapsed {
+            self.set_width(self.width + delta);
+        }
+    }
+
+    pub fn collapse(&mut self) {
+        self.collapsed = true;
+    }
+
+    pub fn expand(&mut self) {
+        self.collapsed = false;
+    }
+
+    pub fn toggle_collapsed(&mut self) {
+        self.collapsed = !self.collapsed;
     }
 }
 
@@ -288,7 +322,13 @@ impl WorkbenchLayout {
     /// 宽度**一律经 `set_width` 落地** ⇒ 越界值自动被夹到合法区间、非有限值被忽略
     /// ⇒ 描述层仍是**夹取逻辑的唯一实现处**。tab 选中态**不在**偏好里 ⇒ 不动它。
     pub fn apply_prefs(&mut self, prefs: LayoutPrefs) {
-        self.sidebar.set_width(prefs.sidebar_width);
+        let sidebar = &mut self.sidebar;
+        sidebar.set_width(prefs.sidebar_width);
+        if prefs.sidebar_collapsed {
+            sidebar.collapse();
+        } else {
+            sidebar.expand();
+        }
         let panel = &mut self.right_panel;
         panel.set_width(prefs.right_width);
         if prefs.right_collapsed {
@@ -303,6 +343,7 @@ impl WorkbenchLayout {
     pub fn export_prefs(&self) -> LayoutPrefs {
         LayoutPrefs {
             sidebar_width: self.sidebar.width(),
+            sidebar_collapsed: self.sidebar.is_collapsed(),
             right_width: self.right_panel.width(),
             right_collapsed: self.right_panel.is_collapsed(),
         }
@@ -314,7 +355,7 @@ impl WorkbenchLayout {
     /// （宁可整体横向溢出，也不把会话流压到不可用）。
     #[must_use]
     pub fn regions(&self, available_width: f32) -> RegionWidths {
-        let sidebar = self.sidebar.width();
+        let sidebar = self.sidebar.effective_width();
         let right_panel = self.right_panel.effective_width();
         let stream = (available_width - sidebar - right_panel).max(STREAM_MIN_WIDTH);
         RegionWidths {

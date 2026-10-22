@@ -70,6 +70,7 @@ mod demo;
 mod launch;
 mod main_area;
 pub(crate) mod prefs_file;
+mod sidebar_collapse;
 mod sync;
 #[cfg(test)]
 mod sync_tests;
@@ -285,6 +286,10 @@ impl AppShell {
         // ⚠️ **必须 observe**：侧栏自己的 `cx.notify()` 只重绘侧栏，
         // 根视图不 observe 就不会重渲染 ⇒ 点了「频道」主区纹丝不动。
         let _nav_sync = vec![cx.observe(&sidebar, |shell: &mut Self, _, cx| {
+            // 先**回收**折叠态（子视图 → 权威），再下发（权威 → 下游）；
+            // 顺序反了会把刚点出来的折叠态覆盖回去（与右栏 tab 条同一教训）。
+            shell.adopt_sidebar(cx);
+            shell.sync_layout(cx);
             shell.sync_main_view(cx);
         })];
 
@@ -446,8 +451,13 @@ impl Render for AppShell {
         // 把实际宽度**下发给侧栏视图**：它此前写死 `SIDEBAR_DEFAULT_WIDTH` 渲染
         // 自身内容，导致拖动后内容仍按 260 画（2026-10-21 真机实测）。
         // 必须在 `cx.theme()` 之前做（那里开始借用 `cx`）。
-        self.sidebar
-            .update(cx, |view, _| view.set_width(widths.sidebar));
+        // 同时下发折叠态：第一帧就要按水合后的偏好渲染（否则权威版式只留 44px，
+        // 侧栏却画成展开态）。
+        let sidebar_collapsed = self.left_divider.read(cx).layout().sidebar().is_collapsed();
+        self.sidebar.update(cx, |view, _| {
+            view.set_width(widths.sidebar);
+            view.set_collapsed(sidebar_collapsed);
+        });
 
         let theme = cx.theme();
         // 左侧边栏：宽度来自分隔条持有的版式（默认 260px，可拖拽）。
