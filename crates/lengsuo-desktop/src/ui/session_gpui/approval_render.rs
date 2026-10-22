@@ -20,9 +20,10 @@ pub(super) fn render_approval(card: &ApprovalCardView, ctx: &BlockCtx<'_>) -> An
     let status = div().text_xs();
     let status = match (card.pending, choice) {
         (true, None) => status.text_color(theme.muted_foreground).child("等待决策"),
-        (true, Some(action)) => status
-            .text_color(theme.warning)
-            .child(format!("已在界面选择：{}（尚未生效）", action.label())),
+        (true, Some(action)) => status.text_color(theme.warning).child(format!(
+            "已选：{}（已提交意图，等待运行时确认）",
+            action.label()
+        )),
         (false, _) => status.text_color(theme.muted_foreground).child("已决策"),
     };
 
@@ -98,6 +99,8 @@ pub(super) fn render_approval_button(
             // 点击只产出**意图**并记本地态：不判定权限、不落盘、不放宽任何可见性。
             // 工具名缺失时作用域为 Unknown（fail-closed），交由运行时保守处理。
             let request = ApprovalRequest::tool_scoped(Some(&approval_id), tool.as_deref(), action);
+            // 意图由 `record_intent` 存入 `approval_intent`，宿主经
+            // `take_approval_intent()` 取走；这里不执行、不放行。
             let _intent = view.record_intent(&request);
         },
     )

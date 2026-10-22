@@ -7,6 +7,7 @@
 mod tests {
     // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
     // `test` 属性宏带进来并遮蔽标准库的 `#[test]`，导致测试无法编译。
+    use super::super::approval_intent::ApprovalRequest;
     use super::super::diff_lines::{classify, DiffLineKind};
     use super::super::render_block_with;
     use super::super::{ApprovalAction, BlockCtx, SessionStreamGpui, SessionUiState};
@@ -55,6 +56,57 @@ mod tests {
             view.state().approvals()[0].resolved,
             None,
             "本地选择不得伪造审批决策"
+        );
+    }
+
+    #[test]
+    fn approval_intent_reaches_host_and_is_one_shot() {
+        let mut state = SessionStreamState::new();
+        state.push_approval(PendingApproval {
+            id: "a1".into(),
+            tool: "Bash".into(),
+            summary: "rm -rf build".into(),
+            resolved: None,
+        });
+        let mut view = SessionStreamGpui::new(state);
+        assert!(view.approval_intent().is_none(), "未点击时不得有意图");
+        let request =
+            ApprovalRequest::tool_scoped(Some("a1"), Some("Bash"), ApprovalAction::AlwaysAllow);
+        let _ = view.record_intent(&request);
+        let intent = view.approval_intent().expect("点击后必须能取到意图");
+        assert_eq!(intent.action, ApprovalAction::AlwaysAllow);
+        assert_eq!(intent.approval_id, "a1");
+        assert_eq!(intent.tool.as_deref(), Some("Bash"));
+        let snapshot = intent.clone();
+        let taken = view.take_approval_intent().expect("take 必须拿到");
+        assert_eq!(taken, snapshot);
+        assert!(
+            view.approval_intent().is_none(),
+            "take 之后必须为空（一次性投递）"
+        );
+    }
+
+    #[test]
+    fn plain_allow_reaches_host_with_unknown_scope_and_still_does_not_resolve() {
+        let mut state = SessionStreamState::new();
+        state.push_approval(PendingApproval {
+            id: "a1".into(),
+            tool: "Bash".into(),
+            summary: "rm -rf build".into(),
+            resolved: None,
+        });
+        let mut view = SessionStreamGpui::new(state);
+        let request = ApprovalRequest::tool_scoped(Some("a1"), Some("Bash"), ApprovalAction::Allow);
+        let _ = view.record_intent(&request);
+        let intent = view.approval_intent().expect("Allow 也必须交给宿主");
+        assert!(
+            intent.scope.is_unknown(),
+            "非「总是允许」不构成策略，作用域必须是 Unknown"
+        );
+        assert_eq!(
+            view.state().approvals()[0].resolved,
+            None,
+            "界面仍不得伪造审批决策"
         );
     }
 

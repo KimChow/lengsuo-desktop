@@ -11,6 +11,9 @@
 //! 硬约束：
 //! - 审批卡**渲染只读**：按钮点击只改局部界面态（[`SessionUiState`]），
 //!   **绝不**调用 `resolve_approval`；未决策就显示「等待决策」，不得默认放行。
+//!   点击产出的意图经 [`SessionStreamGpui::approval_intent`]（只读）/
+//!   [`SessionStreamGpui::take_approval_intent`]（一次性投递）交给宿主转运行时；
+//!   界面本身不执行它。
 //! - 断档提示必须显眼（描述层保证它排在首块）。
 //! - 颜色一律取自 `cx.theme()`，不硬编码。
 
@@ -66,7 +69,7 @@ pub(super) const FILE_CARD_W: f32 = 180.0;
 /// 会话流的**局部界面态**：折叠 / 选中 / 审批按钮的本地选择。
 ///
 /// 这些都是**界面态**，不写回 [`SessionStreamState`]：审批的真正决策仍要走
-/// `resolve_approval`（本卡不接）。
+/// `resolve_approval`（本视图不接；意图由宿主经 `take_approval_intent()` 取走）。
 #[derive(Debug, Clone, Default)]
 pub struct SessionUiState {
     /// 审批按钮的本地选择（键为审批 id）。
@@ -80,6 +83,11 @@ pub struct SessionUiState {
     pub always_allow_scope: approval_intent::AlwaysAllowMap,
     /// 选过「总是允许」的**本审批 id**（键为审批 id）；只用于该卡重绘后回显选中态。
     pub always_choice: HashMap<String, ApprovalAction>,
+    /// 最近一次审批点击产出的**意图**（只留最近一次，不累积）。
+    ///
+    /// 供宿主经 [`SessionStreamGpui::approval_intent`] / [`SessionStreamGpui::take_approval_intent`]
+    /// 取走并转交运行时。界面**不执行**它：不调 `resolve_approval`、不放行、不落盘。
+    pub approval_intent: Option<approval_intent::ApprovalIntent>,
     /// 工具卡片的折叠态（键为**消息 id**，见 [`tool_fold::tool_call_id`]）。
     ///
     /// 只在内存、只在界面层；**不落盘**（重启回到默认折叠）。
@@ -134,6 +142,9 @@ impl SessionUiState {
         request: &approval_intent::ApprovalRequest<'_>,
     ) -> approval_intent::ApprovalIntent {
         let intent = approval_intent::ApprovalIntent::from_request(request);
+        // ★ 关键：无论能否记入本地作用域表，意图本身都要交给宿主。
+        //   作用域是否 Unknown 由运行时按最保守方式判定，界面不替它决定。
+        self.approval_intent = Some(intent.clone());
         let Some(id) = request
             .approval_id
             .map(str::trim)
@@ -152,6 +163,19 @@ impl SessionUiState {
             self.choose_approval(id, request.action);
         }
         intent
+    }
+
+    /// 最近一次审批点击的**意图**（没点过时是 `None`）。
+    ///
+    /// 只读；宿主可反复读（便于复核与重放）。
+    #[must_use]
+    pub fn approval_intent(&self) -> Option<&approval_intent::ApprovalIntent> {
+        self.approval_intent.as_ref()
+    }
+
+    /// **取走**最近一次审批意图（一次性投递：取走后变 `None`，避免重复投递）。
+    pub fn take_approval_intent(&mut self) -> Option<approval_intent::ApprovalIntent> {
+        self.approval_intent.take()
     }
 
     /// 本地选中的文件路径。
@@ -253,6 +277,19 @@ impl SessionStreamGpui {
         request: &approval_intent::ApprovalRequest<'_>,
     ) -> approval_intent::ApprovalIntent {
         self.ui.record_intent(request)
+    }
+
+    /// 最近一次审批点击的**意图**（只读；宿主据此转交运行时）。
+    ///
+    /// ⛔ 界面不执行它：不调 `resolve_approval`、不放行、不落盘。
+    #[must_use]
+    pub fn approval_intent(&self) -> Option<&approval_intent::ApprovalIntent> {
+        self.ui.approval_intent()
+    }
+
+    /// **取走**最近一次审批意图（一次性投递）。
+    pub fn take_approval_intent(&mut self) -> Option<approval_intent::ApprovalIntent> {
+        self.ui.take_approval_intent()
     }
 }
 
