@@ -2,11 +2,13 @@
 //!
 //! 数据全部来自 [`crate::state`]，根视图不持有业务语义。
 
+use std::rc::Rc;
+
 use crate::state::hotkeys::{Binding, HotkeyRegistry};
 use crate::state::org_perm::CapabilityFlags;
 use crate::state::session_stream::SessionStreamState;
 use crate::ui::env_gpui::EnvViewGpui;
-use crate::ui::org_gpui::OrgViewGpui;
+use crate::ui::org_gpui::{OrgActionDispatcher, OrgViewGpui};
 use crate::ui::org_view::OrgViewState;
 
 /// 演示用会话流：五类工具调用 + 一个挂起审批，**不接真实数据源**。
@@ -49,6 +51,13 @@ pub fn secondary_views() -> (EnvViewGpui, OrgViewGpui) {
 /// 字段名对齐描述层 [`OrgViewState`]（`member_rows` / `role_rows` /
 /// `department_rows` 的取值规则），⛔ 不另造一套。
 #[must_use]
+/// 组织视图操作意图的默认分发器：运行时未接入时，**诚实地只记日志**，不猜、不兜底。
+fn org_action_dispatcher() -> OrgActionDispatcher {
+    Rc::new(|action| {
+        eprintln!("[lengsuo-desktop] 组织视图意图（运行时未接入，仅日志记录）：{action:?}");
+    })
+}
+
 pub fn demo_org_view() -> OrgViewGpui {
     use serde_json::json;
 
@@ -65,5 +74,5 @@ pub fn demo_org_view() -> OrgViewGpui {
         json!({"id": "r1", "name": "管理员", "preset_key": "admin", "is_builtin": true}),
         json!({"id": "r2", "name": "AI 助手", "preset_key": "ai_assistant", "is_ai_assistant": true}),
     ]);
-    OrgViewGpui::new(state)
+    OrgViewGpui::with_dispatcher(state, org_action_dispatcher())
 }
