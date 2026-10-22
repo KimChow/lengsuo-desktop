@@ -29,7 +29,7 @@ use gpui_kit::*;
 
 use crate::state::file_intent::FileIntent;
 use crate::state::session_stream::SessionStreamState;
-use crate::ui::approval_card::ApprovalCardView;
+use crate::ui::approval_card::{ApprovalAction, ApprovalCardView};
 use crate::ui::layout::RightPanelLayout;
 use crate::ui::right_panel::{self, PreviewContent, RightPanelContent};
 
@@ -39,6 +39,22 @@ use tabs::{render_tab_button, render_toggle, tab_entries};
 pub const EXPAND_LABEL: &str = "展";
 /// 展开态的折叠按钮文案。
 pub const COLLAPSE_LABEL: &str = "收起";
+
+/// 右栏内产生、**尚未回写**到权威会话流的审批决策。
+///
+/// 右栏只持有会话流的**副本**，`approval_card::decide` 只改这份副本；
+/// 真正的权威状态在会话流里。所以右栏把「用户点了什么」排进本队列，
+/// 由宿主（`AppShell`）逐条取走并写入会话流（缺口 G1 的收敛）。
+///
+/// 与输入区的 `InputAreaGpui::take_pending` 同形：**队列归生产者所有**，
+/// 宿主只读消费，不自建第二份队列。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDecision {
+    /// 被决策的审批项 id。
+    pub approval_id: String,
+    /// 用户点的动作。
+    pub action: ApprovalAction,
+}
 
 /// 右侧面板的 GPUI 视图。
 ///
@@ -52,6 +68,8 @@ pub struct RightPanelGpui {
     session: SessionStreamState,
     /// 当前要预览的文件（由宿主从会话流的跳转意图下发）。
     preview_intent: Option<FileIntent>,
+    /// 待回写的审批决策（右栏只记意图，回写由宿主负责）。
+    decisions: Vec<PendingDecision>,
 }
 
 impl RightPanelGpui {
@@ -62,6 +80,7 @@ impl RightPanelGpui {
             layout,
             session,
             preview_intent: None,
+            decisions: Vec::new(),
         }
     }
 
@@ -102,6 +121,28 @@ impl RightPanelGpui {
     /// 写入预览意图（宿主下发）。
     pub fn set_preview_intent(&mut self, intent: Option<FileIntent>) {
         self.preview_intent = intent;
+    }
+
+    /// 记一条待回写的审批决策（由 `approvals` 的点击处理调用）。
+    pub fn push_decision(&mut self, approval_id: String, action: ApprovalAction) {
+        self.decisions.push(PendingDecision {
+            approval_id,
+            action,
+        });
+    }
+
+    /// 取走最早的一条待回写决策（宿主消费入口，FIFO）。
+    pub fn take_decision(&mut self) -> Option<PendingDecision> {
+        if self.decisions.is_empty() {
+            return None;
+        }
+        Some(self.decisions.remove(0))
+    }
+
+    /// 待回写决策队列（只读，供调试与测试）。
+    #[must_use]
+    pub fn pending_decisions(&self) -> &[PendingDecision] {
+        &self.decisions
     }
 }
 

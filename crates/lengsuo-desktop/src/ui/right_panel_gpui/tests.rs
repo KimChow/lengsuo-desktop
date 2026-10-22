@@ -153,3 +153,42 @@ fn preview_intent_round_trips_through_the_panel() {
     panel.set_preview_intent(None);
     assert_eq!(panel.preview_intent(), None);
 }
+
+#[test]
+fn push_take_decision_is_fifo() {
+    let mut panel = RightPanelGpui::from_state(&approvals_layout(), &session_with_approval());
+    panel.push_decision("a1".into(), ApprovalAction::Allow);
+    panel.push_decision("a2".into(), ApprovalAction::Deny);
+
+    let first = panel.take_decision().expect("应取出第一条");
+    assert_eq!(first.approval_id, "a1");
+    assert_eq!(first.action, ApprovalAction::Allow);
+
+    let second = panel.take_decision().expect("应取出第二条");
+    assert_eq!(second.approval_id, "a2");
+    assert_eq!(second.action, ApprovalAction::Deny);
+
+    assert_eq!(panel.take_decision(), None, "队列取空后应返回 None");
+}
+
+#[test]
+fn take_decision_on_empty_queue_returns_none() {
+    let mut panel = RightPanelGpui::from_state(&approvals_layout(), &session_with_approval());
+    assert_eq!(panel.take_decision(), None);
+    assert!(panel.pending_decisions().is_empty());
+}
+
+#[test]
+fn push_decision_does_not_touch_preview_intent() {
+    let mut panel = RightPanelGpui::from_state(&approvals_layout(), &session_with_approval());
+    let intent = FileIntent::new("src/main.rs", FileIntentSource::FileCard);
+    panel.set_preview_intent(Some(intent.clone()));
+
+    panel.push_decision("a1".into(), ApprovalAction::Allow);
+
+    assert_eq!(
+        panel.preview_intent(),
+        Some(&intent),
+        "记决策不得影响预览意图（防 e29 回归）"
+    );
+}
