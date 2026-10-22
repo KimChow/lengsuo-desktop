@@ -9,7 +9,7 @@
 //!   （`System` / `Light` / `Dark`）；本层只做「取值 ↔ 语义层」的映射，
 //!   「解析成亮/暗并应用到渲染层」由接线层负责。
 //! - 面板**只有导航与占位内容**：除「外观」「安全中心」「个性化」「系统权限」
-//!   「数据管理」「账号」外的 9 个面板功能尚未实现，详见
+//!   「数据管理」「账号」「帮助与反馈」外的 8 个面板功能尚未实现，详见
 //!   `docs/settings-window-status.md`。
 //! - 「安全中心」的能力位展示**只读**服务端下发的 `can_*` 标记：
 //!   ⛔ 本层**不做授权推理**，只把服务端结果映射成展示文案。
@@ -17,8 +17,11 @@
 //!   ⛔ 不提供改键入口（改键需持久化 + 冲突裁决，不在本卡范围）。
 //! - 「账号」的成员清单**只读**：展示服务端下发的组织域列表，
 //!   ⛔ 不提供增删改、不做授权推理。
+//! - 「帮助与反馈」**只读**展示版本 / 快捷键 / 命令表（本仓已有数据），
+//!   ⛔ 不实现反馈提交与网络检查（要网络与运行时）。
 
 mod data;
+mod help;
 mod hotkeys;
 mod org;
 mod permissions;
@@ -27,6 +30,7 @@ pub use self::data::{
     data_panel_body, data_summary, empty_state_text, group_display_name, DataPanelBody,
     DataSummary, GROUP_NAME_PLACEHOLDER,
 };
+pub use self::help::{help_body, CommandRow, HelpContent, HelpPanelBody, HelpStatus, ShortcutRow};
 pub use self::hotkeys::{
     command_label, format_hotkey, hotkey_panel, HotkeyPanel, HotkeyRow, EMPTY_BINDINGS_TEXT,
     UNKNOWN_COMMAND_LABEL,
