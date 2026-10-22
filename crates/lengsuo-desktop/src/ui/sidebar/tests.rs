@@ -287,3 +287,18 @@ fn selecting_the_environment_entry_marks_only_it() {
         .collect();
     assert_eq!(selected, [NavKind::Environments]);
 }
+
+#[test]
+fn clear_nav_returns_to_sessions_and_is_idempotent() {
+    use crate::ui::main_view::{resolve, MainView};
+    use crate::ui::sidebar_gpui::demo_state;
+
+    let mut state = demo_state();
+    assert!(state.select_nav(NavKind::Channels));
+    assert_eq!(resolve(state.selected_nav()), MainView::Channels);
+
+    assert!(state.clear_nav(), "有选中时清空必须报告变化");
+    assert_eq!(state.selected_nav(), None);
+    assert_eq!(resolve(state.selected_nav()), MainView::Sessions);
+    assert!(!state.clear_nav(), "已经空时再清必须是幂等的 false");
+}
