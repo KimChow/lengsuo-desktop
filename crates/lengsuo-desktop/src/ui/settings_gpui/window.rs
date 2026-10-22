@@ -26,6 +26,7 @@ use crate::state::org_perm::CapabilityFlags;
 use crate::ui::settings_gpui::view::{PanelId, SettingsView, ThemeChoice};
 
 use super::data_panel;
+use super::help_panel;
 use super::hotkey_panel;
 use super::nav;
 use super::org_panel;
@@ -202,7 +203,8 @@ impl Render for SettingsGpui {
         let sidebar = nav::render_sidebar(&self.view, &theme, cx);
 
         // 右栏：外观面板给三档主题；安全中心给能力位只读清单；
-        // 个性化给快捷键只读清单；账号给成员只读清单；其余面板给占位文案。
+        // 个性化给快捷键只读清单；账号给成员只读清单；
+        // 帮助与反馈给版本 / 快捷键 / 命令表只读清单；其余面板给占位文案。
         let content: AnyElement = match self.view.selected {
             PanelId::Account => org_panel::render_org_panel(&self.org, &theme, cx),
             PanelId::Appearance => theme_panel::render_theme_picker(&self.view, &theme, cx),
@@ -214,6 +216,7 @@ impl Render for SettingsGpui {
                 system_perm_panel::render_system_perm_panel(&self.flags, &theme, cx)
             }
             PanelId::DataManagement => data_panel::render_data_panel(&self.data, &theme, cx),
+            PanelId::Help => help_panel::render_help_panel(&self.bindings, &theme, cx),
             _ => div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
