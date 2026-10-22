@@ -129,6 +129,25 @@ impl SettingsGpui {
         }
     }
 
+    /// 带环境分组状态**与**快捷键绑定构造（宿主用）。
+    ///
+    /// ⛔ **为什么不能链式调用** `with_data(..).with_bindings(..)`：上面每个
+    /// `with_*` 都用 `..Self::new(cx)` 展开剩余字段 ⇒ 后一个构造器会把前一个
+    /// 已经注入的字段**重置回默认值**（`data` 变回空清单、`bindings` 变回内置表）。
+    /// ⇒ 要同时带两份数据，必须走这一个构造器。
+    #[must_use]
+    pub fn with_data_and_bindings(
+        cx: &mut Context<Self>,
+        data: EnvGroupState,
+        bindings: Vec<Binding>,
+    ) -> Self {
+        Self {
+            data,
+            bindings,
+            ..Self::new(cx)
+        }
+    }
+
     /// 当前视图（只读）：宿主与测试读它。
     #[must_use]
     pub fn view(&self) -> &SettingsView {
@@ -294,5 +313,34 @@ impl Render for SettingsGpui {
                     ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // 显式列出符号（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 的
+    // `test` 属性宏带进来并遮蔽标准库的 `#[test]`。
+    use crate::state::env_group::EnvGroupState;
+    use serde_json::json;
+
+    /// 注入设置窗口的环境状态必须**带着宿主给的条目**（宿主 ⇄ 「数据管理」面板
+    /// 之间的数据契约）。
+    ///
+    /// ⛔ `SettingsGpui::with_data` 需要 `&mut Context<Self>` ⇒ **无窗口环境
+    /// 造不出视图** ⇒ 这里只断言**状态层**的注入语义（条目的字段契约）；
+    /// 视图层的接线靠**编译 + 真机**验证（见 `docs/settings-window-status.md`）。
+    #[test]
+    fn injected_env_state_keeps_its_entries() {
+        let mut data = EnvGroupState::new();
+        data.apply_entries(vec![json!({"id": "e1", "name": "构建机 A"})]);
+
+        assert_eq!(data.raw_count(), 1, "注入的状态必须带着宿主给的条目");
+        let entry = &data.entries()[0];
+        assert_eq!(entry.id, "e1", "面板按 id 标识条目");
+        assert_eq!(
+            entry.name.as_deref(),
+            Some("构建机 A"),
+            "面板按 name 展示条目"
+        );
     }
 }

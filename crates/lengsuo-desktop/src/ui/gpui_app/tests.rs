@@ -5,6 +5,8 @@
 //! `test` 属性宏带进来并遮蔽标准库的 `#[test]`。
 #![cfg(test)]
 
+use crate::state::env_group::EnvGroupState;
+use crate::state::hotkeys::HotkeyRegistry;
 use crate::state::session_stream::{MessageRole, SessionMessage, SessionStreamState};
 use crate::ui::input_area::{InputAreaState, InputMode, OutgoingInput};
 use crate::ui::layout::{
@@ -12,9 +14,11 @@ use crate::ui::layout::{
     RIGHT_PANEL_DEFAULT_WIDTH, SIDEBAR_DEFAULT_WIDTH, STREAM_MIN_WIDTH,
 };
 use crate::ui::layout_gpui::{DividerDrag, DividerSide};
+use serde_json::json;
 
 use super::demo::{default_registry, demo_session, secondary_views};
 use super::launch::{has_display_server, HOTKEY_HINT, NO_DISPLAY_MESSAGE, WINDOW_TITLE};
+use super::settings_snapshot;
 use super::sync::{echo_message, next_echo_seq, regions_for, should_finish_send, tab_strip_layout};
 
 #[test]
@@ -162,6 +166,44 @@ fn headless_linux_has_no_display_server() {
 #[test]
 fn secondary_views_are_constructible() {
     let (_env, _org) = secondary_views();
+}
+
+// ---- e37：宿主把状态快照送进设置窗口 ----
+
+/// 宿主交给设置窗口的快照必须**真的带着宿主的状态**。
+///
+/// 这条断言锁住规格 A8 点名的缺口：「`with_data` / `with_bindings` 无调用者
+/// ⇒ 清单恒为空」——现在快照是唯一把宿主状态送进设置窗口的通道。
+#[test]
+fn settings_snapshot_carries_the_env_state_and_the_hotkeys() {
+    let mut env = EnvGroupState::new();
+    env.apply_entries(vec![json!({"id": "e1", "name": "构建机 A"})]);
+    let registry = HotkeyRegistry::with_defaults().expect("内置表不该冲突");
+
+    let snap = settings_snapshot(&env, &registry);
+
+    assert_eq!(snap.data.raw_count(), 1, "环境快照必须带着宿主的环境条目");
+    assert!(!snap.bindings.is_empty(), "快捷键快照必须带着内置绑定表");
+}
+
+/// 快照是**只读克隆**：宿主后续变化**不会**反映到已取好的快照
+/// ⇒ 已打开的设置窗口不会被宿主改写。
+#[test]
+fn settings_snapshot_is_a_read_only_copy() {
+    let mut env = EnvGroupState::new();
+    env.apply_entries(vec![json!({"id": "e1", "name": "构建机 A"})]);
+    let registry = HotkeyRegistry::with_defaults().expect("内置表不该冲突");
+
+    let snap = settings_snapshot(&env, &registry);
+
+    // 宿主侧后来又拉了一轮：条目从 1 条变成 2 条。
+    env.apply_entries(vec![
+        json!({"id": "e2", "name": "构建机 B"}),
+        json!({"id": "e3", "name": "构建机 C"}),
+    ]);
+
+    assert_eq!(env.raw_count(), 2, "宿主侧确实变了");
+    assert_eq!(snap.data.raw_count(), 1, "快照必须停在宿主取它那一刻的样子");
 }
 
 /// 一条已发出的输入（描述层 `submit` 的产物）。

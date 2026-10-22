@@ -81,7 +81,8 @@ use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
-use crate::state::hotkeys::HotkeyRegistry;
+use crate::state::env_group::EnvGroupState;
+use crate::state::hotkeys::{Binding, HotkeyRegistry};
 use crate::state::layout_prefs::LayoutPrefs;
 use crate::state::palette_state::search_state::real_items;
 use crate::ui::command_palette::{self, PaletteAction};
@@ -101,6 +102,31 @@ use crate::ui::terminal_gpui::TerminalDrawerGpui;
 
 use demo::default_registry;
 use launch::open_settings_window;
+
+/// 宿主交给设置窗口的**状态快照**（纯数据，可无窗口测）。
+///
+/// ⛔ **只读快照**：设置窗口拿到的是宿主当下的克隆，不是活引用 ⇒ 宿主后续变化
+/// **不会**反映到**已打开**的设置窗口。
+#[derive(Debug, Clone)]
+pub(super) struct SettingsSnapshot {
+    /// 浏览器环境分组状态（→「数据管理」面板）。
+    pub data: EnvGroupState,
+    /// 快捷键绑定（→「个性化」面板）。
+    pub bindings: Vec<Binding>,
+}
+
+/// 从宿主的两份状态取快照。
+///
+/// ⛔ **只读克隆**：设置窗口不与宿主共享状态 ⇒ 宿主后续变化**不会**反映到已开窗口。
+pub(super) fn settings_snapshot(
+    env_state: &EnvGroupState,
+    registry: &HotkeyRegistry,
+) -> SettingsSnapshot {
+    SettingsSnapshot {
+        data: env_state.clone(),
+        bindings: registry.bindings().to_vec(),
+    }
+}
 
 /// 工作台根视图：三区 + 输入区 + 命令面板浮层。
 ///
@@ -248,12 +274,21 @@ impl AppShell {
         // 回执带 `&mut Context<CommandPaletteGpui>`：开窗需要 `&mut App`，
         // 而 `Context` 实现了 `DerefMut<Target = App>` ⇒ `&mut **cx` 即 `&mut App`。
         // 其余命令 id 只上报意图：界面层不实现业务语义。
+        //
+        // ⚠️ 回调是 **`'static` 闭包** ⇒ 不能直接借用 `AppShell` 的字段 ⇒
+        // 这里先把宿主当下的状态**克隆成快照**，再 move 进闭包。
+        //
+        // ⚠️ `registry` 提成局部变量：原先它写在 `Self { … }` 的结构体字面量里，
+        // 闭包（在字面量之外）拿不到它。提成后结构体字段与快照用的是**同一个值**。
+        let registry = default_registry();
+        let snapshot = settings_snapshot(env_view.read(cx).state(), &registry);
+
         palette.update(cx, |view, _cx| {
-            view.set_on_execute(|id, panel_cx| {
+            view.set_on_execute(move |id, panel_cx| {
                 if id != SETTINGS_COMMAND_ID {
                     return;
                 }
-                open_settings_window(panel_cx);
+                open_settings_window(panel_cx, snapshot.data.clone(), snapshot.bindings.clone());
             });
         });
 
@@ -274,7 +309,7 @@ impl AppShell {
             _terminal_sync,
             pending_seq: None,
             main_view: main_view::MainView::Sessions,
-            registry: default_registry(),
+            registry,
             focus: cx.focus_handle(),
             // 刚落盘过（或刚水合过）的那份偏好：版式没变就不重复写文件。
             last_written: Some(hydrated),
