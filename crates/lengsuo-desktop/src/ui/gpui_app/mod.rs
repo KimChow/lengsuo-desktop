@@ -1,6 +1,6 @@
 //! 应用入口组装：把 e1–e7 的接线层拼成一个可运行的工作台。
 //!
-//! 布局（标题栏 + 三区 + 输入区）：
+//! 布局（标题栏 + 三区 + 输入区 + 底部终端抽屉）：
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────┐
@@ -10,7 +10,9 @@
 //! │          │                      │            │
 //! │          ├──────────────────────┴────────────┤
 //! │          │  InputAreaGpui（中右两列下方）       │
-//! └──────────┴───────────────────────────────────┘
+//! ├──────────┴───────────────────────────────────┤
+//! │ 终端抽屉（默认收起，点标题条展开）              │  ← A13
+//! └──────────────────────────────────────────────┘
 //! ```
 //!
 //! 分层约定（与 [`crate::ui::env_gpui`] 黄金范例一致）：
@@ -45,8 +47,14 @@
 //! [`main_area::render_main_area`] 换分支。⛔ 频道 / 智能体管理只显示**占位说明**
 //! （数据源在运行时侧，本仓不实现）。
 //!
+//! e32 底部终端抽屉（对齐 A13）：抽屉本体在 [`crate::ui::terminal_gpui`]，
+//! 根视图只做两件事 —— 把它挂在根渲染的最底部，以及经
+//! [`AppShell::sync_terminal_drawer`] 消费它登记的「运行 / 中断」意图。
+//! ⛔ 本仓**不 spawn 进程**、⛔ **不落盘**（抽屉状态只在内存里）。
+//!
 //! 文件划分：`demo.rs`（演示数据）、`launch.rs`（窗口启动）、`main_area.rs`（主区
 //! 三分支渲染）、`sync.rs`（纯函数 + 根视图的同步方法）、`prefs_file.rs`（偏好落盘）、
+//! `terminal_drawer.rs`（终端抽屉的宿主侧：意图消费 + 本地回显）、
 //! `tests.rs` / `sync_tests.rs`（单元测试）。
 #![cfg(feature = "ui")]
 
@@ -57,6 +65,7 @@ pub(crate) mod prefs_file;
 mod sync;
 #[cfg(test)]
 mod sync_tests;
+mod terminal_drawer;
 #[cfg(test)]
 mod tests;
 
@@ -83,6 +92,7 @@ use crate::ui::session_gpui::SessionStreamGpui;
 /// 打开设置窗口的命令 id（命令表 `theme::palette` 里的 `app.settings`）。
 const SETTINGS_COMMAND_ID: &str = "app.settings";
 use crate::ui::sidebar_gpui::{self, SidebarViewGpui};
+use crate::ui::terminal_gpui::TerminalDrawerGpui;
 
 use demo::default_registry;
 use launch::open_settings_window;
@@ -103,10 +113,17 @@ struct AppShell {
     right_divider: Entity<DividerGpui>,
     /// 右侧面板 tab 条：点 tab 改自身选中态，再经 [`AppShell::sync_layout`] 下发。
     tab_strip: Entity<RightPanelTabGpui>,
+    /// 底部终端抽屉（A13）：默认收起；点标题条展开 / 收起。
+    ///
+    /// ⛔ 抽屉状态**只在本视图内存里**（不落盘），⛔ 也不 spawn 进程：
+    /// 「运行 / 中断」只登记意图，由 [`AppShell::sync_terminal_drawer`] 消费。
+    terminal_drawer: Entity<TerminalDrawerGpui>,
     /// 子视图 `notify()` 时回调：把版式变化下发到右侧面板与右分隔条。
     _layout_sync: Vec<Subscription>,
     /// 侧栏导航入口变化的订阅：主区据此切换显示会话流 / 频道 / 智能体管理。
     _nav_sync: Vec<Subscription>,
+    /// 终端抽屉变化的订阅：消费「运行 / 中断」意图 + 让根视图重排。
+    _terminal_sync: Vec<Subscription>,
     /// 会话流 / 输入区变化的订阅（回显、解除等待态、审批与文件意图读取侧同步）。
     _session_sync: Vec<Subscription>,
     /// 已发出、尚未收到运行时确认的回显序号；`Some` 时才允许解除等待态。
@@ -161,6 +178,8 @@ impl AppShell {
         let right_divider =
             cx.new(|_| DividerGpui::with_layout(DividerSide::Right, layout.clone()));
         let tab_strip = cx.new(|_| RightPanelTabGpui::from_layout(layout.right_panel()));
+        // 底部终端抽屉：**默认收起**（对齐 13 册「底部抽屉式默认收起」）。
+        let terminal_drawer = cx.new(|_| TerminalDrawerGpui::new());
 
         // 任一分隔条或 tab 条 `notify()` ⇒ 把左侧（唯一来源）的版式下发到下游。
         // 分隔条自身的 `notify()` 只重绘自己；根视图的三区宽度在渲染时读回，
@@ -198,6 +217,12 @@ impl AppShell {
             cx.observe(&input, |shell: &mut Self, _, cx| shell.drain_outbox(cx)),
         ];
 
+        // 终端抽屉变化 ⇒ 消费「运行 / 中断」意图 + 让根视图重排
+        // （抽屉展开后高度变了，父级必须重算布局）。
+        let _terminal_sync = vec![cx.observe(&terminal_drawer, |shell: &mut Self, _, cx| {
+            shell.sync_terminal_drawer(cx);
+        })];
+
         // 侧栏导航入口变化 ⇒ 主区跟着切视图。
         // ⚠️ **必须 observe**：侧栏自己的 `cx.notify()` 只重绘侧栏，
         // 根视图不 observe 就不会重渲染 ⇒ 点了「频道」主区纹丝不动。
@@ -228,9 +253,11 @@ impl AppShell {
             left_divider,
             right_divider,
             tab_strip,
+            terminal_drawer,
             _layout_sync,
             _session_sync,
             _nav_sync,
+            _terminal_sync,
             pending_seq: None,
             main_view: main_view::MainView::Sessions,
             registry: default_registry(),
@@ -405,6 +432,12 @@ impl Render for AppShell {
                     .child(self.left_divider.clone())
                     .child(right_column),
             )
+            // 底部终端抽屉（默认收起 ⇒ 只占一条标题条）。
+            //
+            // ⚠️ **排在命令面板之前**：命令面板是整屏浮层（`absolute`），
+            // 画在**后**的子元素会盖在它上面 ⇒ 抽屉必须排在前面，
+            // 命令面板才真的「浮在最上层」（与上一行注释的意图一致）。
+            .child(self.terminal_drawer.clone())
             // 命令面板浮在最上层；关闭时它自己渲染为空元素。
             .child(self.palette.clone())
     }
