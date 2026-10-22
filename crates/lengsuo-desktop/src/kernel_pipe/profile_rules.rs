@@ -35,16 +35,25 @@
 ///
 /// 与内核侧 `kProfileBundleMaxBytes` 是同一个值。超限**截断**并计数：
 /// 一个 40 MB 的包不该让容器关不掉。配置只许调低，不许调高。
+///
+/// ⭐ 契约第 4.6.2 节把这条钉成 `33554432`，
+/// `tools/cross_repo_rules.py` 拿**契约当第三方**与两侧比较
+/// ⇒ 两侧的上限不再各写各的。
 pub const MAX_PACKAGE_BYTES: u64 = 32 * 1024 * 1024;
 
 /// 配置里的 `profile_sync` 段名。
 ///
 /// 与内核侧 `kProfileSyncConfigKey` 逐字节相同。
+/// （契约第 4.6.2 节，同样由跨仓守卫比较。）
 pub const PROFILE_SYNC_KEY: &str = "profile_sync";
 
 /// 永远不外带的两类文件（**地板**，不是偏好）。
 ///
 /// 与内核侧 `kForbiddenCookies` / `kForbiddenNetwork` 逐字节相同。
+///
+/// ⭐ **这一层是隐私地板**：契约第 4.6.2 节把两条模式与它们的
+/// **顺序**都钉死，跨仓守卫逐条比较 ⇒ 「Cookies / Network Cache
+/// 任何情况下都不带」是**两侧合起来的一条承诺**，不是两条各说各的。
 const FORBIDDEN: [&str; 2] = ["*Cookies*", "*Network*"];
 
 /// **地板**：这个路径**任何情况下都不外带**。
@@ -407,35 +416,52 @@ mod tests {
 
     // -- glob ---------------------------------------------------------------
 
+    /// ⭐ 契约第 4.6.3 节的 **glob 固定向量**，逐条照抄。
+    ///
+    /// 内核侧同一组在 `native/profile_bundle_test.cc` 的
+    /// `MatchGlob.MatchesThePatternsTheListsUse` 里。
+    /// `tools/cross_repo_rules.py` 把**两侧与契约**三方比较
+    /// ⇒ 一侧漏掉一条、多加一条、或结论相反，都会被抓到。
+    ///
+    /// ⚠️ `G04` 是这组里最重要的一条：它是**唯一**能暴露
+    /// 「大小写不敏感」的向量。内核侧此前**没有**这一条
+    /// ⇒ 若哪天内核的比较改成了不区分大小写，
+    /// **内核自己的测试会全绿**，而两侧算出的清单已经不同。
     #[test]
-    fn the_glob_matching_is_byte_wise_and_case_sensitive() {
-        assert!(match_glob("*History*", "Default/History/x"));
-        assert!(
-            !match_glob("*History*", "Default/history"),
-            "大小写敏感 ⇒ 不匹配"
-        );
-        assert!(match_glob("a?c", "abc"));
-        assert!(!match_glob("a?c", "ac"));
-        // `*` 跨 `/`（内核侧同一语义：`*` 匹配任意长度的字节串，`/` 也算）。
-        assert!(match_glob("*Local Storage*", "Default/Local Storage/x/y"));
-        assert!(match_glob("*.log", "a/b.log"));
-    }
-
-    #[test]
-    fn the_glob_agrees_with_the_kernel_side_cases() {
-        // 与内核侧 `MatchGlob.MatchesThePatternsTheListsUse` 同一组结论。
+    fn the_glob_matches_the_contract_fixed_vectors() {
         assert!(match_glob(
             "*Local Storage*",
             "Default/Local Storage/leveldb/0001.log"
         ));
         assert!(match_glob("*Local Storage*", "Local Storage"));
+        assert!(match_glob("*History*", "Default/History"));
+        assert!(
+            !match_glob("*History*", "Default/history"),
+            "大小写敏感 ⇒ 不匹配（G04）"
+        );
+        assert!(match_glob(
+            "*Extension State*",
+            "Default/Extension State/1.dat"
+        ));
+        assert!(match_glob("*Cache*", "Default/Cache/data_0"));
+        // 两条地板模式本身也由向量钉住。
+        assert!(match_glob("*Cookies*", "Default/Cookies"));
+        assert!(match_glob("*Network*", "Default/Network/Cookies"));
+        // 无星号模式只匹配自身。
         assert!(match_glob("History", "History"));
         assert!(!match_glob("History", "Default/History"));
+        // `?` 匹配恰好一个字节。
         assert!(match_glob("file?.dat", "file1.dat"));
         assert!(!match_glob("file?.dat", "file12.dat"));
+        assert!(match_glob("a?c", "abc"));
+        assert!(!match_glob("a?c", "ac"));
+        // 空模式只匹配空文本。
         assert!(match_glob("", ""));
         assert!(!match_glob("", "x"));
+        // `*` 匹配任意长度的字节串（含 `/`，含空串）。
         assert!(match_glob("*", ""));
         assert!(match_glob("*", "anything"));
+        assert!(match_glob("*.log", "a/b.log"));
+        assert!(match_glob("*History*", "Default/History/x"));
     }
 }
