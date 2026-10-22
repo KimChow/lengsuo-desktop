@@ -42,3 +42,8 @@ pub mod settings_gpui;
 pub mod sidebar_gpui;
 pub mod terminal;
 pub mod terminal_gpui;
+
+// === 接线层的无窗口渲染断言（e40-render-assert 卡） ===
+// 补上「只做编译验证、没有渲染验证」的缺口：真的跑一遍 layout + prepaint
+// + paint，断言目标元素确实渲染出来了。整模块 `cfg(test)` ⇒ 生产构建零成本。
+pub mod render_assert_tests;
