@@ -40,3 +40,5 @@ pub mod right_panel_gpui;
 pub mod session_gpui;
 pub mod settings_gpui;
 pub mod sidebar_gpui;
+pub mod terminal;
+pub mod terminal_gpui;

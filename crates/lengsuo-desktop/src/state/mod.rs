@@ -16,3 +16,4 @@ pub mod palette_state;
 pub mod prefs;
 pub mod session_demo;
 pub mod session_stream;
+pub mod terminal;
