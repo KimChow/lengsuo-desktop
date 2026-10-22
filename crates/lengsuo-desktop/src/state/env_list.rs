@@ -33,7 +33,7 @@ pub enum EnvStatus {
 }
 
 /// 环境列表视图状态。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvListViewState {
     entries: Vec<EnvEntry>,
     invalid: usize,
@@ -42,8 +42,28 @@ pub struct EnvListViewState {
     last_error: Option<String>,
 }
 
+impl Default for EnvListViewState {
+    /// 默认态 = **尚未拉取过** ⇒ `loading: true` ⇒ `status()` 返回 `Loading`。
+    ///
+    /// ⛔ **不能**用 `#[derive(Default)]`：`derive` 会把 `loading` 设成 `false`
+    /// ⇒ 状态落到 `Ready` ⇒ 一个**从未发过请求**的列表被报成「服务端返回了空集」
+    /// ⇒ 界面显示「还没有任何环境数据」⇒ **把「没去问」伪装成「问了，答案是没有」**。
+    ///
+    /// （理由同 `state::org::OrgListState::default`。）
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            invalid: 0,
+            selected: None,
+            loading: true,
+            last_error: None,
+        }
+    }
+}
+
 impl EnvListViewState {
-    /// 空列表：尚未拉取，或权威结果就是零条。
+    /// **尚未拉取**（⇒ `Loading`）；权威结果零条请用 `apply_entries(vec![])` 得到
+    /// （⇒ `Ready` + 空集）。
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -157,11 +177,27 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn new_state_is_ready_with_no_entries() {
+    fn new_state_is_loading_not_ready() {
         let s = EnvListViewState::new();
-        assert_eq!(s.status(), EnvStatus::Ready);
+        assert_eq!(
+            s.status(),
+            EnvStatus::Loading,
+            "尚未拉取过必须是 Loading，不能是 Ready"
+        );
         assert!(s.entries().is_empty());
         assert_eq!(s.invalid_count(), 0);
+    }
+
+    #[test]
+    fn an_explicitly_empty_result_is_ready_not_loading() {
+        let mut s = EnvListViewState::new();
+        s.apply_entries(vec![]); // 权威结果：零条
+        assert_eq!(
+            s.status(),
+            EnvStatus::Ready,
+            "服务端明确返回零条 ⇒ Ready，不是 Loading"
+        );
+        assert!(s.entries().is_empty());
     }
 
     #[test]

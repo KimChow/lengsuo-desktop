@@ -94,8 +94,18 @@ mod tests {
 
     #[test]
     fn empty_list_is_a_real_empty_set_not_an_error() {
-        let state = OrgListState::new();
+        let mut state = OrgListState::new();
+        state.apply(vec![]); // 权威结果：零条 ⇒ 才是「真实为空」
         assert_eq!(account_body(&state), AccountPanelBody::Empty);
+    }
+
+    #[test]
+    fn a_never_loaded_list_is_loading_not_empty() {
+        let state = OrgListState::new();
+        assert!(
+            matches!(account_body(&state), AccountPanelBody::Loading),
+            "从未加载的成员清单必须显示「正在加载」，不得显示「暂无成员」"
+        );
     }
 
     #[test]

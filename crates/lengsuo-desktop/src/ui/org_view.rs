@@ -430,18 +430,9 @@ mod tests {
                 text: "暂无成员"
             }
         );
-        assert_eq!(
-            v.roles_section(),
-            SectionView::Empty {
-                text: "暂无角色"
-            }
-        );
-        assert_eq!(
-            v.departments_section(),
-            SectionView::Empty {
-                text: "暂无部门"
-            }
-        );
+        // 未拉取过的列表是「加载中」，不是「空集」。
+        assert_eq!(v.roles_section(), SectionView::Loading);
+        assert_eq!(v.departments_section(), SectionView::Loading);
     }
 
     #[test]
