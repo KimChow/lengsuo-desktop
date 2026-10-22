@@ -137,7 +137,10 @@ pub(super) fn settings_snapshot(
 ///
 /// 版式**不在本结构里另存**：唯一持有者是 [`Self::left_divider`]，
 /// 渲染时用 [`regions_for`] 读回；右分隔条与右侧面板只是它的下游副本。
-struct AppShell {
+///
+/// ⚠️ `pub(crate)`：设置窗口要经 [`WeakEntity<AppShell>`] 把改键后的注册表
+/// **写回**本视图（改即生效）⇒ 本类型与 [`Self::registry`] 字段对本 crate 可见。
+pub(crate) struct AppShell {
     sidebar: Entity<SidebarViewGpui>,
     session: Entity<SessionStreamGpui>,
     right_panel: Entity<RightPanelGpui>,
@@ -178,7 +181,9 @@ struct AppShell {
     /// 主区当前显示的视图（由侧栏选中的导航入口决定）。
     main_view: main_view::MainView,
     /// 与命令面板共用同一套内置快捷键表（按 id 派发）。
-    registry: HotkeyRegistry,
+    ///
+    /// ⚠️ `pub(crate)`：设置窗口改键成功后**写回**这里 ⇒ 主界面立刻用新键。
+    pub(crate) registry: HotkeyRegistry,
     /// 根视图焦点：全局按键先到这里。
     focus: FocusHandle,
     /// 上次**成功落盘**的版式偏好：版式没变就不重复写文件。
@@ -296,13 +301,21 @@ impl AppShell {
         // 闭包（在字面量之外）拿不到它。提成后结构体字段与快照用的是**同一个值**。
         let registry = default_registry();
         let snapshot = settings_snapshot(env_view.read(cx).state(), &registry);
+        // 宿主的弱引用：设置窗口改键成功后经它把新注册表写回本视图 ⇒ 改即生效。
+        // ⚠️ 弱引用（不是强引用）：设置窗口不能把主界面**钉住**不放。
+        let host = cx.weak_entity();
 
         palette.update(cx, |view, _cx| {
             view.set_on_execute(move |id, panel_cx| {
                 if id != SETTINGS_COMMAND_ID {
                     return;
                 }
-                open_settings_window(panel_cx, snapshot.data.clone(), snapshot.bindings.clone());
+                open_settings_window(
+                    panel_cx,
+                    snapshot.data.clone(),
+                    snapshot.bindings.clone(),
+                    Some(host.clone()),
+                );
             });
         });
 

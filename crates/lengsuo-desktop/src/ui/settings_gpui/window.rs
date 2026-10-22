@@ -20,14 +20,19 @@ use gpui_kit::*;
 use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 
 use crate::state::env_group::EnvGroupState;
-use crate::state::hotkeys::{Binding, HotkeyRegistry};
+use crate::state::hotkeys::{
+    Binding, HotkeyRegistry, Key as HotkeyKey, Modifiers as HotkeyModifiers,
+};
 use crate::state::org::OrgListState;
 use crate::state::org_perm::CapabilityFlags;
-use crate::ui::settings_gpui::view::{PanelId, SettingsView, ThemeChoice};
+use crate::ui::gpui_app::AppShell;
+use crate::ui::palette_gpui::hotkey_from_keystroke;
+use crate::ui::settings_gpui::view::{HotkeyPanel, PanelId, SettingsView, ThemeChoice};
 
 use super::data_panel;
 use super::help_panel;
 use super::hotkey_panel;
+use super::hotkey_panel::EditState;
 use super::nav;
 use super::org_panel;
 use super::security_panel;
@@ -46,10 +51,15 @@ pub struct SettingsGpui {
     ///
     /// ⛔ 本字段只承载服务端结果，界面**不做授权推理**。
     flags: CapabilityFlags,
-    /// 本仓的真实快捷键绑定（**只读**）：「个性化」面板的数据源。
+    /// 本仓的真实快捷键绑定（**可改**）：「个性化」面板的数据源 + 改键裁决对象。
     ///
-    /// ⛔ 本面板**只读**：改键需要持久化 + 冲突裁决，不在本卡范围。
-    bindings: Vec<Binding>,
+    /// ⛔ 改键**只在本窗口内存里**：不落盘（持久化不在本卡范围）。
+    registry: HotkeyRegistry,
+    /// 改键状态（等键 / 冲突 / 失败）。
+    ///
+    /// ⚠️ 类型是接线层的投影 [`EditState`]：描述层的 `HotkeyEdit` 住在
+    /// `view` 的私有子模块里 ⇒ 本层**不可命名**（见 `hotkey_panel.rs`）。
+    edit: EditState,
     /// 浏览器环境分组视图状态（只读快照）：「数据管理」面板的数据源。
     ///
     /// ⛔ 本字段只承载快照，界面**不做环境管理**（增删改是业务语义）。
@@ -60,6 +70,10 @@ pub struct SettingsGpui {
     org: OrgListState,
     /// 窗口自身的焦点句柄：Esc 关闭设置窗口靠它。
     focus: FocusHandle,
+    /// 宿主主界面：改键成功后把新注册表**写回**它 ⇒ 主界面立刻用新键。
+    ///
+    /// ⚠️ 弱引用：宿主已销毁（设置窗口后开、主界面先关）⇒ 写回自动跳过（不 panic）。
+    host: Option<WeakEntity<AppShell>>,
 }
 
 impl SettingsGpui {
@@ -84,10 +98,12 @@ impl SettingsGpui {
         Self {
             view,
             flags: CapabilityFlags::default(),
-            bindings: default_bindings(),
+            registry: default_registry(),
+            edit: EditState::default(),
             data: EnvGroupState::new(),
             org: OrgListState::new(),
             focus: cx.focus_handle(),
+            host: None,
         }
     }
 
@@ -104,7 +120,7 @@ impl SettingsGpui {
     #[must_use]
     pub fn with_bindings(cx: &mut Context<Self>, bindings: Vec<Binding>) -> Self {
         Self {
-            bindings,
+            registry: registry_from(bindings),
             ..Self::new(cx)
         }
     }
@@ -129,21 +145,26 @@ impl SettingsGpui {
         }
     }
 
-    /// 带环境分组状态**与**快捷键绑定构造（宿主用）。
+    /// 带环境分组状态、快捷键绑定**与宿主**构造（宿主用）。
     ///
     /// ⛔ **为什么不能链式调用** `with_data(..).with_bindings(..)`：上面每个
     /// `with_*` 都用 `..Self::new(cx)` 展开剩余字段 ⇒ 后一个构造器会把前一个
-    /// 已经注入的字段**重置回默认值**（`data` 变回空清单、`bindings` 变回内置表）。
-    /// ⇒ 要同时带两份数据，必须走这一个构造器。
+    /// 已经注入的字段**重置回默认值**（`data` 变回空清单、注册表变回内置表）。
+    /// ⇒ 要同时带多份数据，必须走这一个构造器。
+    ///
+    /// `host` 是宿主主界面的弱引用：改键成功后经它把新注册表写回宿主
+    /// ⇒ 主界面下一次按键就用新键（**改即生效**）。
     #[must_use]
-    pub fn with_data_and_bindings(
+    pub(crate) fn with_data_and_bindings(
         cx: &mut Context<Self>,
         data: EnvGroupState,
         bindings: Vec<Binding>,
+        host: Option<WeakEntity<AppShell>>,
     ) -> Self {
         Self {
             data,
-            bindings,
+            registry: registry_from(bindings),
+            host,
             ..Self::new(cx)
         }
     }
@@ -196,20 +217,110 @@ impl SettingsGpui {
         }
         cx.notify();
     }
+
+    /// 开始改键：进入「等下一个组合键」状态。
+    ///
+    /// 「等键」提示文案由描述层给（[`HotkeyPanel::edit_status_text`]），
+    /// 本层不自己拼文案。
+    pub(super) fn begin_edit(&mut self, command_id: &'static str, cx: &mut Context<Self>) {
+        self.edit = EditState {
+            target: Some(command_id),
+            status: HotkeyPanel::edit_status_text(&HotkeyPanel::edit_awaiting(command_id)),
+        };
+        cx.notify();
+    }
+
+    /// 处理窗口级按键：改键中 ⇒ 这次按键是「新组合键」；否则 Esc 关窗。
+    fn handle_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // 1. 正在改键 ⇒ 这次按键是「新组合键」。
+        if let Some(target) = self.edit.target {
+            let Some(pressed) = hotkey_from_keystroke(&event.keystroke) else {
+                return;
+            };
+            // 裸 Esc ⇒ **取消改键**（不算失败），且**不关窗口**：
+            // Esc 本身是 `overlay.close` 的绑定，用户在改键时按 Esc 是想退出改键。
+            if pressed.key == HotkeyKey::Escape && pressed.modifiers == HotkeyModifiers::NONE {
+                self.edit = EditState::default();
+                cx.notify();
+                return;
+            }
+            // 裁决：成功 / 冲突 / 失败都由描述层判（本层**不自己实现冲突检测**）。
+            let decision = HotkeyPanel::edit_intent(self.registry.bindings(), target, pressed);
+            if decision.is_idle() {
+                // 成功 ⇒ 落表 + 写回宿主。
+                if let Err(reason) = self.registry.rebind(target, pressed) {
+                    eprintln!("[lengsuo-desktop] 改键落表失败：{reason}");
+                    return;
+                }
+                self.edit = EditState::default();
+                self.write_back_host(cx);
+                cx.notify();
+                return;
+            }
+            // 失败 ⇒ 说清为什么（文案由描述层给）；命令 id 与组合键落日志。
+            self.edit.target = None;
+            self.edit.status = HotkeyPanel::edit_status_text(&decision);
+            if let Some(detail) = decision.failure_detail() {
+                eprintln!("[lengsuo-desktop] 改键未生效：{detail}");
+            }
+            cx.notify();
+            return;
+        }
+        // 2. 不在改键 ⇒ Esc 关闭设置窗口（窗口级快捷键，不与输入框抢）。
+        if event.keystroke.key.as_str() == "escape" {
+            window.remove_window();
+        }
+    }
+
+    /// 把改键后的注册表**写回宿主** ⇒ 主界面下一次按键就用新键（改即生效）。
+    ///
+    /// ⚠️ 宿主可能已经没了（主界面先关）⇒ 弱引用升级失败就跳过（不 panic）。
+    fn write_back_host(&mut self, cx: &mut Context<Self>) {
+        let Some(host) = self.host.as_ref().and_then(WeakEntity::upgrade) else {
+            return;
+        };
+        let registry = self.registry.clone();
+        host.update(cx, move |shell, cx| {
+            shell.registry = registry;
+            cx.notify();
+        });
+    }
 }
 
-/// 读内置默认绑定表；失败时回落到**空表**并记日志。
+/// 读内置默认注册表；失败时回落到**空表**并记日志。
 ///
 /// ⛔ 不 panic、不 unwrap：内置表万一自相冲突，界面应显示「没有可用的快捷键」
 /// 并留下日志，而不是让整个设置窗口开不起来。
-fn default_bindings() -> Vec<Binding> {
+fn default_registry() -> HotkeyRegistry {
     match HotkeyRegistry::with_defaults() {
-        Ok(registry) => registry.bindings().to_vec(),
+        Ok(registry) => registry,
         Err(reason) => {
             eprintln!("[lengsuo-desktop] 内置快捷键表不可用：{reason}");
-            Vec::new()
+            empty_registry()
         }
     }
+}
+
+/// 宿主给的绑定表 ⇒ 注册表。
+///
+/// 宿主表不可用（未知命令 / 自相冲突）⇒ 回落到**内置表**；内置表也不可用
+/// ⇒ 用**空表**（面板显示「没有可用的快捷键」，fail-closed）。
+fn registry_from(bindings: Vec<Binding>) -> HotkeyRegistry {
+    match HotkeyRegistry::from_bindings(bindings.iter().copied()) {
+        Ok(registry) => registry,
+        Err(reason) => {
+            eprintln!("[lengsuo-desktop] 宿主快捷键表不可用，回落为内置表：{reason}");
+            default_registry()
+        }
+    }
+}
+
+/// 空注册表（面板会显示「没有可用的快捷键」）。
+///
+/// `from_bindings` 对空表**必成功**（没有绑定 ⇒ 既无冲突也无未知命令），
+/// `Err` 分支不可达 ⇒ 用 `expect` 把「代码级缺陷」显式化。
+fn empty_registry() -> HotkeyRegistry {
+    HotkeyRegistry::from_bindings(Vec::new()).expect("空快捷键表不该失败")
 }
 
 impl Render for SettingsGpui {
@@ -222,20 +333,20 @@ impl Render for SettingsGpui {
         let sidebar = nav::render_sidebar(&self.view, &theme, cx);
 
         // 右栏：外观面板给三档主题；安全中心给能力位只读清单；
-        // 个性化给快捷键只读清单；账号给成员只读清单；
+        // 个性化给快捷键清单（**可改键**）；账号给成员只读清单；
         // 帮助与反馈给版本 / 快捷键 / 命令表只读清单；其余面板给占位文案。
         let content: AnyElement = match self.view.selected {
             PanelId::Account => org_panel::render_org_panel(&self.org, &theme, cx),
             PanelId::Appearance => theme_panel::render_theme_picker(&self.view, &theme, cx),
             PanelId::Security => security_panel::render_security_panel(&self.flags, &theme, cx),
             PanelId::Personalization => {
-                hotkey_panel::render_hotkey_panel(&self.bindings, &theme, cx)
+                hotkey_panel::render_hotkey_panel(self.registry.bindings(), &self.edit, &theme, cx)
             }
             PanelId::SystemPermissions => {
                 system_perm_panel::render_system_perm_panel(&self.flags, &theme, cx)
             }
             PanelId::DataManagement => data_panel::render_data_panel(&self.data, &theme, cx),
-            PanelId::Help => help_panel::render_help_panel(&self.bindings, &theme, cx),
+            PanelId::Help => help_panel::render_help_panel(self.registry.bindings(), &theme, cx),
             _ => div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
@@ -285,14 +396,12 @@ impl Render for SettingsGpui {
             .id("lengsuo-settings-window")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(
-                |_this: &mut SettingsGpui,
+                |this: &mut SettingsGpui,
                  event: &KeyDownEvent,
                  window: &mut Window,
-                 _cx: &mut Context<SettingsGpui>| {
-                    // Esc 关闭设置窗口（窗口级快捷键，不与输入框抢）。
-                    if event.keystroke.key.as_str() == "escape" {
-                        window.remove_window();
-                    }
+                 cx: &mut Context<SettingsGpui>| {
+                    // 改键中 ⇒ 捕获这次按键；否则 Esc 关窗。
+                    this.handle_key(event, window, cx);
                 },
             ))
             .child(header)
