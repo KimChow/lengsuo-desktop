@@ -35,11 +35,14 @@
 pub mod handshake;
 pub mod keys;
 pub mod launch;
+pub mod machine;
 pub mod profile_rules;
 pub mod server;
 pub mod upload;
 pub mod zip_writer;
 
+#[cfg(test)]
+pub(crate) mod machine_tests;
 #[cfg(test)]
 pub(crate) mod profile_vectors;
 
@@ -232,149 +235,6 @@ pub fn count_complete_frames(buf: &[u8]) -> usize {
         }
     }
     count
-}
-
-/// 本机机器码素材的**真实值采集**（线协议 §1）。
-///
-/// ⛔ **取值必须是本机真实值**——不复制任何一方的常量字符串。
-/// 线协议 §1 只固定**形状**（四个字段、同样的键序），不固定取值。
-///
-/// # 采集源
-///
-/// | 字段 | Linux | Windows | macOS |
-/// |---|---|---|---|
-/// | `os` | `std::env::consts::OS` | 同左 | 同左 |
-/// | `cpuid` | `/proc/cpuinfo` 的 `vendor_id` + `model name` | `PROCESSOR_IDENTIFIER` 环境变量 | 空（无依赖可读） |
-/// | `hddid` | `/sys/block/*/device/serial` | `SYSTEMDRIVE` 环境变量 | `SYSTEMDRIVE` 环境变量 |
-/// | `computername` | `HOSTNAME` 环境变量 → `/etc/hostname` | `COMPUTERNAME` 环境变量 | `HOSTNAME` 环境变量 |
-///
-/// ⚠️ 采集**失败不 panic**：取不到就退化成该字段的空串。
-/// 机器码的**形状**是协议的一部分，**取值**只用于「同一台机器算出一致的密钥」，
-/// 因此采集不全不该让整个握手崩掉。
-/// ⇒ 但两侧（runner 与内核）必须采到**同一组值**才能互认，
-/// 所以采集源必须在本仓与内核仓**写死成同一份**（见报告 §6.4）。
-pub mod machine {
-    use super::keys::MachineInputs;
-
-    #[must_use]
-    pub fn collect_machine_inputs() -> MachineInputs {
-        MachineInputs {
-            os: std::env::consts::OS.to_string(),
-            cpuid: collect_cpuid(),
-            hddid: collect_hddid(),
-            computername: collect_computername(),
-        }
-    }
-
-    /// 计算机名：环境变量优先，退到 `/etc/hostname`。
-    fn collect_computername() -> String {
-        for key in ["COMPUTERNAME", "HOSTNAME"] {
-            if let Ok(value) = std::env::var(key) {
-                let trimmed = value.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
-        }
-        if let Ok(text) = std::fs::read_to_string("/etc/hostname") {
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-        String::new()
-    }
-
-    /// CPU 标识。
-    ///
-    /// Linux：读 `/proc/cpuinfo` 的 `vendor_id` 与 `model name`（拼起来更稳）。
-    /// Windows：`PROCESSOR_IDENTIFIER` 环境变量。
-    /// 其它平台：留空（形状不变）。
-    fn collect_cpuid() -> String {
-        if let Some(value) = env_non_empty("PROCESSOR_IDENTIFIER") {
-            return value;
-        }
-        if let Some(text) = read_small_file("/proc/cpuinfo") {
-            let vendor = cpuinfo_field(&text, "vendor_id");
-            let model = cpuinfo_field(&text, "model name");
-            let joined = [vendor, model]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" ");
-            if !joined.is_empty() {
-                return joined;
-            }
-        }
-        String::new()
-    }
-
-    /// 磁盘标识。
-    ///
-    /// Linux：扫 `/sys/block/*/device/serial`（取第一个非空的）。
-    /// Windows / macOS：无依赖可读 ⇒ 用 `SYSTEMDRIVE` / `HOME` 的等效环境变量兜底。
-    fn collect_hddid() -> String {
-        if let Some(serial) = scan_sys_block_serial() {
-            return serial;
-        }
-        for key in ["SYSTEMDRIVE", "DISKNUMBER"] {
-            if let Some(value) = env_non_empty(key) {
-                return value;
-            }
-        }
-        String::new()
-    }
-
-    /// 扫 `/sys/block/*/device/serial`，取第一个非空值。
-    fn scan_sys_block_serial() -> Option<String> {
-        let entries = std::fs::read_dir("/sys/block").ok()?;
-        let mut found: Vec<String> = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path().join("device").join("serial");
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    found.push(trimmed.to_string());
-                }
-            }
-        }
-        found.sort();
-        found.into_iter().next()
-    }
-
-    /// 从 `/proc/cpuinfo` 里取某个字段的值。
-    fn cpuinfo_field(text: &str, key: &str) -> Option<String> {
-        for line in text.lines() {
-            // 不是 `名: 值` 形状的行（如空行）直接跳过。
-            let Some((name, value)) = line.split_once(':') else {
-                continue;
-            };
-            if name.trim() == key {
-                let trimmed = value.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-        None
-    }
-
-    /// 读一个存在且不大的文本文件。
-    fn read_small_file(path: &str) -> Option<String> {
-        let text = std::fs::read_to_string(path).ok()?;
-        Some(text)
-    }
-
-    /// 取一个非空的环境变量。
-    fn env_non_empty(key: &str) -> Option<String> {
-        let value = std::env::var(key).ok()?;
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    }
 }
 
 #[cfg(test)]
