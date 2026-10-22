@@ -31,7 +31,15 @@
 //! - [`profile_rules`]：profile 同步的收集规则（白名单 / 黑名单 / 上限，纯逻辑）。
 //! - [`zip_writer`]：profile 文件清单 ⇄ zip 归档（清单解析 + 扫目录 + 流式写）。
 //! - [`upload`]：profile 云同步的编排层（打包 + 上传 + 失败不阻塞）。
+//! - [`fp_values`]：指纹值治理的**目标值模型**（解析 / 校验 / 下发，纯逻辑）。
+//! - [`fp_values_cache`]：指纹值的**本地缓存**（每环境一份、加密落盘、原子写）。
+//! - [`fp_values_fetch`]：指纹值的**获取与续期**（带 `sign` 请求 + 落缓存）。
+//! - [`fp_values_report`]：指纹值的**回传**（聚合采样 + 默认关闭 + 失败不阻塞）。
 
+pub mod fp_values;
+pub mod fp_values_cache;
+pub mod fp_values_fetch;
+pub mod fp_values_report;
 pub mod handshake;
 pub mod keys;
 pub mod launch;
@@ -41,6 +49,8 @@ pub mod server;
 pub mod upload;
 pub mod zip_writer;
 
+#[cfg(test)]
+pub(crate) mod fp_values_tests;
 #[cfg(test)]
 pub(crate) mod machine_tests;
 #[cfg(test)]
