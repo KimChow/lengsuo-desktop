@@ -175,12 +175,22 @@ mod tests {
 
     #[test]
     fn empty_state_body_carries_the_no_data_reason() {
-        let s = EnvGroupState::new();
+        let mut s = EnvGroupState::new();
+        s.apply_entries(vec![]); // 权威结果：零条 ⇒ 才是「真实为空」
         assert_eq!(s.status(), EnvStatus::Ready);
         assert_eq!(
             data_panel_body(&s),
             DataPanelBody::Empty(EmptyReason::NoData),
             "空状态必须判定为「还没有任何环境数据」这条关键路径"
+        );
+    }
+
+    #[test]
+    fn a_never_loaded_env_list_is_loading_not_empty() {
+        let s = EnvGroupState::new();
+        assert!(
+            matches!(data_panel_body(&s), DataPanelBody::Loading),
+            "从未加载的环境清单必须显示「正在加载」，不得显示「还没有任何环境数据」"
         );
     }
 

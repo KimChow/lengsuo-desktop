@@ -19,7 +19,7 @@ pub enum ListStatus {
 }
 
 /// 组织域列表的通用视图状态：成员 / 角色 / 部门共用同一形态。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrgListState {
     items: Vec<Value>,
     loading: bool,
@@ -27,7 +27,27 @@ pub struct OrgListState {
     selected: Option<String>,
 }
 
+impl Default for OrgListState {
+    /// 默认态 = **尚未拉取过** ⇒ `loading: true` ⇒ `status()` 返回 `Loading`。
+    ///
+    /// ⛔ **不能**用 `#[derive(Default)]`：`derive` 会把 `loading` 设成 `false`
+    /// ⇒ 状态落到 `Ready` ⇒ 一个**从未发过请求**的列表被报成「服务端返回了空集」
+    /// ⇒ 界面显示「暂无成员」⇒ **把「没去问」伪装成「问了，答案是没有」**。
+    ///
+    /// `ListStatus::Loading` 的文档已经写明「正在拉取（**或尚未拉取过**）」
+    /// ⇒ 本实现是让代码回到**文档已经声明**的语义，不是新增语义。
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            loading: true,
+            last_error: None,
+            selected: None,
+        }
+    }
+}
+
 impl OrgListState {
+    /// 新建一个**尚未拉取过**的列表 ⇒ `status()` 是 [`ListStatus::Loading`]。
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -139,6 +159,16 @@ mod tests {
         s.apply(vec![]);
         assert_eq!(s.status(), ListStatus::Ready);
         assert!(s.should_show_empty_state());
+    }
+
+    #[test]
+    fn a_fresh_list_is_loading_and_must_not_show_empty_state() {
+        let s = OrgListState::new();
+        assert_eq!(s.status(), ListStatus::Loading, "尚未拉取过必须是 Loading");
+        assert!(
+            !s.should_show_empty_state(),
+            "未加载不得显示空态，否则会把「没去问」伪装成「服务端说没有」"
+        );
     }
 
     #[test]
