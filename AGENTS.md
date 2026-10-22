@@ -61,7 +61,9 @@ git add -A && git commit -m "..." && git push   # 提交本机改动
 | 第三方上游源码 | 开源项目本体 | `<ref-root>/upstream/<name>/` | **不进**，各机自 clone |
 | 我方对标/逆向分析产物 | 复现文档、逆向证据、样本集、账本 | `<ref-root>/docs/`（= `kim/lengsuo-docs-reference`） | **进**（私有，密级更高） |
 
-- `<ref-root>`：本机 `D:/OneDrive/project/_ref/`、47 `~/ref/`。两者结构一致，内部相对路径相同。
+- `<ref-root>` = 参考资料根目录：本机 `D:/OneDrive/project/_ref/`、47 `~/ref/`。
+  两者结构一致：`docs/`（= 私有仓 `kim/lengsuo-docs-reference` 的 clone）、
+  `upstream/`（第三方上游源码）、`raw/`（大产物，不入仓）。
 - **引用一律写仓内相对路径**（如 `wb/pc-devguide/13-主界面UI与预览.md`），
   ⛔ **不写绝对路径** —— 跨机必失效，且违反 `source-privacy` 的脱敏条款。
 - UI 保真度基准 = 私有仓的 `wb/pc-devguide/`（基准册 `13-主界面UI与预览.md`）+ `wb/ref-target-10/`；
