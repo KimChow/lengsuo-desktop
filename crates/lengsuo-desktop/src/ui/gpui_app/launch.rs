@@ -23,7 +23,15 @@ use super::AppShell;
 /// `data` / `bindings` 是**宿主当下的真实状态快照**（只读克隆）⇒ 设置窗口的
 /// 「数据管理」「个性化」面板因此**有内容可看**，而不是永远空列表
 /// （`with_data` / `with_bindings` 在此第一次有生产调用者）。
-pub(super) fn open_settings_window(cx: &mut App, data: EnvGroupState, bindings: Vec<Binding>) {
+///
+/// `host` 是宿主主界面的弱引用 ⇒ 设置窗口里改键成功后能把新注册表**写回**
+/// 宿主 ⇒ 主界面下一次按键就用新键（**改即生效**）。
+pub(super) fn open_settings_window(
+    cx: &mut App,
+    data: EnvGroupState,
+    bindings: Vec<Binding>,
+    host: Option<WeakEntity<AppShell>>,
+) {
     let options = WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(SETTINGS_WINDOW_TITLE.into()),
@@ -32,8 +40,16 @@ pub(super) fn open_settings_window(cx: &mut App, data: EnvGroupState, bindings: 
         ..Default::default()
     };
     // `gpui_kit::open_window` 返回 `Result` ⇒ 失败就放弃这次开窗。
-    let _ = gpui_kit::open_window(options, cx, |_window, cx| {
-        cx.new(|cx| SettingsGpui::with_data_and_bindings(cx, data, bindings))
+    let _ = gpui_kit::open_window(options, cx, |window, cx| {
+        let view = cx.new(|cx| SettingsGpui::with_data_and_bindings(cx, data, bindings, host));
+        // ★ 把键盘焦点交给设置窗口：改键要在这里**收按键**，
+        // 焦点不在窗口上就一个键都收不到（根元素的 `on_key_down` 靠它触发）。
+        //
+        // ⚠️ 先 `.clone()` 再 focus：`view.read(cx)` 的不可变借用不能与
+        // `window.focus(&focus, cx)` 的 `&mut cx` 重叠（与主窗口同一写法）。
+        let focus = view.read(cx).focus_handle().clone();
+        window.focus(&focus, cx);
+        view
     });
 }
 
