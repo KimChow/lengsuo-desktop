@@ -268,6 +268,18 @@ impl SidebarState {
         self.selected_nav = Some(kind);
         true
     }
+
+    /// 清空导航选中 ⇒ 主区回到**会话流**（命令面板的 `session.list` / `session.new`）。
+    ///
+    /// 返回是否真的发生了变化（`observe` 链靠 `notify` 而不是这个返回值，
+    /// 但返回值便于测试断言与幂等判断）。
+    pub fn clear_nav(&mut self) -> bool {
+        if self.selected_nav.is_none() {
+            return false;
+        }
+        self.selected_nav = None;
+        true
+    }
 }
 
 /// 边栏渲染描述。

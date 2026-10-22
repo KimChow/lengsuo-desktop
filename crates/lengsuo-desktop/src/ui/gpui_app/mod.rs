@@ -69,6 +69,7 @@
 mod demo;
 mod launch;
 mod main_area;
+mod palette_commands;
 pub(crate) mod prefs_file;
 mod sidebar_collapse;
 mod sync;
@@ -80,6 +81,7 @@ mod tests;
 
 pub use demo::{demo_session, secondary_views};
 pub use launch::{launch, LaunchError, HOTKEY_HINT, NO_DISPLAY_MESSAGE, WINDOW_TITLE};
+use palette_commands::{navigate_target, NavigateTarget};
 use sync::{echo_message, next_echo_seq, regions_for, should_finish_send};
 
 use gpui_kit::base::StyledExt as _;
@@ -96,13 +98,14 @@ use crate::ui::input_gpui::InputAreaGpui;
 use crate::ui::layout::WorkbenchLayout;
 use crate::ui::layout_gpui::{DividerGpui, DividerSide, RightPanelTabGpui};
 use crate::ui::main_view;
-use crate::ui::org_gpui::OrgViewGpui;
+use crate::ui::org_gpui::{OrgSection, OrgViewGpui};
 use crate::ui::palette_gpui::{self, CommandPaletteGpui};
 use crate::ui::right_panel_gpui::RightPanelGpui;
 use crate::ui::session_gpui::SessionStreamGpui;
 
 /// 打开设置窗口的命令 id（命令表 `theme::palette` 里的 `app.settings`）。
 const SETTINGS_COMMAND_ID: &str = "app.settings";
+use crate::ui::sidebar::NavKind;
 use crate::ui::sidebar_gpui::{self, SidebarViewGpui};
 use crate::ui::terminal_gpui::TerminalDrawerGpui;
 
@@ -310,17 +313,50 @@ impl AppShell {
         // ⚠️ 弱引用（不是强引用）：设置窗口不能把主界面**钉住**不放。
         let host = cx.weak_entity();
 
+        // 导航类命令需要改**别的实体**（侧栏 / 组织视图）⇒ 先把 Entity 句柄
+        // 克隆出来 move 进 `'static` 闭包（`Entity` 是句柄，clone 很便宜）。
+        let nav_sidebar = sidebar.clone();
+        let nav_org = org_view.clone();
         palette.update(cx, |view, _cx| {
             view.set_on_execute(move |id, panel_cx| {
-                if id != SETTINGS_COMMAND_ID {
+                if id == SETTINGS_COMMAND_ID {
+                    open_settings_window(
+                        panel_cx,
+                        snapshot.data.clone(),
+                        snapshot.bindings.clone(),
+                        Some(host.clone()),
+                    );
                     return;
                 }
-                open_settings_window(
-                    panel_cx,
-                    snapshot.data.clone(),
-                    snapshot.bindings.clone(),
-                    Some(host.clone()),
-                );
+                // 非导航命令（含未知 id）静默忽略：界面层不实现业务语义。
+                let Some(target) = navigate_target(id) else {
+                    return;
+                };
+                nav_sidebar.update(panel_cx, |view, _cx| match target {
+                    NavigateTarget::Sessions => {
+                        view.state_mut().clear_nav();
+                    }
+                    NavigateTarget::Environments => {
+                        sidebar_gpui::select_nav(view.state_mut(), NavKind::Environments);
+                    }
+                    NavigateTarget::OrgMembers | NavigateTarget::OrgRoles => {
+                        sidebar_gpui::select_nav(view.state_mut(), NavKind::Organization);
+                    }
+                });
+                if matches!(
+                    target,
+                    NavigateTarget::OrgMembers | NavigateTarget::OrgRoles
+                ) {
+                    let section = if target == NavigateTarget::OrgMembers {
+                        OrgSection::Members
+                    } else {
+                        OrgSection::Roles
+                    };
+                    nav_org.update(panel_cx, |view, _cx| view.set_section(section));
+                }
+                // 主区切换由既有的 observe 链完成（侧栏变化 ⇒ `sync_main_view`）；
+                // 这里只需通知面板自己重绘。
+                panel_cx.notify();
             });
         });
 
