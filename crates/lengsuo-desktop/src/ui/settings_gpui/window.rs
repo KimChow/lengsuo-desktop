@@ -21,12 +21,14 @@ use gpui_kit::component::theme::{Theme as GpuiTheme, ThemeMode};
 
 use crate::state::env_group::EnvGroupState;
 use crate::state::hotkeys::{Binding, HotkeyRegistry};
+use crate::state::org::OrgListState;
 use crate::state::org_perm::CapabilityFlags;
 use crate::ui::settings_gpui::view::{PanelId, SettingsView, ThemeChoice};
 
 use super::data_panel;
 use super::hotkey_panel;
 use super::nav;
+use super::org_panel;
 use super::security_panel;
 use super::system_perm_panel;
 use super::theme_panel;
@@ -51,6 +53,10 @@ pub struct SettingsGpui {
     ///
     /// ⛔ 本字段只承载快照，界面**不做环境管理**（增删改是业务语义）。
     data: EnvGroupState,
+    /// 组织域成员清单（**只读快照**）：「账号」面板的数据源。
+    ///
+    /// ⛔ 本字段只承载服务端结果，界面**不做成员管理**（增删改是业务语义）。
+    org: OrgListState,
     /// 窗口自身的焦点句柄：Esc 关闭设置窗口靠它。
     focus: FocusHandle,
 }
@@ -79,6 +85,7 @@ impl SettingsGpui {
             flags: CapabilityFlags::default(),
             bindings: default_bindings(),
             data: EnvGroupState::new(),
+            org: OrgListState::new(),
             focus: cx.focus_handle(),
         }
     }
@@ -106,6 +113,17 @@ impl SettingsGpui {
     pub fn with_data(cx: &mut Context<Self>, data: EnvGroupState) -> Self {
         Self {
             data,
+            ..Self::new(cx)
+        }
+    }
+
+    /// 带组织域成员清单构造（宿主/测试用；默认构造 ⇒ 空状态）。
+    ///
+    /// ⛔ 清单是**只读快照**：本卡只展示服务端下发什么，不做成员增删改。
+    #[must_use]
+    pub fn with_org(cx: &mut Context<Self>, org: OrgListState) -> Self {
+        Self {
+            org,
             ..Self::new(cx)
         }
     }
@@ -184,8 +202,9 @@ impl Render for SettingsGpui {
         let sidebar = nav::render_sidebar(&self.view, &theme, cx);
 
         // 右栏：外观面板给三档主题；安全中心给能力位只读清单；
-        // 个性化给快捷键只读清单；其余面板给占位文案。
+        // 个性化给快捷键只读清单；账号给成员只读清单；其余面板给占位文案。
         let content: AnyElement = match self.view.selected {
+            PanelId::Account => org_panel::render_org_panel(&self.org, &theme, cx),
             PanelId::Appearance => theme_panel::render_theme_picker(&self.view, &theme, cx),
             PanelId::Security => security_panel::render_security_panel(&self.flags, &theme, cx),
             PanelId::Personalization => {
