@@ -208,4 +208,44 @@ mod tests {
         assert_eq!(action, OrgAction::DeleteRole("r-1".to_owned()));
         assert_ne!(action, OrgAction::DeleteRole("r-2".to_owned()));
     }
+
+    #[test]
+    fn with_dispatcher_sets_dispatch_field() {
+        use super::{OrgActionDispatcher, OrgViewGpui};
+        use crate::state::org_perm::CapabilityFlags;
+        use crate::ui::org_view::OrgViewState;
+        use std::rc::Rc;
+
+        let state = OrgViewState::new(CapabilityFlags::default());
+        let dispatch: OrgActionDispatcher = Rc::new(|_| {});
+        let view = OrgViewGpui::with_dispatcher(state, dispatch);
+        assert!(
+            view.dispatch.is_some(),
+            "with_dispatcher 必须把 dispatch 设为 Some"
+        );
+
+        let state2 = OrgViewState::new(CapabilityFlags::default());
+        let view2 = OrgViewGpui::new(state2);
+        assert!(view2.dispatch.is_none(), "new 必须把 dispatch 设为 None");
+    }
+
+    #[test]
+    fn dispatcher_closure_can_be_invoked() {
+        use super::{OrgAction, OrgActionDispatcher, OrgViewGpui};
+        use crate::state::org_perm::CapabilityFlags;
+        use crate::ui::org_view::OrgViewState;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let calls: Rc<RefCell<Vec<OrgAction>>> = Rc::new(RefCell::new(Vec::new()));
+        let calls_clone = calls.clone();
+        let dispatch: OrgActionDispatcher = Rc::new(move |action| {
+            calls_clone.borrow_mut().push(action);
+        });
+        let state = OrgViewState::new(CapabilityFlags::default());
+        let _view = OrgViewGpui::with_dispatcher(state, dispatch.clone());
+        dispatch(OrgAction::InviteMember);
+        assert_eq!(calls.borrow().len(), 1);
+        assert_eq!(calls.borrow()[0], OrgAction::InviteMember);
+    }
 }
