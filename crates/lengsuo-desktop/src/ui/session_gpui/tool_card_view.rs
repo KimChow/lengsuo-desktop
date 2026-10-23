@@ -90,7 +90,7 @@ pub(super) fn render_tool_card(
             .child(view.args.clone())
     };
 
-    let container = div()
+    let mut container = div()
         .flex()
         .flex_col()
         .w_full()
@@ -98,8 +98,12 @@ pub(super) fn render_tool_card(
         .border_1()
         .border_color(theme.border)
         .bg(theme.background)
-        .child(header)
-        .child(body);
+        .child(header);
+    // 空参数不渲染空摘要行（无参调用时卡片只剩标题行）。
+    let body_text = if folded { &view.summary } else { &view.args };
+    if !body_text.is_empty() {
+        container = container.child(body);
+    }
 
     // 折叠态只在**有消息 id** 时可点（静态预览没有状态可记）。
     let Some(detail) = detail else {
