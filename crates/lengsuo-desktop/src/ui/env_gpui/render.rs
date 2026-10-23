@@ -12,9 +12,10 @@ use gpui_kit::*;
 
 use super::filter_bar::{render_clear_filter_button, render_search_box, FilterBox};
 use super::mapping::{
-    active_group_row, demo_state, empty_recovery, empty_state_text, filter_key, main_pane,
-    select_card, set_group_filter, status_tone, MainPane, StatusTone,
+    active_group_row, demo_state, empty_recovery, empty_state_text, filter_key, hydrate,
+    main_pane, select_card, set_group_filter, status_tone, MainPane, StatusTone,
 };
+use crate::state::datasource::{LoadState, Provenance};
 use crate::state::env_group::EnvGroupState;
 use crate::ui::env_view::{CardStatus, GroupRow};
 
@@ -25,16 +26,19 @@ use crate::ui::env_view::{CardStatus, GroupRow};
 #[cfg(feature = "ui")]
 pub struct EnvViewGpui {
     state: EnvGroupState,
+    /// 数据来源标注：契约未就绪前一律 [`Provenance::Demo`]，界面如实显示。
+    provenance: Provenance,
     pub(super) filter: FilterBox,
 }
 
 #[cfg(feature = "ui")]
 impl EnvViewGpui {
-    /// 用一份环境分组状态构造视图。
+    /// 用一份环境分组状态构造视图（来源默认标 [`Provenance::Demo`]）。
     #[must_use]
     pub fn new(state: EnvGroupState) -> Self {
         Self {
             state,
+            provenance: Provenance::Demo,
             filter: FilterBox::default(),
         }
     }
@@ -46,9 +50,32 @@ impl EnvViewGpui {
     }
 
     /// 演示用视图：手工构造的环境条目，**不接真实数据源**。
+    ///
+    /// [`Self::from_snapshot`] 的薄封装：演示数据走同一条「注入快照」水合路径。
     #[must_use]
     pub fn demo() -> Self {
-        Self::new(demo_state())
+        Self::from_snapshot(LoadState::Ready(demo_state()))
+    }
+
+    /// 从注入的三态快照构造视图（环境列表主视图的快照出口）。
+    ///
+    /// 三态如实表达：`Loading` ⇒ 加载态；`Ready` ⇒ 渲染快照行；
+    /// `Failed` ⇒ 显示错误文案（fail-closed，绝不退化成空列表）。
+    /// 来源标注默认 [`Provenance::Demo`]——契约未就绪前不得标 `Runtime`。
+    #[must_use]
+    pub fn from_snapshot(state: LoadState<EnvGroupState>) -> Self {
+        Self::new(hydrate(state))
+    }
+
+    /// 数据来源标注（界面如实显示当前是演示数据还是真实运行时数据）。
+    #[must_use]
+    pub fn provenance(&self) -> Provenance {
+        self.provenance
+    }
+
+    /// 宿主接通真实数据源后改标 `Runtime`；契约未就绪前不得调用。
+    pub fn set_provenance(&mut self, provenance: Provenance) {
+        self.provenance = provenance;
     }
 
     /// 当前环境分组状态（只读）。
@@ -239,6 +266,15 @@ fn render_notice(text: &str, theme: &gpui_kit::component::Theme) -> impl IntoEle
         .child(text.to_owned())
 }
 
+/// 来源标注（如实显示）：契约未就绪 ⇒ 演示数据，不冒充真实运行时数据。
+#[cfg(feature = "ui")]
+fn render_source_tag(theme: &gpui_kit::component::Theme) -> impl IntoElement {
+    div()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child("演示数据")
+}
+
 /// 加载中提示条：与卡片并存（描述层加载时不清空卡片）。
 #[cfg(feature = "ui")]
 fn render_loading(theme: &gpui_kit::component::Theme) -> impl IntoElement {
@@ -330,6 +366,11 @@ impl Render for EnvViewGpui {
         // 分组标题行
         if let Some(row) = active_group_row(&view) {
             main = main.child(render_group_title(row, view.total_count, theme));
+        }
+
+        // 来源标注：契约未就绪 ⇒ 如实标「演示数据」。
+        if self.provenance.is_demo() {
+            main = main.child(render_source_tag(theme));
         }
 
         if view.cards.is_empty() {
