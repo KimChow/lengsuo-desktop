@@ -142,18 +142,21 @@ fn render_task_row(task: &TaskItem, theme: &gpui_kit::component::Theme) -> impl 
                 ),
         )
         .child(
-            div()
-                .h_1()
-                .w_full()
-                .rounded_full()
-                .bg(theme.muted)
-                .child(div().h_full().w(relative(progress)).rounded_full().bg(theme.accent)),
+            div().h_1().w_full().rounded_full().bg(theme.muted).child(
+                div()
+                    .h_full()
+                    .w(relative(progress))
+                    .rounded_full()
+                    .bg(theme.accent),
+            ),
         )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{demo_tasks, empty_reason, progress_clamped, task_label, EMPTY_TEXT, TaskItem};
+    use super::{
+        demo_tasks, empty_reason, progress_clamped, render, task_label, TaskItem, EMPTY_TEXT,
+    };
 
     #[test]
     fn progress_clamped_keeps_boundaries() {
@@ -195,5 +198,12 @@ mod tests {
             assert_eq!(task.progress, progress_clamped(task.progress));
             assert!(!task.title.is_empty());
         }
+    }
+
+    #[test]
+    fn render_smoke_covers_demo_and_empty() {
+        let theme = gpui_kit::component::Theme::default();
+        let _ = render(&demo_tasks(), &theme);
+        let _ = render(&[], &theme);
     }
 }

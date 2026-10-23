@@ -232,6 +232,16 @@ mod tests {
     }
 
     #[test]
+    fn tasks_tab_renders_view_body_instead_of_placeholder() {
+        let view = render(&RightPanelLayout::new(), &SessionStreamState::new());
+        assert_eq!(
+            view.content,
+            RightPanelContent::Tasks,
+            "任务清单 tab 必须是任务清单内容（视图体），不再是纯占位"
+        );
+    }
+
+    #[test]
     fn approvals_tab_renders_pending_cards_with_badge() {
         let mut layout = RightPanelLayout::new();
         layout.select_tab(RightPanelTab::Approvals);
