@@ -189,3 +189,64 @@ fn demo_state_has_grouped_and_ungrouped_entries() {
     assert_eq!(view.cards.len(), 4);
     assert_eq!(view.total_count, 4);
 }
+
+#[test]
+fn empty_recovery_only_for_filtered_out_with_active_filter() {
+    use super::mapping::{empty_recovery, EmptyRecovery};
+    use crate::state::env_group::EmptyReason;
+    assert_eq!(
+        empty_recovery(Some(EmptyReason::FilteredOut), true),
+        Some(EmptyRecovery::ClearFilter)
+    );
+    assert_eq!(empty_recovery(Some(EmptyReason::FilteredOut), false), None);
+    assert_eq!(empty_recovery(Some(EmptyReason::NoData), true), None);
+    assert_eq!(empty_recovery(None, true), None);
+}
+
+#[test]
+fn clear_filter_clears_keyword_and_group_filter() {
+    use super::mapping::{clear_filter, filter_summary};
+    let mut s = state_with(vec![
+        json!({"id": "e1", "name": "甲", "group_id": "g1", "group_name": "A"}),
+        json!({"id": "e2", "name": "乙"}),
+    ]);
+    s.set_keyword("甲");
+    s.set_group_filter(GroupFilter::Group("g1".into()));
+    assert!(filter_summary(&s).active);
+    assert!(clear_filter(&mut s), "有筛选时必须真的清掉");
+    assert_eq!(s.keyword(), "");
+    assert_eq!(s.group_filter(), &GroupFilter::All);
+    assert!(!filter_summary(&s).active);
+    assert!(!clear_filter(&mut s), "已无筛选时不重复触发");
+}
+
+#[test]
+fn filter_summary_treats_blank_keyword_as_inactive() {
+    use super::mapping::filter_summary;
+    let mut s = EnvGroupState::new();
+    assert!(!filter_summary(&s).active);
+    s.set_keyword("   ");
+    assert!(!filter_summary(&s).active, "纯空白不算筛选");
+    s.set_keyword("构建");
+    let summary = filter_summary(&s);
+    assert!(summary.active);
+    assert_eq!(summary.keyword, "构建", "原值给界面，不 trim");
+}
+
+#[test]
+fn keyword_filter_narrows_visible_entries_and_reports_filtered_out() {
+    use crate::state::env_group::EmptyReason;
+    let mut s = state_with(vec![
+        json!({"id": "e1", "name": "构建机 A"}),
+        json!({"id": "e2", "name": "测试机"}),
+    ]);
+    s.set_keyword("构建");
+    assert_eq!(s.visible_entries().len(), 1);
+    s.set_keyword("不存在");
+    assert_eq!(s.visible_entries().len(), 0);
+    assert_eq!(
+        s.empty_reason(),
+        Some(EmptyReason::FilteredOut),
+        "空态原因必须是筛选"
+    );
+}
