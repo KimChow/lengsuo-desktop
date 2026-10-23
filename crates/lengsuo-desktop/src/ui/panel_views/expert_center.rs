@@ -20,8 +20,106 @@ use gpui_kit::*;
 /// 视图标题（逐字取自界面文案全表）。
 pub const TITLE: &str = "专家中心";
 
+/// 副标题（逐字取自界面文案全表）。
+pub const SUBTITLE: &str = "按行业分类浏览专家，召唤他们为你服务";
+
+/// 分类筛选首项（逐字取自界面文案全表）。
+pub const ALL_CATEGORY: &str = "全部";
+
+/// 分组头标签（逐字取自界面文案全表）。
+pub const CATEGORY_LABEL: &str = "行业分类";
+
+/// 卡片字段标签：擅长领域（逐字取自界面文案全表）。
+pub const STRENGTH_LABEL: &str = "擅长领域";
+
+/// 卡片字段标签：能力介绍（逐字取自界面文案全表）。
+pub const ABILITY_INTRO_LABEL: &str = "能力介绍";
+
+/// 标题行动作（逐字取自界面文案全表）。
+pub const CREATE_EXPERT: &str = "创建专家";
+
+/// 空态文案（逐字取自界面文案全表）。
+pub const EMPTY_TEXT: &str = "暂无该分类的专家";
+
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
+
+/// 一条专家条目（纯数据，无 GPUI 依赖）。
+pub struct ExpertEntry {
+    /// 专家名称。
+    pub name: String,
+    /// 行业分类（筛选与分组依据）。
+    pub category: String,
+    /// 擅长领域。
+    pub strengths: String,
+    /// 能力介绍。
+    pub ability_intro: String,
+}
+
+/// 可枚举的列表状态：未下发 / 已下发为空 / 已下发有条目。
+pub enum ExpertCenterState {
+    /// 数据未下发：fail-closed，如实显示「未下发」。
+    NotDelivered,
+    /// 已下发但为空：显示空态文案，**不是**空列表。
+    Empty,
+    /// 已下发且有条目。
+    Entries(Vec<ExpertEntry>),
+}
+
+/// 专家中心视图的纯数据层。
+pub struct ExpertCenterView {
+    state: ExpertCenterState,
+}
+
+impl ExpertCenterView {
+    /// 构造：`None` = 未下发；`Some(空)` = 空态；`Some(非空)` = 条目列表。
+    #[must_use]
+    pub fn build(delivered: Option<Vec<ExpertEntry>>) -> Self {
+        let state = match delivered {
+            None => ExpertCenterState::NotDelivered,
+            Some(entries) if entries.is_empty() => ExpertCenterState::Empty,
+            Some(entries) => ExpertCenterState::Entries(entries),
+        };
+        Self { state }
+    }
+
+    /// 当前状态。
+    pub fn state(&self) -> &ExpertCenterState {
+        &self.state
+    }
+
+    /// 去重后的行业分类（按首次出现排序）。
+    pub fn categories(&self) -> Vec<&str> {
+        let mut seen: Vec<&str> = Vec::new();
+        if let ExpertCenterState::Entries(entries) = &self.state {
+            for entry in entries {
+                if !seen.contains(&entry.category.as_str()) {
+                    seen.push(entry.category.as_str());
+                }
+            }
+        }
+        seen
+    }
+
+    /// 指定分类下的条目（无该分类则为空）。
+    fn entries_in(&self, category: &str) -> Vec<&ExpertEntry> {
+        match &self.state {
+            ExpertCenterState::Entries(entries) => entries
+                .iter()
+                .filter(|entry| entry.category == category)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// 按行业分类分组，供筛选栏与清单行共用（空组不出现）。
+    pub fn grouped(&self) -> Vec<(&str, Vec<&ExpertEntry>)> {
+        self.categories()
+            .into_iter()
+            .map(|category| (category, self.entries_in(category)))
+            .collect()
+    }
+}
 
 /// 主区渲染。
 ///
