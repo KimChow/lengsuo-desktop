@@ -339,6 +339,46 @@ fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
     Some((old_start, new_start))
 }
 
+#[cfg(test)]
+mod tests {
+    // 显式导入（不用 `use super::*`），理由见 mod.rs 测试段。
+    use super::{parse, CellTone, DiffBlock, DiffLayout, DiffRow};
+
+    /// A3 ①③④：**单行**对照里行号出现两次（左旧右新）、红绿**同一行**成对、上下文双侧都有。
+    #[test]
+    fn each_row_carries_both_numbers_and_paired_tones() {
+        let layout = parse("--- a\n+++ b\n@@ -1,2 +1,2 @@\n-old\n+new\n ctx\n");
+        let rows: Vec<&DiffRow> = match &layout {
+            DiffLayout::Split { blocks } => blocks
+                .iter()
+                .filter_map(|block| match block {
+                    DiffBlock::Row(row) => Some(row),
+                    DiffBlock::Header(_) => None,
+                })
+                .collect(),
+            DiffLayout::Single { .. } => panic!("样例必须是分栏形态"),
+        };
+        assert_eq!(rows.len(), 2, "替换行 + 上下文行");
+        // 替换行：同一行左右**两个行号**、红绿成对。
+        assert_eq!(rows[0].left.as_ref().map(|c| c.no), Some(1), "左栏旧文件行号");
+        assert_eq!(rows[0].right.as_ref().map(|c| c.no), Some(1), "右栏新文件行号");
+        assert_eq!(
+            rows[0].left.as_ref().map(|c| c.tone),
+            Some(CellTone::Removed),
+            "同一行左删 ⇒ 红"
+        );
+        assert_eq!(
+            rows[0].right.as_ref().map(|c| c.tone),
+            Some(CellTone::Added),
+            "同一行右增 ⇒ 绿"
+        );
+        // 上下文行：双侧都有、着色 Plain。
+        assert!(rows[1].left.is_some() && rows[1].right.is_some(), "上下文双侧都有");
+        assert_eq!(rows[1].left.as_ref().map(|c| c.no), Some(2));
+        assert_eq!(rows[1].right.as_ref().map(|c| c.no), Some(2));
+    }
+}
+
 /// 解析 `1` 或 `1,2` 这样的范围，返回起始值与剩余文本。
 fn parse_range(text: &str) -> Option<(usize, &str)> {
     let digits_end = text
