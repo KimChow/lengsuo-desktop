@@ -105,6 +105,14 @@ impl OrgViewGpui {
         }
     }
 
+    /// 演示出口（薄封装）：演示快照经 [`OrgViewState::from_snapshot`] 注入，
+    /// 与既有演示实例同一份演示数据；来源如实标 `Demo`。
+    /// C7 由服务端接通后，经同一注入入口换入真实快照即可（只换来源，不改结构）。
+    #[must_use]
+    pub fn demo(dispatch: OrgActionDispatcher) -> Self {
+        Self::with_dispatcher(OrgViewState::demo(), dispatch)
+    }
+
     /// 只读访问渲染描述。
     #[must_use]
     pub fn state(&self) -> &OrgViewState {
