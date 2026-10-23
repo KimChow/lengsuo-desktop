@@ -8,6 +8,10 @@
 
 use serde_json::Value;
 
+use crate::state::datasource::{
+    ConversationDeltaOp, ConversationItem, ConversationMessageKind, ConversationSnapshot,
+};
+
 /// 消息角色（对齐参考客户端基线：四类消息）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageRole {
@@ -142,6 +146,99 @@ pub fn parse_message(payload: &Value) -> Option<SessionMessage> {
     })
 }
 
+/// [`apply_delta`] 的应用结果：成功几条、跳过几条。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeltaOutcome {
+    pub applied: usize,
+    pub skipped: usize,
+}
+
+/// C1 增量批次里的一条 → 现有 [`SessionMessage`] 的容错转换。
+///
+/// §2 C1 六类枚举里 `files` / `approval` 超出现有四角色（payload 形状契约未定稿）：
+/// 转不过去就返回 `None`（调用方跳过并计数），⛔ 不往消息里塞伪数据。
+fn item_to_message(item: &ConversationItem) -> Option<SessionMessage> {
+    let role = match &item.kind {
+        ConversationMessageKind::User => MessageRole::User,
+        ConversationMessageKind::AssistantText => MessageRole::Assistant,
+        ConversationMessageKind::ToolUse => MessageRole::ToolCall,
+        ConversationMessageKind::ToolResult => MessageRole::ToolResult,
+        ConversationMessageKind::Files | ConversationMessageKind::Approval => return None,
+    };
+    let payload = &item.payload;
+    Some(SessionMessage {
+        role,
+        content: payload
+            .get("text")
+            .or_else(|| payload.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        tool: payload
+            .get("tool")
+            .or_else(|| payload.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        ts_ms: payload.get("ts_ms").and_then(Value::as_i64).unwrap_or(0),
+    })
+}
+
+/// 按 C1 的 [`ConversationDeltaOp`]（`append` / `patch`）把增量批次应用进会话流状态。
+///
+/// 纯函数（无 IO、不 panic）：只换数据来源，**不改** [`SessionMessage`] 的结构与字段。
+/// - `append`：批次按序追加；seq 取 payload 的 `seq`（缺省 `last_seq + 1`），
+///   重复 / 回退被 [`SessionStreamState::push_message`] 拒绝并计入跳过（防重放）；
+/// - `patch`：按 payload 的 `index` 定位**已有**消息，只改其 `content`
+///   （取 `text` / `content` 字段），⛔ 不动其他消息、不增删；
+///   目标缺失或字段不符 ⇒ 跳过，不 panic。
+#[must_use]
+pub fn apply_delta(state: &mut SessionStreamState, delta: &ConversationSnapshot) -> DeltaOutcome {
+    let mut outcome = DeltaOutcome::default();
+    match &delta.op {
+        ConversationDeltaOp::Append => {
+            for item in &delta.batch {
+                let Some(msg) = item_to_message(item) else {
+                    outcome.skipped += 1;
+                    continue;
+                };
+                let seq = item
+                    .payload
+                    .get("seq")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_else(|| state.last_seq() + 1);
+                if state.push_message(seq, msg) {
+                    outcome.applied += 1;
+                } else {
+                    outcome.skipped += 1;
+                }
+            }
+        }
+        ConversationDeltaOp::Patch => {
+            for item in &delta.batch {
+                let patched = item
+                    .payload
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|index| state.messages.get_mut(index as usize))
+                    .and_then(|target| {
+                        let text = item
+                            .payload
+                            .get("text")
+                            .or_else(|| item.payload.get("content"))?
+                            .as_str()?;
+                        target.content = text.to_owned();
+                        Some(())
+                    });
+                match patched {
+                    Some(()) => outcome.applied += 1,
+                    None => outcome.skipped += 1,
+                }
+            }
+        }
+    }
+    outcome
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +334,131 @@ mod tests {
         assert_eq!(s.last_seq(), 0);
         assert!(s.messages().is_empty());
         assert!(!s.is_stale());
+    }
+
+    // ----- C1 增量应用（apply_delta）：append / patch 两分支 -----
+
+    fn delta(op: ConversationDeltaOp, batch: Vec<ConversationItem>) -> ConversationSnapshot {
+        ConversationSnapshot {
+            event: "delta".into(),
+            op,
+            batch,
+        }
+    }
+
+    fn item(kind: ConversationMessageKind, payload: Value) -> ConversationItem {
+        ConversationItem { kind, payload }
+    }
+
+    #[test]
+    fn append_adds_messages_in_order() {
+        let mut s = SessionStreamState::new();
+        let _ = apply_delta(
+            &mut s,
+            &delta(
+                ConversationDeltaOp::Append,
+                vec![
+                    item(ConversationMessageKind::User, json!({"text": "第一"})),
+                    item(
+                        ConversationMessageKind::AssistantText,
+                        json!({"text": "第二"}),
+                    ),
+                ],
+            ),
+        );
+        let out = apply_delta(
+            &mut s,
+            &delta(
+                ConversationDeltaOp::Append,
+                vec![item(ConversationMessageKind::User, json!({"text": "第三"}))],
+            ),
+        );
+        assert_eq!(out.applied, 1, "append 后消息数应 +1");
+        let texts: Vec<&str> = s.messages().iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(texts, ["第一", "第二", "第三"], "顺序必须稳定");
+    }
+
+    #[test]
+    fn patch_touches_only_the_target_message() {
+        let mut s = SessionStreamState::new();
+        let _ = apply_delta(
+            &mut s,
+            &delta(
+                ConversationDeltaOp::Append,
+                vec![
+                    item(ConversationMessageKind::User, json!({"text": "甲"})),
+                    item(
+                        ConversationMessageKind::AssistantText,
+                        json!({"text": "乙"}),
+                    ),
+                ],
+            ),
+        );
+        let out = apply_delta(
+            &mut s,
+            &delta(
+                ConversationDeltaOp::Patch,
+                vec![item(
+                    ConversationMessageKind::AssistantText,
+                    json!({"index": 1, "text": "乙（改）"}),
+                )],
+            ),
+        );
+        assert_eq!((out.applied, out.skipped), (1, 0));
+        assert_eq!(s.messages()[1].content, "乙（改）", "目标消息应被改写");
+        assert_eq!(s.messages()[0].content, "甲", "patch 不得动其他消息");
+        assert_eq!(s.messages().len(), 2, "patch 不得增删消息");
+        // 目标越界 / 字段缺失 ⇒ 跳过，不 panic
+        let out = apply_delta(
+            &mut s,
+            &delta(
+                ConversationDeltaOp::Patch,
+                vec![item(
+                    ConversationMessageKind::AssistantText,
+                    json!({"index": 9}),
+                )],
+            ),
+        );
+        assert_eq!((out.applied, out.skipped), (0, 1));
+    }
+
+    #[test]
+    fn append_skips_unmappable_kinds_and_replayed_seq() {
+        let mut s = SessionStreamState::new();
+        let out = apply_delta(
+            &mut s,
+            &delta(
+                ConversationDeltaOp::Append,
+                vec![
+                    item(ConversationMessageKind::Files, json!({})),
+                    item(
+                        ConversationMessageKind::User,
+                        json!({"text": "ok", "seq": 5}),
+                    ),
+                ],
+            ),
+        );
+        assert_eq!(
+            (out.applied, out.skipped),
+            (1, 1),
+            "files / approval 现阶段映射不了 ⇒ 跳过，不伪造"
+        );
+        let out = apply_delta(
+            &mut s,
+            &delta(
+                ConversationDeltaOp::Append,
+                vec![item(
+                    ConversationMessageKind::User,
+                    json!({"text": "重放", "seq": 5}),
+                )],
+            ),
+        );
+        assert_eq!(
+            (out.applied, out.skipped),
+            (0, 1),
+            "重复 seq 必须拒绝（防重放）"
+        );
+        assert_eq!(s.messages().len(), 1);
+        assert_eq!(s.messages()[0].role, MessageRole::User);
     }
 }
