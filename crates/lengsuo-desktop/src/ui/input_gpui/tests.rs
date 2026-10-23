@@ -6,6 +6,7 @@
 //![cfg(all(test, feature = "ui"))]
 
 use crate::ui::input_area::{InputAreaState, InputMode};
+use crate::ui::input_gpui::chips::chip_row;
 use crate::ui::input_gpui::logic::{mention_hits, mode_options, MAX_MENTION_HITS};
 use crate::ui::input_gpui::{apply_mode, mode_buttons, take_outgoing};
 
@@ -150,4 +151,57 @@ fn mention_hits_match_the_candidate_filter() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].path, "docs/readme.md");
     assert_eq!(hits[0].id, "input-mention-option-docs/readme.md");
+}
+
+// ==== 附件 chip（A12 附件族）====
+
+#[test]
+fn empty_attachments_render_no_chip_row() {
+    let state = InputAreaState::new();
+    assert!(
+        chip_row(&state).is_none(),
+        "空列表不得渲染 chip 行（不留空壳）"
+    );
+}
+
+#[test]
+fn chip_row_lists_labels_and_unique_ids_in_insertion_order() {
+    let mut state = InputAreaState::new();
+    state.set_attachments([
+        "docs/wb/截图.png".to_owned(),
+        "img/粘贴.png".to_owned(),
+        "docs/wb/截图.png".to_owned(),
+    ]);
+    let chips = chip_row(&state).expect("有附件必须出 chip 行");
+    assert_eq!(
+        chips.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
+        ["截图.png", "粘贴.png"],
+        "标签取末段文件名，插入序不变，重复已去"
+    );
+    assert_eq!(chips[0].path, "docs/wb/截图.png", "移除回传完整路径");
+    assert_eq!(chips[0].id, "input-attachment-chip-docs/wb/截图.png");
+    assert_eq!(
+        chips[0].remove_id,
+        "input-attachment-remove-docs/wb/截图.png"
+    );
+    let mut ids: Vec<&str> = chips
+        .iter()
+        .flat_map(|c| [c.id.as_str(), c.remove_id.as_str()])
+        .collect();
+    ids.sort_unstable();
+    let before = ids.len();
+    ids.dedup();
+    assert_eq!(before, ids.len(), "同屏 id 不得重复");
+}
+
+#[test]
+fn removing_the_last_attachment_collapses_the_row() {
+    let mut state = InputAreaState::new();
+    state.set_attachments(["img/only.png".to_owned()]);
+    assert!(chip_row(&state).is_some());
+    assert!(state.remove_attachment("img/only.png"));
+    assert!(
+        chip_row(&state).is_none(),
+        "全部移除后 chip 行必须从元素树消失"
+    );
 }

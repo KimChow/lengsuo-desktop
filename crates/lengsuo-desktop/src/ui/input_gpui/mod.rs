@@ -20,6 +20,8 @@
 //! 弹层一律用 `div().absolute()` 自搭，**不引入任何组件库**（零新依赖）。
 
 #[cfg(feature = "ui")]
+mod chips;
+#[cfg(feature = "ui")]
 mod logic;
 #[cfg(feature = "ui")]
 mod mention;
@@ -356,6 +358,9 @@ impl Render for InputAreaGpui {
         // `@` 快选层（A12）。
         let mention_element = mention::render(self, &theme, cx);
 
+        // 附件 chip 行（A12 附件族）：空列表时是 `None`，不产生任何元素。
+        let chips_element = chips::render(self, &theme, cx);
+
         div()
             .relative()
             .flex()
@@ -365,6 +370,7 @@ impl Render for InputAreaGpui {
             .p_3()
             .bg(theme.background)
             .text_color(theme.foreground)
+            .children(chips_element)
             .child(
                 // 快选层以输入框为坐标系（`relative` 锚点），
                 // 绝对定位在输入框左下角，浮在输入区之上。

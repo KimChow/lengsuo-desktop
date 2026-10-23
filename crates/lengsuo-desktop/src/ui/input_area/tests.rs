@@ -1,7 +1,9 @@
 //! 原 `input_area.rs` 的 `mod tests`，整体迁出；测试逐条保留。
 
 // 显式导入（不用 `use super::*`）：保持测试只依赖公开契约。
-use crate::ui::input_area::{InputAreaState, InputMode, SendButtonKind, StopIntent};
+use crate::ui::input_area::{
+    chip_label, chip_order, InputAreaState, InputMode, SendButtonKind, StopIntent,
+};
 
 #[test]
 fn all_five_modes_have_unique_ids() {
@@ -207,4 +209,47 @@ fn insert_mention_is_a_noop_without_at_query() {
     area.set_draft("普通输入");
     area.insert_mention("src/main.rs");
     assert_eq!(area.draft(), "普通输入", "没有 @ 查询时不得改动草稿");
+}
+
+// ==== 附件 chip（A12 附件族）：纯函数 ====
+
+#[test]
+fn chip_label_takes_the_last_path_segment() {
+    assert_eq!(chip_label("docs/wb/截图.png"), "截图.png", "带目录取末段");
+    assert_eq!(chip_label("裸名.png"), "裸名.png", "无 / 原样返回");
+    assert_eq!(chip_label(""), "", "空串返回空串");
+}
+
+#[test]
+fn chip_order_keeps_insertion_order_and_dedupes() {
+    let ordered = chip_order(&["b.png".to_owned(), "a/b.png".to_owned(), "b.png".to_owned()]);
+    assert_eq!(
+        ordered,
+        ["b.png".to_owned(), "a/b.png".to_owned()],
+        "重复只留首次出现，插入序不变"
+    );
+    assert!(chip_order(&[]).is_empty());
+}
+
+#[test]
+fn attachments_follow_set_remove_semantics() {
+    let mut area = InputAreaState::new();
+    assert!(area.attachments().is_empty(), "默认无附件");
+    area.set_attachments([
+        "img/paste-1.png".to_owned(),
+        "img/paste-1.png".to_owned(),
+        "img/paste-2.png".to_owned(),
+    ]);
+    assert_eq!(
+        area.attachments(),
+        ["img/paste-1.png".to_owned(), "img/paste-2.png".to_owned()],
+        "set_attachments 去重保序"
+    );
+    assert!(area.remove_attachment("img/paste-1.png"));
+    assert_eq!(
+        area.attachments(),
+        ["img/paste-2.png".to_owned()],
+        "移除只删首个匹配"
+    );
+    assert!(!area.remove_attachment("不存在.png"), "无匹配不算移除");
 }
