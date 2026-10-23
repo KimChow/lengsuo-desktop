@@ -209,37 +209,163 @@ use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
-/// 主区渲染。
+/// 主区渲染（分派臂入口，签名不变）。
 ///
+/// 运行时数据未下发 ⇒ 固定渲染 fail-closed 默认模型。
 /// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
 /// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render_view(theme, &MessageCenterView::not_delivered())
+}
+
+/// 按纯数据模型渲染：标题行 + 页签 + （清单行 / 空态 / 未下发）。
+#[must_use]
+pub fn render_view(theme: &Theme, view: &MessageCenterView) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(header_row(theme, view))
+        .child(content(theme, view))
+}
+
+/// 标题行：视图标题 + 全部/待处理页签 + 全部已读。
+fn header_row(theme: &Theme, view: &MessageCenterView) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_b(px(1.))
+        .border_color(theme.border)
         .child(
             div()
-                .px_4()
-                .py_2()
+                .debug_selector(|| "msg-center-title".to_owned())
+                .mr_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
+        .child(tab_chip(theme, Tab::All, view.tab))
+        .child(tab_chip(theme, Tab::Pending, view.tab))
+        .child(div().flex_1())
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(MARK_ALL_READ),
         )
+}
+
+/// 页签：选中态用 `muted` 底色 + 前景文字；未选中弱化为次要文字。
+fn tab_chip(theme: &Theme, tab: Tab, active: Tab) -> Div {
+    let chip = if tab == active {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(theme.muted)
+            .text_color(theme.foreground)
+    } else {
+        div().px_2().py_1().text_color(theme.muted_foreground)
+    };
+    chip.text_sm().child(tab.label())
+}
+
+/// 内容区：清单 / 空态 / 未下发三态分派。
+fn content(theme: &Theme, view: &MessageCenterView) -> Div {
+    let area = div().flex_1().flex().flex_col();
+    match &view.state {
+        MessageListState::NotDelivered => area.child(centered_note(
+            theme,
+            "msg-center-notdelivered",
+            NOT_DELIVERED,
+        )),
+        MessageListState::Empty(reason) => {
+            area.child(centered_note(theme, "msg-center-empty", reason.label()))
+        }
+        MessageListState::Entries(_) => {
+            let rows = view.visible_rows();
+            // 页签过滤后为空仍是**空态**（不是空白列表）。
+            if rows.is_empty() {
+                area.child(centered_note(theme, "msg-center-empty", EMPTY))
+            } else {
+                let mut list = div().flex().flex_col();
+                for (index, entry) in rows.iter().enumerate() {
+                    list = list.child(row(theme, index, entry));
+                }
+                area.child(list)
+            }
+        }
+    }
+}
+
+/// 居中弱化说明（空态 / 未下发共用骨架）。
+fn centered_note(theme: &Theme, selector: &'static str, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .debug_selector(move || selector.to_owned())
+        .child(text)
+}
+
+/// 一条消息行：未读圆点（或「已读」）+ 发件人 + 时间 + 行操作。
+fn row(theme: &Theme, index: usize, entry: &MessageEntry) -> Div {
+    let mut line = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_b(px(1.))
+        .border_color(theme.border)
+        .debug_selector(move || format!("msg-center-row-{index}"));
+
+    // 「未读」在文案全表无 key ⇒ 未读用 accent 圆点表达；已读显示文案。
+    line = if entry.unread {
+        line.child(div().size(px(6.)).rounded_full().bg(theme.accent))
+    } else {
+        line.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(READ),
+        )
+    };
+
+    let mut actions = div()
+        .flex()
+        .gap_3()
+        .text_xs()
+        .text_color(theme.muted_foreground);
+    if entry.unread {
+        actions = actions.child(MARK_READ);
+    }
+    actions = actions.child(GOTO_MAILBOX).child(DELETE);
+
+    line.child(
+        div()
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(SharedString::from(entry.sender.clone())),
+    )
+    .child(div().flex_1())
+    .child(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(SharedString::from(entry.time.label())),
+    )
+    .child(actions)
 }
 
 #[cfg(test)]
@@ -249,17 +375,16 @@ mod tests {
 
     #[test]
     fn title_is_taken_verbatim_and_not_blank() {
-        assert_eq!(TITLE, "消息中心");
+        assert_eq!(TITLE, "\u{6d88}\u{606f}\u{4e2d}\u{5fc3}");
     }
 
     #[test]
     fn not_delivered_text_is_honest_fail_closed() {
-        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(NOT_DELIVERED, "\u{672a}\u{4e0b}\u{53d1}");
     }
 
     #[test]
     fn main_area_builds_without_panic() {
-        let theme = Theme::default();
-        let _ = main_area(&theme);
+        let _ = main_area(&Theme::default());
     }
 }
