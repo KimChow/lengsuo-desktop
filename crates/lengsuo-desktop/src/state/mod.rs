@@ -15,6 +15,7 @@ pub mod org;
 pub mod org_perm;
 pub mod palette_state;
 pub mod prefs;
+pub mod preview_kind;
 pub mod session_demo;
 pub mod session_stream;
 pub mod terminal;
