@@ -246,7 +246,8 @@ impl SessionStreamGpui {
         let mut state = SessionStreamState::new();
         let load = match src.conversation() {
             LoadState::Ready(snapshot) => {
-                apply_delta(&mut state, &snapshot);
+                // 跳过计数（DeltaOutcome）供调用方审计；视图按水合结果如实展示。
+                let _ = apply_delta(&mut state, &snapshot);
                 LoadState::Ready(())
             }
             LoadState::Loading => LoadState::Loading,
@@ -473,5 +474,117 @@ impl Render for SessionStreamGpui {
             root = root.child(render_block_with(block, &ctx));
         }
         root
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // 显式导入（不用 `use super::*`，与 render_tests 一致）：通配会把 GPUI 的
+    // `test` 宏带进作用域，遮蔽标准库 `#[test]`，导致测试无法编译。
+    use super::{load_banner_text, SessionStreamGpui};
+    use crate::state::datasource::{
+        ConversationDeltaOp, ConversationItem, ConversationMessageKind, ConversationSnapshot,
+        DemoSource, LoadState, Provenance, TerminalChunk, ToolCardSnapshot, ViewDataSource,
+    };
+    use serde_json::json;
+
+    /// 只接通 C1 的桩数据源（其余能力如实 Failed，与 DemoSource 同口径）。
+    struct StubSource {
+        conversation: LoadState<ConversationSnapshot>,
+    }
+
+    impl ViewDataSource for StubSource {
+        fn provenance(&self) -> Provenance {
+            Provenance::Demo
+        }
+
+        fn conversation(&self) -> LoadState<ConversationSnapshot> {
+            self.conversation.clone()
+        }
+
+        fn tool_cards(&self) -> LoadState<Vec<ToolCardSnapshot>> {
+            LoadState::Failed("未接通".into())
+        }
+
+        fn approvals(&self) -> LoadState<Vec<crate::state::datasource::ApprovalRequest>> {
+            LoadState::Failed("未接通".into())
+        }
+
+        fn stop_ack(&self) -> LoadState<crate::state::datasource::StopAck> {
+            LoadState::Failed("未接通".into())
+        }
+
+        fn terminal(&self) -> LoadState<TerminalChunk> {
+            LoadState::Failed("未接通".into())
+        }
+    }
+
+    #[test]
+    fn demo_is_thin_wrapper_of_from_source() {
+        let demo = SessionStreamGpui::demo();
+        let via_source = SessionStreamGpui::from_source(&DemoSource);
+        assert_eq!(
+            demo.state(),
+            via_source.state(),
+            "demo() 必须仍是 from_source 的薄封装（演示会话原样保留）"
+        );
+        assert!(demo.provenance().is_demo(), "契约未就绪 ⇒ 来源仍标 Demo");
+        assert!(
+            !demo.state().messages().is_empty(),
+            "演示视图不得退化成空列表"
+        );
+    }
+
+    #[test]
+    fn failed_source_renders_error_and_keeps_demo() {
+        let view = SessionStreamGpui::from_source(&DemoSource);
+        let reason = view.load_state().failure().expect("Failed 必须带失败原因");
+        let banner =
+            load_banner_text(view.load_state()).expect("Failed 必须产出可见错误文案，不 panic");
+        assert_eq!(banner, reason, "错误文案须原样携带失败原因");
+        assert!(!view.state().messages().is_empty());
+    }
+
+    #[test]
+    fn ready_source_hydrates_via_append_delta() {
+        let src = StubSource {
+            conversation: LoadState::Ready(ConversationSnapshot {
+                event: "delta".into(),
+                op: ConversationDeltaOp::Append,
+                batch: vec![
+                    ConversationItem {
+                        kind: ConversationMessageKind::User,
+                        payload: json!({"text": "你好"}),
+                    },
+                    ConversationItem {
+                        kind: ConversationMessageKind::AssistantText,
+                        payload: json!({"text": "在的"}),
+                    },
+                ],
+            }),
+        };
+        let view = SessionStreamGpui::from_source(&src);
+        assert_eq!(view.state().messages().len(), 2, "Ready ⇒ 按增量批次水合");
+        assert_eq!(view.state().messages()[0].content, "你好", "顺序必须稳定");
+        assert!(view.load_state().is_ready());
+        assert_eq!(
+            load_banner_text(view.load_state()),
+            None,
+            "Ready ⇒ 无提示条"
+        );
+    }
+
+    #[test]
+    fn loading_source_shows_loading_banner_not_empty_hint() {
+        let src = StubSource {
+            conversation: LoadState::Loading,
+        };
+        let view = SessionStreamGpui::from_source(&src);
+        assert!(view.state().messages().is_empty());
+        assert_eq!(
+            load_banner_text(view.load_state()).as_deref(),
+            Some("加载中…"),
+            "Loading 态显示加载文案，不拿「暂无消息」冒充"
+        );
     }
 }
