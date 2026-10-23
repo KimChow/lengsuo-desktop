@@ -35,9 +35,65 @@ fn extension(path: &str) -> String {
 
 /// 渲染文本文档预览：内容未由运行时契约下发 ⇒ 诚实显示未下发态。
 pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
-    div()
+    render_body(path, None, theme)
+}
+
+/// 按下发内容渲染文档区；`content` 为 `None` 即未下发态（⛔ 不伪造正文）。
+fn render_body(
+    path: &str,
+    content: Option<&str>,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
+    let path_row = div()
         .text_xs()
         .text_color(theme.muted_foreground)
-        .child(format!("{path}：文本预览尚未实现"))
-        .into_any_element()
+        .child(path);
+
+    let Some(content) = content else {
+        return div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(path_row)
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child("内容未下发（等运行时契约）"),
+            )
+            .into_any_element();
+    };
+
+    let total = content.chars().count();
+    let visible: String = content.chars().take(MAX_CHARS).collect();
+    // 字体按类型选择：文档形态里 md/markdown 走正文字体，其余（含未识别扩展名）等宽。
+    let mono = if is_document(path) {
+        !is_prose(path)
+    } else {
+        true
+    };
+    let mut body = div().text_sm().text_color(theme.foreground);
+    if mono {
+        body = body.font_family(theme.mono_font_family.clone());
+    }
+
+    let mut column = div().flex().flex_col().gap_2().child(path_row);
+    // 正文区：截断兜底后的内容纵向可滚（`overflow_y_scroll` 需带 id 的元素）。
+    column = column.child(
+        div()
+            .id("preview-text-body")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(body.child(visible)),
+    );
+    if let Some(note) = truncation_note(total) {
+        column = column.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(note),
+        );
+    }
+    column.into_any_element()
 }
