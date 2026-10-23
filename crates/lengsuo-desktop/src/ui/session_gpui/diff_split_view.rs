@@ -245,3 +245,51 @@ mod tests {
         );
     }
 }
+
+/// 无窗口渲染断言（`draw` 跑完整 layout + prepaint + paint）：
+/// 分栏画得出、fail-closed 的两种单列形态**元素树非空**且不 panic。
+#[cfg(all(test, feature = "ui"))]
+mod render_asserts {
+    // 显式导入（不用 `use super::*`）：父模块的 `use gpui_kit::*` 会把 GPUI 自己的
+    // `test` 属性宏带进作用域，遮蔽标准库的 `#[test]`，导致测试无法编译。
+    use gpui_kit::component::Theme;
+
+    use super::super::diff_split::{parse, DiffLayout};
+    use super::render_diff_split;
+    use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
+
+    /// 任务书样例：删一行 + 加一行 + 一行上下文 ⇒ 分栏形态。
+    const SAMPLE: &str = "--- a\n+++ b\n@@ -1,2 +1,2 @@\n-old\n+new\n ctx\n";
+    /// 只有删除行 ⇒ 红绿不成对 ⇒ fail-closed 退单列。
+    const ONE_SIDED: &str = "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-old\n";
+
+    /// ① 双列分栏真的画得出来（布局宽高非零，两栏分支没被跳过）。
+    #[test]
+    fn the_split_form_paints_a_non_empty_tree() {
+        let bounds = draw_probe(|_| render_diff_split(SAMPLE, &Theme::default()));
+        assert_rendered(bounds, "分栏形态的 diff");
+    }
+
+    /// ② 单侧缺失 ⇒ 退单列，元素树仍非空（不 panic、不空白）。
+    #[test]
+    fn a_one_sided_diff_falls_back_to_a_painted_single_column() {
+        assert!(
+            matches!(parse(ONE_SIDED), DiffLayout::Single { .. }),
+            "描述层必须先退单列"
+        );
+        let bounds = draw_probe(|_| render_diff_split(ONE_SIDED, &Theme::default()));
+        assert_rendered(bounds, "单侧缺失退回的单列");
+    }
+
+    /// ③ 解析失败 ⇒ 不 panic 且内容仍在（单列一行不丢 + 元素树非空）。
+    #[test]
+    fn an_unparsable_diff_paints_without_panicking_or_losing_lines() {
+        let garbage = "这根本不是 diff\n只是普通文本\n";
+        match parse(garbage) {
+            DiffLayout::Single { lines } => assert_eq!(lines.len(), 2, "一行都不能丢"),
+            DiffLayout::Split { .. } => panic!("解析失败必须是单列形态"),
+        }
+        let bounds = draw_probe(|_| render_diff_split(garbage, &Theme::default()));
+        assert_rendered(bounds, "解析失败退回的单列");
+    }
+}
