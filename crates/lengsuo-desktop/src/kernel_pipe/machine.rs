@@ -38,7 +38,7 @@
 //! | 格 | 本仓的落地 |
 //! |---|---|
 //! | `cpuid` | ⛔ 不链接 Chromium ⇒ 用 `core::arch::x86_64::__cpuid` **复刻** `base::CPU` 的折叠（`fold_cpuid()`，逐字照抄 `base/cpu.cc` 的 `ComputeX86FamilyAndModel`）⇒ 产出**同一形态** |
-//! | `hddid`（Windows）| ⛔ 本卡未实现读设备层（`DeviceIoControl` 要 `unsafe`，而本仓 crate 根 `#![forbid(unsafe_code)]`）⇒ 先取**空串**；解析层已写好并有单测 |
+//! | `hddid`（Windows）| ⭐ 已实现：只开 `\\.\PhysicalDrive0`（与内核侧**同一块盘**）⇒ `IOCTL_STORAGE_QUERY_PROPERTY` 两趟查描述符 ⇒ 按 `SerialNumberOffset` 取值并 `trim()`。`unsafe` **只**在 [`win_storage`] 那一小段（crate 根由 `forbid` 改成 `deny`，见 `lib.rs` 的说明）|
 //! | `computername` | ⚠️ **不是逐字同源**：内核 `gethostname()`，本仓 `COMPUTERNAME` / `HOSTNAME` 环境变量 → `/etc/hostname` ⇒ 语义冲突 **M-C** |
 //!
 //! ⚠️ macOS 的 `hddid` 一格内核侧无可移植来源 ⇒ 两侧都只能是**空串**
@@ -198,20 +198,17 @@ pub(crate) fn fold_cpuid(vendor: &str, eax: u32) -> String {
 /// 存储设备序列号（**取用前 `trim()`**）。
 ///
 /// - Linux：扫 `/sys/block/*/device/serial`，全部非空者**按字节序升序**取第一个。
-/// - Windows：**占位**（本仓禁 `unsafe`，Win32 设备读层留到下一张卡，见报告）。
+/// - Windows：只开 `\\.\PhysicalDrive0`（与内核侧**同一块盘**）⇒ 两趟查
+///   `IOCTL_STORAGE_QUERY_PROPERTY` ⇒ [`parse_storage_descriptor`] 取值。
 /// - macOS：两仓都取不到 ⇒ 空串（⛔ 不许编造）。
 fn collect_hddid() -> String {
     #[cfg(windows)]
     {
-        // ⛔ 本卡未实现：取物理盘序列号要 `DeviceIoControl`（`unsafe`），
-        // 而本仓 crate 根有 `#![forbid(unsafe_code)]`（`lib.rs`）。
-        // ⇒ 与 `launch.rs` / `server.rs` 的 Windows 占位同一处置：先取空串
-        // （⇒ 握手 fail-closed，期望的失败方式），下一张卡补上。
-        //
-        // ⭐ 补上时必须与内核侧**选同一块盘**：内核只开 `\\.\PhysicalDrive0`
-        // 一个句柄（`WindowsStorageSerial()`）⇒ 本仓也只读 0 号盘，
+        // ⭐ 与内核侧**选同一块盘**：内核只开 `\\.\PhysicalDrive0` 一个句柄
+        // （`WindowsStorageSerial()`）⇒ 本仓也只读 0 号盘，
         // ⛔ 不扫 `PhysicalDrive0..N` 再排序（那会选到不同的盘 ⇒ 语义冲突 M-G）。
-        String::new()
+        // 任何失败 ⇒ 空串 ⇒ 握手 fail-closed（期望的失败方式）。
+        win_storage::storage_serial()
     }
     #[cfg(not(windows))]
     {
@@ -340,5 +337,211 @@ fn env_non_empty(key: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows：读 `\\.\PhysicalDrive0` 的存储序列号
+// ---------------------------------------------------------------------------
+
+/// **唯一**打开的盘：`\\.\PhysicalDrive0`。
+///
+/// ⭐ **与内核侧 `WindowsStorageSerial()` 开同一块盘**（它也只开 0 号盘）
+/// ⇒ ⛔ 不许扫 `PhysicalDrive0..N` 再排序：那会选到**另一块**盘
+/// ⇒ 两侧 `hddid` 不同 ⇒ `k_machine` 不同 ⇒ 握手 fail-closed（语义冲突 M-G）。
+///
+/// ⚠️ 这个原始串字面量与普通串 `"\\\\.\\PhysicalDrive0"` 是**同一个串**
+/// （都是两个反斜杠 + 点 + 反斜杠 + `PhysicalDrive0`），见 `machine_tests.rs`。
+pub const PHYSICAL_DRIVE_PATH: &str = r"\\.\PhysicalDrive0";
+
+/// 描述符输出缓冲的**首趟**字节数。
+///
+/// ⭐ 真实 `STORAGE_DEVICE_DESCRIPTOR` 约 396 字节，但**没有**保证的上限
+/// ⇒ 给足 1024；驱动报回的 `Size` 比它大时再按报告的大小读第二趟
+/// （见 [`second_pass_len`]）。
+/// ⚠️ 上一轮实测：只给 36 字节的缓冲会让描述符越界。
+pub const DESCRIPTOR_BUFFER_LEN: usize = 1024;
+
+/// 描述符缓冲的**上限**（第二趟的防线）。
+///
+/// ⛔ 驱动报回的 `Size` 是**未校验的外部输入**：照抄分配
+/// （`vec![0u8; 0xFFFF_FFFF]`）会直接 OOM abort。超过上限 ⇒ 放弃 ⇒
+/// 返回空串（fail-closed，正是期望的失败方式）。
+pub const MAX_DESCRIPTOR_LEN: usize = 64 * 1024;
+
+/// 首趟缓冲读完后，**还需不需要**按驱动报告的大小再读一趟。
+///
+/// - 报回的大小 ≤ 首趟缓冲 ⇒ `None`（首趟里就是完整描述符）；
+/// - 报回的大小更大、且不超 [`MAX_DESCRIPTOR_LEN`] ⇒ `Some(该大小)`；
+/// - 读不出大小 / 大小超上限 ⇒ `None`（不再读，由调用方判空）。
+///
+/// ⭐ 纯函数（不碰设备）⇒ Linux 上也能测。
+#[must_use]
+pub fn second_pass_len(first_pass_len: usize, reported: Option<u32>) -> Option<usize> {
+    let reported = reported? as usize;
+    if reported > first_pass_len && reported <= MAX_DESCRIPTOR_LEN {
+        Some(reported)
+    } else {
+        None
+    }
+}
+
+/// Windows 存储设备序列号的 **FFI 段** —— 本 crate 里**唯一**允许 `unsafe` 的地方。
+///
+/// # 为什么这一段需要 `unsafe`
+///
+/// 读物理盘序列号**只能**走 `DeviceIoControl`。内核侧本来就是这么做的
+/// （`WindowsStorageSerial()`）⇒ 两边对称才能取到**同一个值**。
+/// 2026-10-24 主理人裁定：crate 根的 `forbid` 改成 `deny`，例外**只**开到这一段。
+///
+/// # 作用范围（为什么不能再小 / 再大）
+///
+/// - 本模块**只有** FFI：三个 `extern` 声明 + 七个常量 + 一个 `#[repr(C)]`
+///   输入结构 + 两个调用函数。模块内**没有**任何别的逻辑
+///   ⇒ 模块边界就是**审计边界**：读 `#[allow(unsafe_code)]` 这一行就知道
+///   `unsafe` 最远能到哪。
+/// - 模块**之外**（`machine.rs` 其余部分、整个 crate）仍是 `deny`
+///   ⇒ 任何未标注的 `unsafe` 照旧是**编译错误**。
+/// - 两个调用函数都必须在这个模块里：一个开句柄、一个发 IOCTL，都直接触
+///   `unsafe`；逐函数各标一次只会让例外**散开**、更容易漏标新加的调用。
+///
+/// ⛔ 不许把这个 `allow` 挪到 `machine.rs` 顶部或 `lib.rs`。
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod win_storage {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+
+    // `CreateFileW` / `DeviceIoControl` / `CloseHandle` 的宿主 DLL。
+    //
+    // ⭐ 手写声明，⛔ 不引 `windows-sys` / `winapi` / `windows` crate（本卡零新依赖）。
+    // ⚠️ 这里用 `//` 而不是 `///`：rustdoc 不给 `extern` 块生成文档
+    // ⇒ `///` 会触发 `unused_doc_comments`（`-D warnings` 下直接失败）。
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateFileW(
+            lp_file_name: *const u16,
+            dw_desired_access: u32,
+            dw_share_mode: u32,
+            lp_security_attributes: *mut c_void,
+            dw_creation_disposition: u32,
+            dw_flags_and_attributes: u32,
+            h_template_file: *mut c_void,
+        ) -> *mut c_void;
+
+        fn DeviceIoControl(
+            h_device: *mut c_void,
+            dw_io_control_code: u32,
+            lp_in_buffer: *mut c_void,
+            n_in_buffer_size: u32,
+            lp_out_buffer: *mut c_void,
+            n_out_buffer_size: u32,
+            lp_bytes_returned: *mut u32,
+            lp_overlapped: *mut c_void,
+        ) -> i32;
+
+        fn CloseHandle(h_object: *mut c_void) -> i32;
+    }
+
+    /// `GENERIC_READ`。
+    const GENERIC_READ: u32 = 0x8000_0000;
+    /// `FILE_SHARE_READ | FILE_SHARE_WRITE` —— ⛔ 独占打开会让别的程序读不到盘。
+    const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
+    /// `OPEN_EXISTING`。
+    const OPEN_EXISTING: u32 = 3;
+    /// `CreateFileW` 失败的返回值。
+    const INVALID_HANDLE_VALUE: *mut c_void = -1isize as *mut c_void;
+    /// `IOCTL_STORAGE_QUERY_PROPERTY`（`CTL_CODE(0x2d, 0x500, METHOD_BUFFERED, FILE_ANY_ACCESS)`）。
+    const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002D_1400;
+    /// `StorageDeviceProperty`。
+    const STORAGE_DEVICE_PROPERTY: u32 = 0;
+    /// `PropertyStandardQuery`。
+    const PROPERTY_STANDARD_QUERY: u32 = 0;
+
+    /// `STORAGE_PROPERTY_QUERY`（SDK 结构，⛔ 字段顺序不许改）。
+    ///
+    /// ⚠️ `AdditionalParameters` 是 **1 字节数组**，但 `repr(C)` 会补到 4 字节对齐
+    /// ⇒ `size_of::<Self>() == 12`，与内核侧的 `sizeof(STORAGE_PROPERTY_QUERY)` 相同。
+    /// ⛔ 输入缓冲必须**真的传**：不传时 `DeviceIoControl` 直接失败
+    /// （上一轮实测 `GetLastError() == 24`，`ERROR_BAD_LENGTH`）。
+    #[repr(C)]
+    struct StoragePropertyQuery {
+        property_id: u32,
+        query_type: u32,
+        additional_parameters: [u8; 1],
+    }
+
+    /// 打开 [`super::PHYSICAL_DRIVE_PATH`] 并读它的存储序列号；任何失败 ⇒ 空串。
+    pub(super) fn storage_serial() -> String {
+        // ⚠️ 宽字符串**必须** NUL 结尾。
+        let mut path: Vec<u16> = super::PHYSICAL_DRIVE_PATH.encode_utf16().collect();
+        path.push(0);
+        // SAFETY: `path` 是 NUL 结尾的宽字符串；以只读共享方式打开；句柄在
+        // 下面由 `CloseHandle` 关掉，不泄漏。
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ_WRITE,
+                core::ptr::null_mut(),
+                OPEN_EXISTING,
+                // 物理盘不需要任何文件属性 ⇒ 0（⛔ 不影响取到的序列号）。
+                0,
+                core::ptr::null_mut(),
+            )
+        };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return String::new();
+        }
+        let serial = read_descriptor_serial(handle);
+        // SAFETY: `handle` 由上面的 `CreateFileW` 成功返回，且只关一次。
+        unsafe { CloseHandle(handle) };
+        serial
+    }
+
+    /// 两趟查描述符并解析出序列号（两趟的判据见 [`super::second_pass_len`]）。
+    fn read_descriptor_serial(handle: *mut c_void) -> String {
+        let mut buffer = vec![0u8; super::DESCRIPTOR_BUFFER_LEN];
+        if !query(handle, &mut buffer) {
+            return String::new();
+        }
+        let reported = super::parse_storage_descriptor_size(&buffer);
+        if let Some(size) = super::second_pass_len(buffer.len(), reported) {
+            let mut bigger = vec![0u8; size];
+            if !query(handle, &mut bigger) {
+                return String::new();
+            }
+            buffer = bigger;
+        }
+        super::parse_storage_descriptor(&buffer)
+    }
+
+    /// 一次 `IOCTL_STORAGE_QUERY_PROPERTY` 调用；失败 ⇒ `false`。
+    fn query(handle: *mut c_void, buffer: &mut [u8]) -> bool {
+        let input = StoragePropertyQuery {
+            property_id: STORAGE_DEVICE_PROPERTY,
+            query_type: PROPERTY_STANDARD_QUERY,
+            additional_parameters: [0],
+        };
+        let mut returned: u32 = 0;
+        // SAFETY: `input` 是活的、repr(C) 的 `STORAGE_PROPERTY_QUERY`，长度如实
+        // 传给 `n_in_buffer_size`；`buffer` 是本函数的独占切片，长度如实传给
+        // `n_out_buffer_size`；`handle` 由调用方保证是刚打开的有效句柄。
+        // `DeviceIoControl` 只写 `buffer` 与 `returned`（都归本函数所有）。
+        let ok = unsafe {
+            DeviceIoControl(
+                handle,
+                IOCTL_STORAGE_QUERY_PROPERTY,
+                (&input as *const StoragePropertyQuery)
+                    .cast_mut()
+                    .cast::<c_void>(),
+                size_of::<StoragePropertyQuery>() as u32,
+                buffer.as_mut_ptr().cast::<c_void>(),
+                buffer.len() as u32,
+                &mut returned,
+                core::ptr::null_mut(),
+            )
+        };
+        ok != 0
     }
 }
