@@ -33,13 +33,13 @@ const DISPATCH_NOTICE_SELECTOR: &str = "preview-dispatch-notice";
 /// 同色系允许复用（主题 token 有限），但不同大类的徽标必须有可辨差异。
 #[must_use]
 fn badge_bg(kind: PreviewKind, theme: &gpui_kit::component::Theme) -> Hsla {
-    let base: Hsla = match kind {
-        PreviewKind::Code => theme.accent.into(),
-        PreviewKind::Text => theme.muted.into(),
-        PreviewKind::Image => theme.foreground.into(),
-        PreviewKind::Pdf => theme.accent.into(),
-        PreviewKind::Office => theme.muted.into(),
-        PreviewKind::Diagram | PreviewKind::Other => theme.border.into(),
+    let base = match kind {
+        PreviewKind::Code => theme.accent,
+        PreviewKind::Text => theme.muted,
+        PreviewKind::Image => theme.foreground,
+        PreviewKind::Pdf => theme.accent,
+        PreviewKind::Office => theme.muted,
+        PreviewKind::Diagram | PreviewKind::Other => theme.border,
     };
     Hsla {
         a: BADGE_WASH_ALPHA,
@@ -114,7 +114,7 @@ pub(super) fn render_preview(
                 .child(badge(kind, theme)),
         )
         // 折叠父路径：无分隔符（父路径为空串）时不渲染这一行。
-        .child((!dir.is_empty()).then(|| {
+        .children((!dir.is_empty()).then(|| {
             div()
                 .w_full()
                 .truncate()
@@ -123,7 +123,7 @@ pub(super) fn render_preview(
                 .child(dir)
         }))
         // fail-closed：内容未下发时必须明示，不得退化成看似空白的「正常」状态。
-        .child((!content_dispatched(kind)).then(|| dispatch_notice(theme)))
+        .children((!content_dispatched(kind)).then(|| dispatch_notice(theme)))
         .child(body)
         .child(external_editor_entry(theme))
 }
@@ -173,15 +173,19 @@ fn unsupported(theme: &gpui_kit::component::Theme) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{badge_bg, header_text};
+    use super::{badge_bg, header_text, BADGE_WASH_ALPHA};
     use crate::state::preview_kind::PreviewKind;
-    use gpui_kit::component::Theme;
+    use gpui_kit::component::{Theme, ThemeColor};
+    use gpui_kit::Hsla;
 
     #[test]
     fn header_text_splits_at_last_separator() {
         assert_eq!(
             header_text("src/ui/right_panel_gpui/preview.rs"),
-            ("preview.rs".to_owned(), "src/ui/right_panel_gpui".to_owned())
+            (
+                "preview.rs".to_owned(),
+                "src/ui/right_panel_gpui".to_owned()
+            )
         );
         assert_eq!(
             header_text("docs/a.b/notes.md"),
@@ -191,18 +195,145 @@ mod tests {
 
     #[test]
     fn header_text_without_separator_has_empty_dir() {
-        assert_eq!(header_text("README.md"), ("README.md".to_owned(), String::new()));
-        assert_eq!(header_text("a\\b\\c.rs"), ("a\\b\\c.rs".to_owned(), String::new()));
+        assert_eq!(
+            header_text("README.md"),
+            ("README.md".to_owned(), String::new())
+        );
+        assert_eq!(
+            header_text("a\\b\\c.rs"),
+            ("a\\b\\c.rs".to_owned(), String::new())
+        );
+    }
+
+    /// 默认主题的色 token 全是占位黑（h/s/l 皆为 0），
+    /// 断言「不同类型不同色」前先铺一组**有区分度**的 token。
+    fn theme_with_distinct_tokens() -> Theme {
+        let colors = ThemeColor {
+            accent: Hsla {
+                h: 0.58,
+                s: 0.8,
+                l: 0.5,
+                a: 1.0,
+            },
+            muted: Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.9,
+                a: 1.0,
+            },
+            foreground: Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.1,
+                a: 1.0,
+            },
+            border: Hsla {
+                h: 0.33,
+                s: 0.3,
+                l: 0.7,
+                a: 1.0,
+            },
+            ..ThemeColor::default()
+        };
+        Theme::from(&colors)
     }
 
     #[test]
     fn badge_bg_differs_across_kinds() {
-        let theme = Theme::default();
+        let theme = theme_with_distinct_tokens();
         let code = badge_bg(PreviewKind::Code, &theme);
         let text = badge_bg(PreviewKind::Text, &theme);
         let image = badge_bg(PreviewKind::Image, &theme);
         assert_ne!(code, text, "代码与文本的徽标底色必须可辨差异");
         assert_ne!(code, image, "代码与图片的徽标底色必须可辨差异");
         assert_ne!(text, image, "文本与图片的徽标底色必须可辨差异");
+    }
+
+    #[test]
+    fn badge_bg_takes_colors_from_theme_tokens_only() {
+        // 颜色本体必须逐字来自主题 token，仅透明度是徽标自己的样式参数。
+        let theme = theme_with_distinct_tokens();
+        let washed = |c: Hsla| Hsla {
+            a: BADGE_WASH_ALPHA,
+            ..c
+        };
+        assert_eq!(badge_bg(PreviewKind::Code, &theme), washed(theme.accent));
+        assert_eq!(badge_bg(PreviewKind::Text, &theme), washed(theme.muted));
+        assert_eq!(
+            badge_bg(PreviewKind::Image, &theme),
+            washed(theme.foreground)
+        );
+        assert_eq!(badge_bg(PreviewKind::Pdf, &theme), washed(theme.accent));
+        assert_eq!(badge_bg(PreviewKind::Office, &theme), washed(theme.muted));
+        assert_eq!(badge_bg(PreviewKind::Diagram, &theme), washed(theme.border));
+        assert_eq!(badge_bg(PreviewKind::Other, &theme), washed(theme.border));
+    }
+}
+
+/// 无窗口渲染断言：真的跑一遍 layout + prepaint + paint，
+/// 按 `debug_selector` 定位徽标 / 提示行节点（只在 debug + test-support 构建记录）。
+/// ⛔ 不用 `use super::*`（GPUI 的 `test` 宏会遮蔽标准库 `#[test]`）。
+#[cfg(all(test, feature = "ui"))]
+mod render_tests {
+    use gpui_kit::component::Theme;
+    use gpui_kit::{
+        div, point, px, size, AnyElement, Bounds, IntoElement, ParentElement as _, Pixels,
+        TestAppContext,
+    };
+
+    use super::{render_preview, BADGE_SELECTOR, DISPATCH_NOTICE_SELECTOR};
+    use crate::ui::right_panel::PreviewContent;
+
+    fn target(path: &str) -> PreviewContent {
+        PreviewContent::Target {
+            path: path.to_owned(),
+        }
+    }
+
+    /// 无窗口渲染一帧，返回 `selector` 命名节点的实际布局 bounds。
+    fn draw_and_find(
+        build: impl FnOnce(&mut TestAppContext) -> AnyElement,
+        selector: &'static str,
+    ) -> Option<Bounds<Pixels>> {
+        let mut ctx = TestAppContext::single();
+        // 接线层统一用主题 token 取色；不预置全局 Theme 会 panic。
+        ctx.update(|cx| cx.set_global(Theme::default()));
+
+        let element = build(&mut ctx);
+        let visual = ctx.add_empty_window();
+        let (_layout, _prepaint) = visual.draw(
+            point(px(0.0), px(0.0)),
+            size(px(800.0), px(600.0)),
+            |_window, _cx| div().child(element).into_any_element(),
+        );
+        visual.debug_bounds(selector)
+    }
+
+    #[test]
+    fn badge_node_is_locatable_and_laid_out() {
+        for path in ["src/main.rs", "docs/spec.pdf", "notes.md"] {
+            let bounds = draw_and_find(
+                |_| render_preview(&target(path), &Theme::default()).into_any_element(),
+                BADGE_SELECTOR,
+            );
+            let bounds =
+                bounds.unwrap_or_else(|| panic!("{path}：徽标节点没进入渲染帧（未记录选择器）"));
+            assert!(
+                bounds.size.width > px(0.0) && bounds.size.height > px(0.0),
+                "{path}：徽标宽高必须非零，真的参与排版"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_notice_is_locatable_while_undispatched() {
+        let bounds = draw_and_find(
+            |_| render_preview(&target("notes.md"), &Theme::default()).into_any_element(),
+            DISPATCH_NOTICE_SELECTOR,
+        );
+        assert!(
+            bounds.is_some(),
+            "内容未下发时必须显示统一提示行（fail-closed）"
+        );
     }
 }
