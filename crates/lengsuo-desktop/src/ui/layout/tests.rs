@@ -217,7 +217,7 @@ fn render_composes_all_three_regions_and_input() {
     assert_eq!(view.right_panel.tabs.len(), 3);
     assert!(matches!(
         view.right_panel.content,
-        RightPanelContent::Placeholder { .. }
+        RightPanelContent::Tasks
     ));
 
     assert_eq!(view.input.modes.len(), 5);

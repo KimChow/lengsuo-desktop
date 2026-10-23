@@ -2,7 +2,8 @@
 //!
 //! 本模块只把版式状态（见 [`RightPanelLayout`]）与
 //! [`SessionStreamState`] 转成渲染描述：
-//! - **任务清单**本卡只有占位说明（数据源另卡接入）；
+//! - **任务清单**出视图体（任务行 + 空态）；任务状态来源在运行时，
+//!   契约未就绪前接线层用演示数据并如实标注（不伪造进度）；
 //! - **文件预览**只读消费会话流的**跳转意图**（[`FileIntent`]），显示「要预览哪个文件」；
 //!   ⛔ **不读文件、不渲染文件内容**（预览器属 P3，见 `docs/ui-parity-spec.md` A14）；
 //! - **审批待办**只读消费 `pending_approvals()`，渲染为审批卡片；
@@ -15,7 +16,7 @@ use crate::state::session_stream::SessionStreamState;
 use crate::ui::approval_card::{self, ApprovalCardView};
 use crate::ui::layout::{RightPanelLayout, RightPanelTab};
 
-/// 任务清单 tab 的占位文案。
+/// 任务清单 tab 的历史占位文案（兼容入口 [`tab_placeholder`] 仍在用）。
 pub const TASKS_PLACEHOLDER: &str = "任务清单占位：等待任务状态接入后显示待办与进度";
 /// 文件预览 tab 的占位文案。
 pub const PREVIEW_PLACEHOLDER: &str = "文件预览占位：选择文件后在此显示预览";
@@ -27,7 +28,7 @@ pub const PREVIEW_EMPTY_TEXT: &str = "未选择文件";
 pub const PREVIEW_UNSUPPORTED_TEXT: &str =
     "预览器尚未实现（属 P3）：当前只显示待预览文件，不渲染内容";
 
-/// tab 的占位文案；审批待办由状态驱动，没有占位。
+/// tab 的占位文案（兼容入口）；任务清单已改视图体，审批待办由状态驱动。
 #[must_use]
 pub const fn tab_placeholder(tab: RightPanelTab) -> Option<&'static str> {
     match tab {
@@ -59,13 +60,15 @@ pub enum PreviewContent {
 pub enum RightPanelContent {
     /// 折叠态：不渲染内容，只保留 tab 入口。
     Collapsed,
-    /// 占位内容（任务清单 / 文件预览）。
-    Placeholder { text: &'static str },
+    /// 任务清单内容：任务行 + 空态（视图体在接线层 `right_panel_gpui::tasks`）。
+    ///
+    /// 任务状态来源在运行时（契约未就绪）⇒ 当前由接线层出演示数据并如实标注。
+    Tasks,
     /// 预览内容（当前要预览的文件）。
     Preview(PreviewContent),
     /// 待审批卡片（只含未决策项）。
     Approvals(Vec<ApprovalCardView>),
-    /// 审批待办为空。
+    /// 空态（未选择文件 / 审批待办为空）。
     Empty { text: &'static str },
 }
 
@@ -126,9 +129,7 @@ pub fn render_with_preview(
         RightPanelContent::Collapsed
     } else {
         match active_tab {
-            RightPanelTab::Tasks => RightPanelContent::Placeholder {
-                text: TASKS_PLACEHOLDER,
-            },
+            RightPanelTab::Tasks => RightPanelContent::Tasks,
             RightPanelTab::Preview => match preview {
                 Some(intent) => RightPanelContent::Preview(PreviewContent::Target {
                     path: intent.path.clone(),
@@ -206,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn tasks_and_preview_are_explicit_placeholders() {
+    fn tab_placeholder_entries_are_kept_for_compat() {
         let mut layout = RightPanelLayout::new();
         assert_eq!(
             tab_placeholder(RightPanelTab::Tasks),
@@ -333,9 +334,7 @@ mod tests {
         );
         assert_eq!(
             view.content,
-            RightPanelContent::Placeholder {
-                text: TASKS_PLACEHOLDER
-            },
+            RightPanelContent::Tasks,
             "任务清单 tab 的既有行为不得回归"
         );
     }
