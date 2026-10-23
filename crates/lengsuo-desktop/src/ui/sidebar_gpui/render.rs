@@ -16,6 +16,22 @@ use crate::ui::sidebar::{SessionRow, SidebarSection, SidebarView};
 
 use super::{row_marks, select_row, toggle_archived, MarkKind, SidebarViewGpui};
 
+/// 测试侧宿主实体：把手工拼的元素树包进一个 `Render` 里画。
+///
+/// 带 `on_click` 的交互元素在绘制期要取「当前视图」（gpui 的
+/// `rendered_entity_stack` 不能为空），裸画会 panic；包一层实体即可。
+#[cfg(test)]
+pub(in crate::ui::sidebar_gpui) struct HostedElement(pub AnyElement);
+
+#[cfg(test)]
+impl Render for HostedElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        // 这个 gpui 版本的 AnyElement 不可 Clone ⇒ 取走元素，后续帧给空占位
+        // （无窗口断言只画一帧，够用）。
+        std::mem::replace(&mut self.0, div().into_any_element())
+    }
+}
+
 /// 实心小角标：警示底色 + 高对比前景（计数角标与未读标记共用同一档样式）。
 fn solid_badge(text: &str, theme: &Theme) -> AnyElement {
     div()
@@ -191,4 +207,115 @@ pub(super) fn render_empty(text: &str, theme: &Theme) -> impl IntoElement {
         .text_sm()
         .text_color(theme.muted_foreground)
         .child(text.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    //! A15 会话列表保真断言：① 置顶排序 ② 未读可见标记 ③ 分组整帧可渲染。
+    //!
+    //! 显式导入、不写 `use super::*`：避免 glob 带入的 GPUI `test` 属性宏
+    //! 遮蔽标准库 `#[test]`（同 render_assert_tests 的约定）。
+    //! 元素级断言复用 render_assert_tests 的无窗口绘制骨架。
+
+    use gpui_kit::component::Theme;
+    use gpui_kit::{div, AppContext as _, IntoElement as _, ParentElement as _, Styled as _};
+
+    use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
+    use crate::ui::sidebar::{self, SessionEntry, SessionRow, SidebarState, SidebarView};
+    use crate::ui::sidebar_gpui::{demo_state, row_marks, MarkKind, SidebarViewGpui};
+
+    use super::{render_mark, render_section, HostedElement};
+
+    /// 取一条会话在渲染描述里的行（找不到即测试失败）。
+    fn row_of<'a>(view: &'a SidebarView, id: &str) -> &'a SessionRow {
+        view.sections
+            .iter()
+            .flat_map(|section| section.rows.iter())
+            .find(|row| row.id == id)
+            .unwrap_or_else(|| panic!("渲染描述里找不到会话行 {id}"))
+    }
+
+    /// ① 置顶排序：注入时置顶放在最后，摊平后仍必须排在所有非置顶之前。
+    #[test]
+    fn pinned_rows_sort_before_regular() {
+        let mut state = SidebarState::new();
+        state.set_entries(vec![
+            SessionEntry::new("regular-1", "普通会话一"),
+            SessionEntry::new("pinned", "置顶会话").with_pinned(true),
+            SessionEntry::new("regular-2", "普通会话二"),
+        ]);
+        let view = sidebar::render(&state, 260.0);
+        let order: Vec<&str> = view
+            .sections
+            .iter()
+            .flat_map(|section| section.rows.iter().map(|row| row.id.as_str()))
+            .collect();
+        assert_eq!(
+            order,
+            vec!["pinned", "regular-1", "regular-2"],
+            "置顶项必须排在非置顶之前"
+        );
+    }
+
+    /// ①（demo 数据源同样成立）：第一条可见行就是置顶会话。
+    #[test]
+    fn demo_state_puts_pinned_row_first() {
+        let view = sidebar::render(&demo_state(), 260.0);
+        let first = &view.sections[0].rows[0];
+        assert_eq!(first.id, "demo-pinned", "demo 的置顶会话必须排第一");
+        assert!(first.pinned);
+    }
+
+    /// ② 未读可见标记：未读行恰好一个「未读」标记，非未读行不得带。
+    #[test]
+    fn unread_rows_carry_visible_mark() {
+        let mut state = SidebarState::new();
+        state.set_entries(vec![
+            SessionEntry::new("unread", "有未读").with_unread(true),
+            SessionEntry::new("plain", "无未读"),
+        ]);
+        let view = sidebar::render(&state, 260.0);
+        let unread_row_marks = row_marks(row_of(&view, "unread"));
+        let unread_marks: Vec<_> = unread_row_marks
+            .iter()
+            .filter(|mark| mark.kind == MarkKind::Unread)
+            .collect();
+        assert_eq!(unread_marks.len(), 1, "未读行必须恰好一个未读标记");
+        assert_eq!(unread_marks[0].label, "未读", "未读标记文案必须逐字");
+        assert!(
+            row_marks(row_of(&view, "plain"))
+                .iter()
+                .all(|mark| mark.kind != MarkKind::Unread),
+            "非未读行不得出现未读标记"
+        );
+    }
+
+    /// ②（元素级）：未读标记走实心角标分支，真的画得出来且布局非零。
+    #[test]
+    fn unread_mark_element_renders_nonzero() {
+        let view = sidebar::render(&demo_state(), 260.0);
+        let mark = row_marks(row_of(&view, "demo-pinned"))
+            .into_iter()
+            .find(|mark| mark.kind == MarkKind::Unread)
+            .expect("demo 置顶会话应带未读标记");
+        let bounds = draw_probe(|_| render_mark(&mark, &Theme::default()));
+        assert_rendered(bounds, "未读标记（实心角标）");
+    }
+
+    /// ③ 会话分组整帧不崩 + 布局非零（置顶 / 全部会话 / 归档按钮同屏）。
+    #[test]
+    fn demo_sections_render_nonzero() {
+        let view = sidebar::render(&demo_state(), 260.0);
+        let bounds = draw_probe(|ctx| {
+            let entity = ctx.new(|_| SidebarViewGpui::demo());
+            let theme = Theme::default();
+            let mut list = div().flex().flex_col();
+            for section in &view.sections {
+                list = list.child(render_section(section, &entity, &theme));
+            }
+            ctx.new(|_| HostedElement(list.into_any_element()))
+                .into_any_element()
+        });
+        assert_rendered(bounds, "会话分组");
+    }
 }
