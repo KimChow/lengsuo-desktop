@@ -61,7 +61,11 @@ pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyEleme
 }
 
 /// 面板主体：工具栏在上，页面占位区撑满余下空间。
-fn render_panel(path: &str, state: &PdfPanelState, theme: &gpui_kit::component::Theme) -> AnyElement {
+fn render_panel(
+    path: &str,
+    state: &PdfPanelState,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -121,7 +125,11 @@ fn render_toolbar(state: &PdfPanelState, theme: &gpui_kit::component::Theme) -> 
 }
 
 /// 48×48 的工具按钮；点击只上报意图（不判定、不改宿主状态）。
-fn tool_button(label: &'static str, intent: String, theme: &gpui_kit::component::Theme) -> AnyElement {
+fn tool_button(
+    label: &'static str,
+    intent: String,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
     div()
         .flex_none()
         .w_12()
@@ -183,8 +191,51 @@ fn render_page_area(path: &str, theme: &gpui_kit::component::Theme) -> AnyElemen
                     div()
                         .text_xs()
                         .font_family(theme.mono_font_family.clone())
-                        .child(format!("{path}")),
+                        .child(path.to_string()),
                 ),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{page_label, page_step, zoom_label, zoom_step, PdfPanelState};
+
+    #[test]
+    fn page_step_clamps_to_bounds() {
+        assert_eq!(page_step(12, 12, 1), 12, "上界夹紧：不越过总页数");
+        assert_eq!(page_step(1, 12, -1), 1, "下界夹紧：不小于第 1 页");
+        assert_eq!(page_step(3, 12, 1), 4);
+        assert_eq!(page_step(3, 12, -1), 2);
+        assert_eq!(page_step(1, 0, 1), 1, "未下发（total=0）：停在 1");
+    }
+
+    #[test]
+    fn page_label_formats() {
+        assert_eq!(page_label(3, 12), "3 / 12");
+        assert_eq!(page_label(1, 1), "1 / 1");
+        assert_eq!(page_label(1, 0), "– / –", "未下发：不伪造页码");
+    }
+
+    #[test]
+    fn zoom_step_clamps() {
+        assert_eq!(zoom_step(4.0, 0.5), 4.0, "上界夹紧：不越过 400%");
+        assert_eq!(zoom_step(0.25, -0.5), 0.25, "下界夹紧：不小于 25%");
+        assert_eq!(zoom_step(1.0, 0.25), 1.25);
+    }
+
+    #[test]
+    fn zoom_label_formats() {
+        assert_eq!(zoom_label(1.0), "100%");
+        assert_eq!(zoom_label(1.25), "125%");
+        assert_eq!(zoom_label(0.25), "25%");
+    }
+
+    #[test]
+    fn undelivered_state_is_honest() {
+        let state = PdfPanelState::undelivered();
+        assert_eq!(state.total, 0);
+        assert_eq!(page_label(state.page, state.total), "– / –");
+        assert_eq!(zoom_label(state.zoom), "100%");
+    }
 }
