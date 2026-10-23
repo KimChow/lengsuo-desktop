@@ -387,8 +387,10 @@ mod tests {
                     "账号名必须可定位"
                 );
                 assert!(
-                    lines.iter().any(|line| line.primary == "月度限额"
-                        && line.secondary == "已用 3 / 10 积分"),
+                    lines
+                        .iter()
+                        .any(|line| line.primary == "月度限额"
+                            && line.secondary == "已用 3 / 10 积分"),
                     "订阅用量必须可定位（配额 + 已用 + 单位）"
                 );
             }
@@ -398,8 +400,7 @@ mod tests {
 
     #[test]
     fn failed_account_state_keeps_error_text() {
-        let body =
-            AccountPanelBody::from_account(LoadState::Failed("账号服务不可用".to_string()));
+        let body = AccountPanelBody::from_account(LoadState::Failed("账号服务不可用".to_string()));
         assert!(
             matches!(body, AccountPanelBody::Failed(ref reason) if reason == "账号服务不可用"),
             "fail-closed：失败必须带原因透出，不 panic、不退化成空"
@@ -419,7 +420,10 @@ mod tests {
         assert_eq!(CapabilityMark::Available.label(), "可用");
         assert_eq!(CapabilityMark::Unavailable.label(), "不可用");
         assert_eq!(CapabilityMark::NotIssued.label(), "未下发");
-        assert_ne!(CapabilityMark::NotIssued.label(), CapabilityMark::Available.label());
+        assert_ne!(
+            CapabilityMark::NotIssued.label(),
+            CapabilityMark::Available.label()
+        );
     }
 
     #[test]
