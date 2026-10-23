@@ -1,16 +1,12 @@
 //! 助理协作空间主区视图（波次 5，卡 `ui-colleagues-panel`）。
 //!
-//! 分层约定（同 `env_gpui`）：
-//! - **纯数据层**（本文件上半，无 GPUI 依赖）：条目 / 置顶分组 / 三态（未下发 / 空态 / 清单）；
-//! - **GPUI 层**（[`main_area`]）：把视图模型接到元素树，颜色一律取主题 token。
+//! 分层（同 `env_gpui`）：上半**纯数据层**（无 GPUI 依赖：条目 / 置顶分组 / 三态），
+//! 下半 **GPUI 层**（[`main_area`] 接元素树，颜色一律取主题 token）。
 //!
-//! 硬约束：
-//! - **fail-closed**：数据未下发必须如实显示「未下发」，不得退化成空列表；
-//! - **只做界面**：不判权限、不持凭据、不直连运行时；
-//! - ⛔ **不伪造服务端数据**（界面文案逐字取自界面文案全表命名空间 `colleagues`）。
-//!
-//! 数据源在运行时侧：本模块当前如实渲染「未下发」态，等跨线契约就绪后由
-//! `ui-*-switch-source` 类卡换数据源（**只换数据源、不改视图结构**）。
+//! 硬约束：**fail-closed**——数据未下发必须如实显示「未下发」，不得退化成空列表；
+//! 只做界面（不判权限 / 不持凭据 / 不直连运行时）；⛔ 不伪造服务端数据，
+//! 界面文案逐字取自文案全表命名空间 `colleagues`。数据源就绪后由
+//! `ui-*-switch-source` 类卡接入（只换数据源、不改视图结构）。
 #![cfg(feature = "ui")]
 
 use gpui_kit::base::StyledExt as _;
@@ -29,23 +25,18 @@ pub const NOT_DELIVERED: &str = "未下发";
 pub const EMPTY_HINT: &str = "暂无可用助理，创建或获取授权后会显示在这里。";
 /// 计数文案模板（colleagues.countLabel），`{count}` 为占位符。
 pub const COUNT_LABEL_TEMPLATE: &str = "共 {count} 位助理";
-/// 状态标签：工作中（colleagues.statusAvailable）。
+/// 状态标签（colleagues.statusAvailable / statusIdle）。
 pub const STATUS_AVAILABLE: &str = "工作中";
-/// 状态标签：已停用（colleagues.statusIdle）。
 pub const STATUS_IDLE: &str = "已停用";
-/// 操作：置顶（colleagues.action.pin）。
+/// 操作行文案（colleagues.action.pin / editProfile / pauseColleague）。
 pub const ACTION_PIN: &str = "置顶";
-/// 操作：编辑档案（colleagues.action.editProfile）。
 pub const ACTION_EDIT_PROFILE: &str = "编辑档案";
-/// 操作：暂停助理（colleagues.action.pauseColleague）。
 pub const ACTION_PAUSE: &str = "暂停助理";
 
 /// 助理状态（标签见 [`STATUS_AVAILABLE`] / [`STATUS_IDLE`]）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ColleagueStatus {
-    /// 工作中。
     Available,
-    /// 已停用。
     Idle,
 }
 
@@ -105,9 +96,7 @@ impl ColleaguesView {
         Self { state }
     }
 
-    /// 清单行序：置顶在前、组内保持传入顺序（稳定）。
-    ///
-    /// 非清单态返回空表（元素树据此退到空态 / 未下发分支）。
+    /// 清单行序：置顶在前、组内保持传入顺序（稳定）；非清单态返回空表。
     #[must_use]
     pub fn ordered_entries(&self) -> Vec<&ColleagueEntry> {
         let ColleaguesState::Entries(entries) = &self.state else {
@@ -131,10 +120,7 @@ impl ColleaguesView {
 
 // ---------------- GPUI 层 ----------------
 
-/// 主区渲染。
-///
-/// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
-/// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
+/// 主区渲染（返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致）。
 ///
 /// 数据源尚未接入：如实渲染「未下发」态。
 #[must_use]
@@ -155,13 +141,11 @@ fn render(theme: &Theme, view: &ColleaguesView) -> Div {
         ColleaguesState::NotDelivered => panel.child(centered_note(theme, NOT_DELIVERED)),
         ColleaguesState::Empty => panel.child(centered_note(theme, EMPTY_HINT)),
         ColleaguesState::Entries(_) => panel.child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_4()
-                .children(view.ordered_entries().into_iter().map(|e| entry_row(theme, e))),
+            div().flex_1().flex().flex_col().gap_2().p_4().children(
+                view.ordered_entries()
+                    .into_iter()
+                    .map(|e| entry_row(theme, e)),
+            ),
         ),
     }
 }
@@ -190,11 +174,12 @@ fn header(theme: &Theme, view: &ColleaguesView) -> Div {
                 .child(SUBTITLE),
         );
     if let ColleaguesState::Entries(_) = view.state {
+        let count = SharedString::from(view.count_label());
         head = head.child(
             div()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(SharedString::from(view.count_label())),
+                .child(count),
         );
     }
     head
@@ -286,13 +271,22 @@ fn chip(theme: &Theme, text: &'static str, color: Hsla) -> Div {
 
 #[cfg(test)]
 mod tests {
+    //! 显式 import（不写 `use super::*`，避免 GPUI 的 test 属性宏遮蔽标准库 `#[test]`）。
     use super::{
-        main_area, ColleagueEntry, ColleagueStatus, ColleaguesState, ColleaguesView, ACTION_PIN,
-        EMPTY_HINT, STATUS_AVAILABLE, STATUS_IDLE, SUBTITLE, TITLE,
+        entry_row, header, main_area, render, ColleagueEntry, ColleagueStatus, ColleaguesState,
+        ColleaguesView, ACTION_EDIT_PROFILE, ACTION_PAUSE, ACTION_PIN, COUNT_LABEL_TEMPLATE,
+        EMPTY_HINT, NOT_DELIVERED, STATUS_AVAILABLE, STATUS_IDLE, SUBTITLE, TITLE,
     };
     use gpui_kit::component::Theme;
+    use gpui_kit::{
+        div, point, px, size, Bounds, Div, InteractiveElement as _, IntoElement,
+        ParentElement as _, Pixels, Styled as _, TestAppContext,
+    };
 
-    /// 样例条目（名称 / 头衔逐字取自文案全表 colleagues.cards.*）。
+    /// 探针选择器（每个用例独立窗口，名字固定即可）。
+    const PROBE: &str = "colleagues-panel-probe";
+
+    /// 样例条目（名称 / 头衔 / 标签逐字取自文案全表 colleagues.cards.* / colleagues.tag.*）。
     fn sample_entries() -> Vec<ColleagueEntry> {
         vec![
             ColleagueEntry {
@@ -317,6 +311,30 @@ mod tests {
                 capabilities: &["数据分析", "报告生成"],
             },
         ]
+    }
+
+    /// 无窗口绘制一帧，返回探针实际布局 bounds（None = 没进渲染帧）。
+    fn draw_probe(element: Div) -> Option<Bounds<Pixels>> {
+        let mut ctx = TestAppContext::single();
+        ctx.update(|cx| cx.set_global(Theme::default()));
+        let probe = div()
+            .flex()
+            .items_start()
+            .child(div().debug_selector(|| PROBE.to_owned()).child(element));
+        let visual = ctx.add_empty_window();
+        let (_layout, _prepaint) = visual.draw(
+            point(px(0.0), px(0.0)),
+            size(px(800.0), px(600.0)),
+            move |_window, _cx| probe.into_any_element(),
+        );
+        visual.debug_bounds(PROBE)
+    }
+
+    /// bounds 存在且宽高非零（真的参与排版，不是只构造出来了）。
+    fn assert_rendered(bounds: Option<Bounds<Pixels>>, what: &str) {
+        let bounds = bounds.unwrap_or_else(|| panic!("{what}：没进入渲染帧"));
+        assert!(bounds.size.width > px(0.0), "{what}：布局宽度为 0");
+        assert!(bounds.size.height > px(0.0), "{what}：布局高度为 0");
     }
 
     #[test]
@@ -353,14 +371,49 @@ mod tests {
             "选择一位助理加入任务，让专业角色帮你完成研究、分析和内容创作。"
         );
         assert_eq!(EMPTY_HINT, "暂无可用助理，创建或获取授权后会显示在这里。");
+        assert_eq!(COUNT_LABEL_TEMPLATE, "共 {count} 位助理");
         assert_eq!(STATUS_AVAILABLE, "工作中");
         assert_eq!(STATUS_IDLE, "已停用");
         assert_eq!(ACTION_PIN, "置顶");
+        assert_eq!(ACTION_EDIT_PROFILE, "编辑档案");
+        assert_eq!(ACTION_PAUSE, "暂停助理");
+        assert_eq!(NOT_DELIVERED, "未下发");
+        // 样例条目的名称 / 头衔 / 标签同样逐字
+        assert_eq!(sample_entries()[0].name, "小研");
+        assert_eq!(sample_entries()[0].title, "需求分析与拆解专家");
+        assert_eq!(sample_entries()[0].capabilities, &["深度研究", "文档撰写"]);
     }
 
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    /// 元素树定位：标题节点 + ≥3 个清单节点逐一真实绘制且布局非零。
+    #[test]
+    fn element_tree_locates_title_and_list_rows() {
+        let theme = Theme::default();
+        let view = ColleaguesView::build(Some(sample_entries()));
+        assert_rendered(draw_probe(header(&theme, &view)), "标题节点");
+        let ordered = view.ordered_entries();
+        assert!(ordered.len() >= 3, "样例至少 3 行，元素树断言才有意义");
+        for entry in ordered {
+            assert_rendered(draw_probe(entry_row(&theme, entry)), "清单行");
+        }
+    }
+
+    /// 三态整帧绘制均不 panic 且非零（含 fail-closed 的「未下发」）。
+    #[test]
+    fn all_states_render_nonzero() {
+        let theme = Theme::default();
+        let views = [
+            ColleaguesView::build(None),
+            ColleaguesView::build(Some(Vec::new())),
+            ColleaguesView::build(Some(sample_entries())),
+        ];
+        for view in &views {
+            assert_rendered(draw_probe(render(&theme, view)), "三态整帧");
+        }
     }
 }
