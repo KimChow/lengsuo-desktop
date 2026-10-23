@@ -64,12 +64,12 @@ git add -A && git commit -m "..." && git push   # 提交本机改动
 | 第三方上游源码 | 开源项目本体 | `<ref-root>/upstream/<name>/` | **不进**，各机自 clone |
 | 我方对标/逆向分析产物 | 复现文档、逆向证据、样本集、账本 | `<ref-root>/docs/`（= `kim/lengsuo-docs-reference`） | **进**（私有，密级更高） |
 
-- `<ref-root>` = 参考资料根目录：本机 `D:/OneDrive/project/_ref/`、47 `~/ref/`。
+- `<ref-root>` = 参考资料根目录（各机自建，位置见本机规则文件，**不写进本仓**）。
   两者结构一致：`docs/`（= 私有仓 `kim/lengsuo-docs-reference` 的 clone）、
   `upstream/`（第三方上游源码）、`raw/`（大产物，不入仓）。
 - **引用一律写仓内相对路径**（如 `wb/pc-devguide/13-主界面UI与预览.md`），
   ⛔ **不写绝对路径** —— 跨机必失效，且违反 `source-privacy` 的脱敏条款。
-- UI 保真度基准 = 私有仓的 `wb/pc-devguide/`（基准册 `13-主界面UI与预览.md`）+ `wb/ref-target-10/`；
+- UI 保真度基准 = 私有仓的对标资料册与样本集（见 `kim/lengsuo-docs-reference`）；
   仓内基准是本仓 `docs/ui-parity-spec.md`（A1–A17 条目）。
 - 需要新增对照分析稿 ⇒ 写进 `<ref-root>/docs/` 并 push 私有仓，**不要**散落在仓外的裸目录。
 
