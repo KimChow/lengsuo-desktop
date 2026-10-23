@@ -96,13 +96,13 @@ fn render_cell(
     theme: &Theme,
 ) -> AnyElement {
     let Some(cell) = cell else {
-        // 空位：宽度与有内容的单元格一致 ⇒ 另一侧不塌陷。
-        return div()
-            .flex()
-            .flex_1()
-            .min_w_0()
-            .h(px(LINE_H))
-            .into_any_element();
+        // 空位：宽度与有内容的单元格一致 ⇒ 另一侧不塌陷；
+        // 左栏空位仍画分隔线，两栏的列界不因单侧缺失断口。
+        let mut hole = div().flex().flex_1().min_w_0().h(px(LINE_H));
+        if is_left {
+            hole = hole.border_r_1().border_color(theme.border);
+        }
+        return hole.into_any_element();
     };
 
     let mut row = div()
