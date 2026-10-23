@@ -25,6 +25,7 @@ mod preview_office;
 mod preview_pdf;
 mod preview_text;
 mod tabs;
+mod tasks;
 #[cfg(test)]
 mod tests;
 
