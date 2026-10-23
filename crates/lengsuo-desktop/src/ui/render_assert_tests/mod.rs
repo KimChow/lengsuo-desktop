@@ -19,8 +19,8 @@
 //! ⚠️ 本模块**不写 `use super::*`**：显式列出符号，避免 GPUI 的 `test` 属性宏
 //! 遮蔽标准库的 `#[test]`（见 `docs/gpui-wiring-cheatsheet.md` §12.3）。
 //!
-//! 用例按目标分四个子模块：`blocks`（会话块纯函数）、`env`（环境视图三态）、
-//! `org_terminal`（组织域 + 终端抽屉）、`views`（本轮新增的视图族）。
+//! 用例按目标分五个子模块：`blocks`（会话块纯函数）、`env`（环境视图三态）、
+//! `input`（输入类视图）、`org_terminal`（组织域 + 终端抽屉）、`views`（视图族）。
 #![cfg(all(test, feature = "ui"))]
 
 use gpui_kit::component::Theme;
@@ -31,6 +31,7 @@ use gpui_kit::{
 
 mod blocks;
 mod env;
+mod input;
 mod org_terminal;
 mod views;
 
