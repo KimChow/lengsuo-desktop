@@ -49,6 +49,21 @@ pub(super) fn render_count_badge(count: usize, theme: &Theme) -> AnyElement {
     solid_badge(&count.to_string(), theme)
 }
 
+/// 演示来源横幅：频道 / 智能体视图体顶部的一行弱化标注。
+///
+/// C9 运行时契约未就绪 ⇒ 视图体只有演示数据，来源必须如实标注在界面上。
+pub(super) fn render_demo_banner(theme: &Theme) -> AnyElement {
+    div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .border_b_1()
+        .border_color(theme.sidebar_border)
+        .child(super::DEMO_SOURCE_BANNER)
+        .into_any_element()
+}
+
 /// 行标记（置顶 / 归档 / 未读）。
 ///
 /// 未读是行动信号 ⇒ 实心角标（最强一档）；置顶 / 归档只是属性 ⇒ 描边胶囊弱一档。
