@@ -7,7 +7,15 @@
 //!
 //! 「总是允许」的**持久化**属于运行时职责：界面只上报该选择（见
 //! [`ApprovalAction::is_always`]），不自行落盘、不扩大授权。
+//!
+//! 数据来源（C3）：卡片从消费侧契约 [`crate::state::datasource`] 注入
+//! （[`ApprovalListView::from_requests`]）；本地演示出口 [`demo_list`] 是该入口的
+//! 薄封装，来源如实标注 [`Provenance::Demo`]。加载失败必须以错误文案上屏
+//! （fail-closed），不许静默退化成空列表。
 
+use crate::state::datasource::{
+    ApprovalDecision, ApprovalDecisionKind, ApprovalRequest, LoadState, Provenance,
+};
 use crate::state::session_stream::{PendingApproval, SessionStreamState};
 use crate::theme::tool_titles::tool_title;
 
@@ -71,35 +79,157 @@ pub struct ApprovalCardView {
 }
 
 impl ApprovalCardView {
-    /// 从状态层审批项构建卡片；按钮可用性由 `resolved` 决定。
+    /// 从 C3 消费侧审批请求 `{id, action, detail}` 构建卡片（契约形状的唯一构造路径）。
+    ///
+    /// `action` 为自由文本（取值域契约待定）：按工具名走 [`tool_title`] 的人话映射，
+    /// 未知值回退通用标题，不泄漏内部名。新卡一律挂起，渲染不默认放行。
     #[must_use]
-    pub fn from_approval(approval: &PendingApproval) -> Self {
-        let pending = approval.resolved.is_none();
+    pub fn from_request(request: &ApprovalRequest) -> Self {
         Self {
-            id: approval.id.clone(),
-            title: tool_title(&approval.tool, None),
-            summary: approval.summary.clone(),
-            pending,
-            resolved_allow: approval.resolved,
+            id: request.id.clone(),
+            title: tool_title(&request.action, None),
+            summary: request.detail.clone(),
+            pending: true,
+            resolved_allow: None,
             buttons: ApprovalAction::ALL
                 .iter()
                 .map(|&action| ApprovalButton {
                     action,
                     label: action.label(),
-                    enabled: pending,
+                    enabled: true,
                 })
                 .collect(),
         }
     }
+
+    /// 演示出口（薄封装）：本地审批项转成 C3 形状后走 [`Self::from_request`]，
+    /// 再并回已决策结果；按钮可用性由 `resolved` 决定。
+    #[must_use]
+    pub fn from_approval(approval: &PendingApproval) -> Self {
+        let mut card = Self::from_request(&ApprovalRequest {
+            id: approval.id.clone(),
+            action: approval.tool.clone(),
+            detail: approval.summary.clone(),
+        });
+        card.apply_result(approval.resolved);
+        card
+    }
+
+    /// 并回决策结果：只改卡片展示态（挂起标记、结果标注、按钮可用性）。
+    /// 是否放行由运行时决定，界面不判定权限。
+    fn apply_result(&mut self, resolved: Option<bool>) {
+        self.pending = resolved.is_none();
+        self.resolved_allow = resolved;
+        let enabled = self.pending;
+        for button in &mut self.buttons {
+            button.enabled = enabled;
+        }
+    }
 }
 
-/// 待审批卡片：只包含**未决策**项。
+/// C3 决定 → 卡片动作（三值穷举；不存在第四种决定，新增变体会在此编译失败）。
+#[must_use]
+pub fn action_of_decision(decision: ApprovalDecisionKind) -> ApprovalAction {
+    match decision {
+        ApprovalDecisionKind::Allow => ApprovalAction::Allow,
+        ApprovalDecisionKind::Deny => ApprovalAction::Deny,
+        ApprovalDecisionKind::Always => ApprovalAction::AlwaysAllow,
+    }
+}
+
+/// 卡片动作 → C3 决定（三值穷举；点击上报的 `decision` 即由它产出，无第四种）。
+#[must_use]
+pub fn decision_of_action(action: ApprovalAction) -> ApprovalDecisionKind {
+    match action {
+        ApprovalAction::Allow => ApprovalDecisionKind::Allow,
+        ApprovalAction::Deny => ApprovalDecisionKind::Deny,
+        ApprovalAction::AlwaysAllow => ApprovalDecisionKind::Always,
+    }
+}
+
+/// 并回一条 C3 审批结果 `{id, decision}`（按 `id` 匹配卡片）。
+///
+/// 只更新展示态（已决策标注、按钮禁用）；是否放行由运行时决定。
+/// 未匹配到 `id` ⇒ `false`（不伪造并回）。
+pub fn apply_decision(cards: &mut [ApprovalCardView], result: &ApprovalDecision) -> bool {
+    let Some(card) = cards.iter_mut().find(|card| card.id == result.id) else {
+        return false;
+    };
+    card.apply_result(Some(action_of_decision(result.decision).allows()));
+    true
+}
+
+/// 审批区视图模型：C3 消费侧三态（fail-closed——失败必须带原因上屏，
+/// 不许静默退化成空列表）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalListView {
+    /// 正在加载（界面显示加载态）。
+    Loading,
+    /// 就绪：卡片集 + 来源标注（演示数据必须如实标 [`Provenance::Demo`]）。
+    Ready {
+        cards: Vec<ApprovalCardView>,
+        provenance: Provenance,
+    },
+    /// 失败：界面必须显示该原因。
+    Failed { reason: String },
+}
+
+impl ApprovalListView {
+    /// 可注入入口：C3 审批请求三态 → 审批区视图（契约形状的唯一进料口）。
+    #[must_use]
+    pub fn from_requests(
+        requests: LoadState<Vec<ApprovalRequest>>,
+        provenance: Provenance,
+    ) -> Self {
+        match requests {
+            LoadState::Loading => Self::Loading,
+            LoadState::Ready(list) => Self::Ready {
+                cards: list.iter().map(ApprovalCardView::from_request).collect(),
+                provenance,
+            },
+            LoadState::Failed(reason) => Self::Failed { reason },
+        }
+    }
+
+    /// 就绪态的卡片集；加载/失败态为空切片（渲染须先按三态分流，
+    /// 不得拿它冒充「没有审批」）。
+    #[must_use]
+    pub fn cards(&self) -> &[ApprovalCardView] {
+        match self {
+            Self::Ready { cards, .. } => cards,
+            Self::Loading | Self::Failed { .. } => &[],
+        }
+    }
+
+    /// 失败原因；未失败为 `None`（渲染层据此上屏）。
+    #[must_use]
+    pub fn failure(&self) -> Option<&str> {
+        match self {
+            Self::Failed { reason } => Some(reason.as_str()),
+            Self::Loading | Self::Ready { .. } => None,
+        }
+    }
+}
+
+/// 演示出口（薄封装）：本地会话态转 C3 形状后经 [`ApprovalListView::from_requests`]
+/// 出视图，来源如实标注 [`Provenance::Demo`]。
+#[must_use]
+pub fn demo_list(state: &SessionStreamState) -> ApprovalListView {
+    let requests = state
+        .pending_approvals()
+        .map(|approval| ApprovalRequest {
+            id: approval.id.clone(),
+            action: approval.tool.clone(),
+            detail: approval.summary.clone(),
+        })
+        .collect();
+    ApprovalListView::from_requests(LoadState::Ready(requests), Provenance::Demo)
+}
+
+/// 待审批卡片：只包含**未决策**项（既有出口，薄封装自 [`demo_list`]）。
 #[must_use]
 pub fn pending_cards(state: &SessionStreamState) -> Vec<ApprovalCardView> {
-    state
-        .pending_approvals()
-        .map(ApprovalCardView::from_approval)
-        .collect()
+    demo_list(state).cards().to_vec()
 }
 
 /// 全部审批卡片（含已决策项，按钮全部禁用），用于历史回看。
@@ -114,10 +244,16 @@ pub fn all_cards(state: &SessionStreamState) -> Vec<ApprovalCardView> {
 
 /// 提交一次审批决策。
 ///
+/// 决策先落成 C3 结果形状 `{id, decision}`（见 [`decision_of_action`]），再写回
+/// 本地会话态；是否放行由运行时决定，界面不判定权限。
 /// 返回 `false` 表示被拒绝：项不存在、已决策（幂等保护），或校验失败。
 /// 已决策项绝不会因重复点击被改成相反结果。
 pub fn decide(state: &mut SessionStreamState, id: &str, action: ApprovalAction) -> bool {
-    state.resolve_approval(id, action.allows())
+    let decision = ApprovalDecision {
+        id: id.to_owned(),
+        decision: decision_of_action(action),
+    };
+    state.resolve_approval(id, action_of_decision(decision.decision).allows())
 }
 
 #[cfg(test)]
