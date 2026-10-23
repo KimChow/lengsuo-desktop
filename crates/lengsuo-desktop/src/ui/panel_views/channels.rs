@@ -142,6 +142,99 @@ use gpui_kit::component::Theme;
 #[cfg(feature = "ui")]
 use gpui_kit::*;
 
+/// 标题行节点。
+#[cfg(feature = "ui")]
+fn title_node(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 单条频道清单行节点：名称 + 成员计数，有未读时右侧给指示，选中整行高亮。
+#[cfg(feature = "ui")]
+fn row_node(theme: &Theme, entry: &ChannelEntry) -> Div {
+    let name = div()
+        .text_color(theme.foreground)
+        .child(SharedString::from(entry.name.as_str()));
+    let name = if entry.selected {
+        name.font_bold()
+    } else {
+        name
+    };
+    let unread_hint = entry.has_unread().then(|| {
+        div()
+            .rounded_sm()
+            .bg(theme.muted)
+            .px_2()
+            .py_1()
+            .text_xs()
+            .text_color(theme.foreground)
+            .child(UNREAD_HINT)
+    });
+    let row = div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .flex()
+        .items_center()
+        .justify_between();
+    let row = if entry.selected {
+        row.bg(theme.muted)
+    } else {
+        row
+    };
+    row.child(
+        div().flex().flex_col().gap_1().child(name).child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(entry.member_count_label())),
+        ),
+    )
+    .children(unread_hint)
+}
+
+/// 清单容器节点（每行一个 [`row_node`]）。
+#[cfg(feature = "ui")]
+fn list_node(theme: &Theme, view: &ChannelsView) -> Div {
+    div().flex_1().flex().flex_col().py_2().children(
+        view.state
+            .entries()
+            .iter()
+            .map(|entry| row_node(theme, entry)),
+    )
+}
+
+/// 空态节点（已下发但无频道）。
+#[cfg(feature = "ui")]
+fn empty_node(theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(EMPTY)
+}
+
+/// 未下发节点（fail-closed，⛔ 不得替换为空列表）。
+#[cfg(feature = "ui")]
+fn not_delivered_node(theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(NOT_DELIVERED)
+}
+
 /// 主区渲染。
 ///
 /// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
@@ -149,31 +242,21 @@ use gpui_kit::*;
 #[must_use]
 #[cfg(feature = "ui")]
 pub fn main_area(theme: &Theme) -> Div {
+    // 数据源未接入 ⇒ `None` ⇒ 如实显示「未下发」（fail-closed）。
+    let view = ChannelsView::build(None);
+    let body = match &view.state {
+        ChannelListState::NotDelivered => not_delivered_node(theme),
+        ChannelListState::Empty => empty_node(theme),
+        ChannelListState::Entries(_) => list_node(theme, &view),
+    };
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
-        .child(
-            div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+        .child(title_node(theme))
+        .child(body)
 }
 
 #[cfg(test)]
