@@ -160,6 +160,64 @@ pub struct TerminalChunk {
     pub interrupted: bool, // `interrupt` 已生效
 }
 
+/// 「视图 ← 运行时」数据源：**界面只消费**。
+///
+/// ⛔ 不实现运行时语义、⛔ 不发网络、⛔ 不落盘。每个能力一个只读方法，返回
+/// [`LoadState`] 三态；来源由 [`Provenance`] 如实标注。
+pub trait ViewDataSource {
+    /// 数据来源标注（界面必须如实显示）。
+    fn provenance(&self) -> Provenance;
+
+    /// C1 会话流增量事件（§2：C2 工具卡片数据并入本流）。
+    fn conversation(&self) -> LoadState<ConversationSnapshot>;
+
+    /// C2 工具卡片数据（从 C1 流中抽出的卡片视图）。
+    fn tool_cards(&self) -> LoadState<Vec<ToolCardSnapshot>>;
+
+    /// C3 审批请求（待用户决定的队列）。审批结果由用户**发射**（UI → 运行时），
+    /// 不属于本只读 trait。
+    fn approvals(&self) -> LoadState<Vec<ApprovalRequest>>;
+
+    /// C4 停止投递回执（`agent:stop {sessionId, seq}` 之后的 `stopped`）。
+    fn stop_ack(&self) -> LoadState<StopAck>;
+
+    /// C5 终端 PTY 快照。
+    fn terminal(&self) -> LoadState<TerminalChunk>;
+}
+
+/// 演示态数据源：现阶段演示数据的**唯一出口**。
+///
+/// 契约未就绪 ⇒ 各能力如实返回 [`LoadState::Failed`]（fail-closed，⛔ 不许用空
+/// 列表冒充"没有数据"，⛔ 不许伪造服务端数据）；来源标注 [`Provenance::Demo`]。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DemoSource;
+
+impl ViewDataSource for DemoSource {
+    fn provenance(&self) -> Provenance {
+        Provenance::Demo
+    }
+
+    fn conversation(&self) -> LoadState<ConversationSnapshot> {
+        LoadState::Failed("C1 会话流增量事件未接通（演示态）".to_string())
+    }
+
+    fn tool_cards(&self) -> LoadState<Vec<ToolCardSnapshot>> {
+        LoadState::Failed("C2 工具卡片数据未接通（演示态）".to_string())
+    }
+
+    fn approvals(&self) -> LoadState<Vec<ApprovalRequest>> {
+        LoadState::Failed("C3 审批请求未接通（演示态）".to_string())
+    }
+
+    fn stop_ack(&self) -> LoadState<StopAck> {
+        LoadState::Failed("C4 停止投递回执未接通（演示态）".to_string())
+    }
+
+    fn terminal(&self) -> LoadState<TerminalChunk> {
+        LoadState::Failed("C5 终端 PTY 未接通（演示态）".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{LoadState, Provenance};
