@@ -184,37 +184,189 @@ use gpui_kit::component::Theme;
 #[cfg(feature = "ui")]
 use gpui_kit::*;
 
-/// 主区渲染。
+/// 主区渲染入口（签名固定：返回**具体 `Div`**，`main_area` 各分支类型必须一致）。
 ///
-/// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
-/// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
+/// 当前无数据源接线 ⇒ 默认渲染 fail-closed 的「未下发」态；有数据时由
+/// [`render`] 走 `Entries` 分支（**换数据源不改视图结构**）。
 #[cfg(feature = "ui")]
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &AgentsManagerView::not_delivered())
+}
+
+/// 把纯数据模型接到元素树：标题行 + 三态清单区。
+#[cfg(feature = "ui")]
+fn render(theme: &Theme, view: &AgentsManagerView) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme))
+        .child(body_area(theme, view))
+}
+
+/// 标题行：标题 + 副标题。
+#[cfg(feature = "ui")]
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .debug_selector(|| "agents-manager-title".to_owned())
+        .px_4()
+        .py_2()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .border_b_1()
+        .border_color(theme.border)
         .child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
+                .text_base()
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
         .child(
             div()
-                .flex_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SUBTITLE),
+        )
+}
+
+/// 清单区：三态分发（「未下发」fail-closed 分支不得删）。
+#[cfg(feature = "ui")]
+fn body_area(theme: &Theme, view: &AgentsManagerView) -> Div {
+    match view.state() {
+        AgentsState::NotDelivered => centered_note(theme, NOT_DELIVERED),
+        AgentsState::Empty => centered_note(theme, EMPTY),
+        AgentsState::Entries(_) => div().flex_1().flex().flex_col().children(
+            view.groups()
+                .into_iter()
+                .enumerate()
+                .map(|(index, (status, group))| group_section(theme, index, status, &group)),
+        ),
+    }
+}
+
+/// 居中说明（空态 / 未下发共用布局，文案各走各的常量）。
+#[cfg(feature = "ui")]
+fn centered_note(theme: &Theme, text: &str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(text))
+}
+
+/// 分组段：组头（状态标签 + 计数）+ 条目行。
+#[cfg(feature = "ui")]
+fn group_section(theme: &Theme, index: usize, status: AgentStatus, group: &[&AgentEntry]) -> Div {
+    div()
+        .debug_selector(move || format!("agents-manager-group-{index}"))
+        .flex()
+        .flex_col()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .px_4()
+                .py_2()
                 .flex()
                 .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_medium()
+                        .text_color(theme.muted_foreground)
+                        .child(status.label()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(format!("· {}", group.len()))),
+                ),
+        )
+        .children(
+            group
+                .iter()
+                .enumerate()
+                .map(|(row_index, entry)| entry_row(theme, status, row_index, entry)),
+        )
+}
+
+/// 条目行：名称 + 角色标签 + 状态点/标签 + 行内动作；选中态用主题 accent 标出。
+#[cfg(feature = "ui")]
+fn entry_row(theme: &Theme, status: AgentStatus, index: usize, entry: &AgentEntry) -> Div {
+    let mut name = div().text_sm().text_color(theme.foreground);
+    if entry.selected {
+        name = name.font_bold();
+    }
+    div()
+        .debug_selector(move || {
+            format!("agents-manager-row-{}-{index}", status.debug_key())
+        })
+        .min_h(px(48.0)) // 触摸目标 ≥48dp
+        .px_4()
+        .py_2()
+        .flex()
+        .items_center()
+        .gap_3()
+        .border_l_2()
+        .border_color(if entry.selected {
+            theme.accent
+        } else {
+            theme.border
+        })
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(name.child(SharedString::from(entry.name.clone())))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(entry.role.clone())),
+                ),
+        )
+        .child(
+            div()
+                .ml_auto()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(div().w_2().h_2().rounded_full().bg(if status
+                            == AgentStatus::Available
+                        {
+                            theme.accent
+                        } else {
+                            theme.muted_foreground
+                        }))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(status.label()),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(status.action_label()),
+                ),
         )
 }
 
