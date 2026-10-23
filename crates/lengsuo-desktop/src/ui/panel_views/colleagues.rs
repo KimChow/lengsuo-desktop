@@ -174,7 +174,7 @@ fn header(theme: &Theme, view: &ColleaguesView) -> Div {
         .flex()
         .flex_col()
         .gap_1()
-        .border_b()
+        .border_b_1()
         .border_color(theme.border)
         .child(
             div()
@@ -212,14 +212,76 @@ fn centered_note(theme: &Theme, text: &'static str) -> Div {
         .child(text)
 }
 
-/// 单条清单行。
+/// 单条清单行：名称 / 头衔 / 状态 / 置顶徽标 + 操作行 + 能力标签行。
 fn entry_row(theme: &Theme, entry: &ColleagueEntry) -> Div {
+    let status_color = match entry.status {
+        ColleagueStatus::Available => theme.foreground,
+        ColleagueStatus::Idle => theme.muted_foreground,
+    };
     div()
+        .flex()
+        .flex_col()
+        .gap_2()
         .px_3()
         .py_2()
-        .text_sm()
-        .text_color(theme.foreground)
-        .child(entry.name)
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md()
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(entry.name),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(entry.title),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(status_color)
+                        .child(entry.status.label()),
+                )
+                .children(entry.pinned.then(|| chip(theme, ACTION_PIN, theme.accent))),
+        )
+        .child(
+            div().flex().flex_wrap().gap_2().children(
+                [ACTION_PIN, ACTION_EDIT_PROFILE, ACTION_PAUSE]
+                    .map(|label| chip(theme, label, theme.muted_foreground)),
+            ),
+        )
+        .child(
+            div().flex().flex_wrap().gap_2().children(
+                entry
+                    .capabilities
+                    .iter()
+                    .copied()
+                    .map(|tag| chip(theme, tag, theme.muted_foreground)),
+            ),
+        )
+}
+
+/// 小标签 chip（操作 / 能力 / 置顶徽标共用形状，颜色由调用方传主题 token）。
+fn chip(theme: &Theme, text: &'static str, color: Hsla) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(color)
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .child(text)
 }
 
 #[cfg(test)]
