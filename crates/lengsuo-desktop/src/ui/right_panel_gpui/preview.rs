@@ -19,6 +19,15 @@ use super::{preview_code, preview_image, preview_office, preview_pdf, preview_te
 /// 徽标底色的透明度：颜色本体取自主题 token，仅透明度是徽标的样式参数。
 const BADGE_WASH_ALPHA: f32 = 0.15;
 
+/// 「未下发」统一提示行文案。
+const DISPATCH_NOTICE_TEXT: &str = "预览内容未下发";
+/// 外部编辑器入口占位文案。
+const EXTERNAL_EDITOR_TEXT: &str = "跳外部编辑器";
+
+/// 徽标 / 提示行的渲染定位选择器（无窗口渲染断言按此定位节点）。
+const BADGE_SELECTOR: &str = "preview-kind-badge";
+const DISPATCH_NOTICE_SELECTOR: &str = "preview-dispatch-notice";
+
 /// 纯函数：按预览类型取主题内色作为类型徽标的底色（⛔ 不硬编码色值）。
 ///
 /// 同色系允许复用（主题 token 有限），但不同大类的徽标必须有可辨差异。
@@ -59,16 +68,17 @@ fn content_dispatched(_kind: PreviewKind) -> bool {
     false
 }
 
-/// 渲染「待预览文件」。
+/// 渲染「待预览文件」的壳层：面板头（文件名 + 类型徽标 + 折叠父路径）、
+/// 「未下发」提示行、按类型分派的子模块内容、外部编辑器入口占位。
 ///
-/// 有目标时显示**文件路径**与**判定出的类型**（都是真实存在的事实，不是编造的内容），
-/// 再按类型分派到对应预览子模块。
+/// 文件名与类型都是真实存在的事实，不是编造的内容。
 pub(super) fn render_preview(
     content: &PreviewContent,
     theme: &gpui_kit::component::Theme,
 ) -> impl IntoElement {
     let PreviewContent::Target { path } = content;
     let kind = classify(path);
+    let (name, dir) = header_text(path);
     let body: AnyElement = match kind {
         PreviewKind::Code => preview_code::render(path, theme),
         PreviewKind::Text => preview_text::render(path, theme),
@@ -86,19 +96,70 @@ pub(super) fn render_preview(
         .border_1()
         .border_color(theme.border)
         .child(
+            // 面板头：文件名 + 类型徽标；文件名过长省略，徽标不被挤掉。
             div()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(path.clone()),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .truncate()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(name),
+                )
+                .child(badge(kind, theme)),
         )
-        .child(
+        // 折叠父路径：无分隔符（父路径为空串）时不渲染这一行。
+        .child((!dir.is_empty()).then(|| {
             div()
+                .w_full()
+                .truncate()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(kind.label()),
-        )
+                .child(dir)
+        }))
+        // fail-closed：内容未下发时必须明示，不得退化成看似空白的「正常」状态。
+        .child((!content_dispatched(kind)).then(|| dispatch_notice(theme)))
         .child(body)
+        .child(external_editor_entry(theme))
+}
+
+/// 类型徽标：圆角 + 底色 + 描边，文案为类型标签（`PreviewKind::label`）。
+fn badge(kind: PreviewKind, theme: &gpui_kit::component::Theme) -> impl IntoElement {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_full()
+        .border_1()
+        .border_color(theme.border)
+        .bg(badge_bg(kind, theme))
+        .text_xs()
+        .text_color(theme.foreground)
+        .debug_selector(|| BADGE_SELECTOR.to_owned())
+        .child(kind.label())
+}
+
+/// 「未下发」统一提示行：子模块只能返回占位态时由壳层统一明示。
+fn dispatch_notice(theme: &gpui_kit::component::Theme) -> impl IntoElement {
+    div()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .debug_selector(|| DISPATCH_NOTICE_SELECTOR.to_owned())
+        .child(DISPATCH_NOTICE_TEXT)
+}
+
+/// 外部编辑器入口**占位**：⛔ 本卡不接任何行为（点击意图属后续卡）。
+fn external_editor_entry(theme: &gpui_kit::component::Theme) -> impl IntoElement {
+    div()
+        .flex()
+        .justify_end()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(EXTERNAL_EDITOR_TEXT)
 }
 
 /// 尚未实现的类型（图表 / 其他）的诚实占位：⛔ 不伪造内容。
