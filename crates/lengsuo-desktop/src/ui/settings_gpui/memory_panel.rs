@@ -39,12 +39,10 @@ fn feature_row(theme: &Theme, row: &panel_view::Row) -> Div {
                 ),
         )
         // Option<Div> 即可迭代 ⇒ 无 action 时不占位、不加空壳节点。
-        .children(row.action.map(|action| {
-            div()
-                .text_sm()
-                .text_color(theme.foreground)
-                .child(action)
-        }))
+        .children(
+            row.action
+                .map(|action| div().text_sm().text_color(theme.foreground).child(action)),
+        )
 }
 
 /// 「来自对话的记忆」区块（fail-closed 双分支）：
