@@ -12,8 +12,8 @@ use gpui_kit::*;
 
 use super::filter_bar::{render_clear_filter_button, render_search_box, FilterBox};
 use super::mapping::{
-    active_group_row, demo_state, empty_recovery, empty_state_text, filter_key, hydrate,
-    main_pane, select_card, set_group_filter, status_tone, MainPane, StatusTone,
+    active_group_row, demo_state, empty_recovery, empty_state_text, filter_key, hydrate, main_pane,
+    select_card, set_group_filter, status_tone, MainPane, StatusTone,
 };
 use crate::state::datasource::{LoadState, Provenance};
 use crate::state::env_group::EnvGroupState;
@@ -404,5 +404,58 @@ impl Render for EnvViewGpui {
         }
 
         root.child(sidebar).child(main)
+    }
+}
+
+/// 快照出口的三态渲染断言：`from_snapshot` 注入后整帧真实绘制。
+///
+/// 文案级断言（错误原因、空态不出现）在 `mapping.rs` 的纯断言里；
+/// 这里补的是无窗口渲染层：对应分支不 panic、元素树非空且真实参与排版。
+#[cfg(test)]
+mod tests {
+    use super::EnvViewGpui;
+    use crate::state::datasource::{LoadState, Provenance};
+    use crate::ui::env_gpui::demo_state;
+    use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
+    use gpui_kit::{AppContext as _, IntoElement as _};
+
+    /// ① 注入 Ready 快照 ⇒ 渲染快照行（行数==组数由 mapping 层断言）。
+    #[test]
+    fn from_snapshot_ready_renders_snapshot_rows() {
+        let bounds = draw_probe(|ctx| {
+            ctx.new(|_cx| EnvViewGpui::from_snapshot(LoadState::Ready(demo_state())))
+                .into_any_element()
+        });
+        assert_rendered(bounds, "环境视图（注入 Ready 快照）");
+    }
+
+    /// ② 注入 Failed ⇒ 走错误文案分支且元素树非空（fail-closed）。
+    #[test]
+    fn from_snapshot_failed_renders_error_pane() {
+        let bounds = draw_probe(|ctx| {
+            ctx.new(|_cx| {
+                EnvViewGpui::from_snapshot(LoadState::Failed("环境服务不可达".to_owned()))
+            })
+            .into_any_element()
+        });
+        assert_rendered(bounds, "环境视图（注入 Failed 快照）");
+    }
+
+    /// ③ 注入 Loading ⇒ 显示加载态、整帧绘制不 panic。
+    #[test]
+    fn from_snapshot_loading_renders_loading_pane() {
+        let bounds = draw_probe(|ctx| {
+            ctx.new(|_cx| EnvViewGpui::from_snapshot(LoadState::Loading))
+                .into_any_element()
+        });
+        assert_rendered(bounds, "环境视图（注入 Loading 快照）");
+    }
+
+    /// demo() 是 from_snapshot 的薄封装：同一份演示状态、来源如实标 Demo。
+    #[test]
+    fn demo_is_a_thin_demo_provenanced_wrapper() {
+        let view = EnvViewGpui::demo();
+        assert_eq!(view.provenance(), Provenance::Demo);
+        assert_eq!(view.state(), &demo_state());
     }
 }
