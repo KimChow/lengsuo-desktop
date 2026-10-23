@@ -246,7 +246,11 @@ fn usage_text(usage: &SubscriptionUsage) -> String {
 #[cfg(test)]
 mod tests {
     // 显式导入符号（不用 `use super::*`）：与仓内约定保持一致。
-    use super::{account_body, AccountPanelBody, ACCOUNT_ID_PLACEHOLDER, ACCOUNT_NAME_PLACEHOLDER};
+    use super::{
+        account_body, AccountPanelBody, AccountProfile, AccountSnapshot, CapabilityBit,
+        CapabilityMark, SubscriptionUsage, ACCOUNT_ID_PLACEHOLDER, ACCOUNT_NAME_PLACEHOLDER,
+    };
+    use crate::state::datasource::LoadState;
     use crate::state::org::OrgListState;
     use serde_json::json;
 
@@ -334,6 +338,111 @@ mod tests {
                 assert_eq!(rows[0].name, "李四");
             }
             other => panic!("期望有内容，实际 {other:?}"),
+        }
+    }
+
+    // --- C8 快照正文（消费侧契约出口）---
+
+    /// 造一份就绪快照（数字 / 名字只出现在这里，断言只对映射结果负责）。
+    fn ready_snapshot() -> LoadState<AccountSnapshot> {
+        LoadState::Ready(AccountSnapshot {
+            profile: AccountProfile {
+                name: "张三".to_string(),
+                user_id: "u-1".to_string(),
+            },
+            usage: SubscriptionUsage {
+                quota: 10,
+                used: 3,
+                unit: "积分".to_string(),
+            },
+            capabilities: vec![CapabilityBit {
+                name: "安全能力".to_string(),
+                mark: CapabilityMark::NotIssued,
+            }],
+        })
+    }
+
+    #[test]
+    fn not_issued_capability_shows_not_issued_never_empty_or_zero() {
+        match AccountPanelBody::from_account(ready_snapshot()) {
+            AccountPanelBody::AccountContent(lines) => {
+                let bit = lines
+                    .iter()
+                    .find(|line| line.primary == "安全能力")
+                    .expect("能力行可定位");
+                assert_eq!(bit.secondary, "未下发");
+                assert_ne!(bit.secondary, "", "未下发不得显示成空");
+                assert_ne!(bit.secondary, "0", "未下发不得显示成 0");
+            }
+            other => panic!("快照就绪必须是账号行，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ready_snapshot_makes_account_name_and_usage_locatable() {
+        match AccountPanelBody::from_account(ready_snapshot()) {
+            AccountPanelBody::AccountContent(lines) => {
+                assert!(
+                    lines.iter().any(|line| line.primary == "张三"),
+                    "账号名必须可定位"
+                );
+                assert!(
+                    lines.iter().any(|line| line.primary == "月度限额"
+                        && line.secondary == "已用 3 / 10 积分"),
+                    "订阅用量必须可定位（配额 + 已用 + 单位）"
+                );
+            }
+            other => panic!("快照就绪必须是账号行，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failed_account_state_keeps_error_text() {
+        let body =
+            AccountPanelBody::from_account(LoadState::Failed("账号服务不可用".to_string()));
+        assert!(
+            matches!(body, AccountPanelBody::Failed(ref reason) if reason == "账号服务不可用"),
+            "fail-closed：失败必须带原因透出，不 panic、不退化成空"
+        );
+    }
+
+    #[test]
+    fn loading_account_state_is_loading() {
+        assert!(matches!(
+            AccountPanelBody::from_account(LoadState::<AccountSnapshot>::Loading),
+            AccountPanelBody::Loading
+        ));
+    }
+
+    #[test]
+    fn capability_mark_three_states_have_distinct_labels() {
+        assert_eq!(CapabilityMark::Available.label(), "可用");
+        assert_eq!(CapabilityMark::Unavailable.label(), "不可用");
+        assert_eq!(CapabilityMark::NotIssued.label(), "未下发");
+        assert_ne!(CapabilityMark::NotIssued.label(), CapabilityMark::Available.label());
+    }
+
+    #[test]
+    fn missing_profile_fields_fall_back_to_placeholders() {
+        let body = AccountPanelBody::from_account(LoadState::Ready(AccountSnapshot {
+            profile: AccountProfile {
+                name: "  ".to_string(),
+                user_id: String::new(),
+            },
+            usage: SubscriptionUsage {
+                quota: 0,
+                used: 0,
+                unit: String::new(),
+            },
+            capabilities: vec![],
+        }));
+        match body {
+            AccountPanelBody::AccountContent(lines) => {
+                assert_eq!(lines[0].primary, ACCOUNT_NAME_PLACEHOLDER);
+                assert_eq!(lines[0].secondary, ACCOUNT_ID_PLACEHOLDER);
+                assert_eq!(lines[1].secondary, "已用 0 / 0");
+            }
+            other => panic!("期望账号行，实际 {other:?}"),
         }
     }
 }

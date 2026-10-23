@@ -234,3 +234,57 @@ fn render_banner(title: &str, message: &str, theme: &Theme) -> Div {
                 .child(message.to_owned()),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    // 显式导入符号（不用 `use super::*`）：与仓内约定保持一致。
+    use super::{
+        AccountPanelModel, ACCOUNT_DEMO_INTRO, ACCOUNT_RUNTIME_INTRO, MEMBERS_FAILED_TITLE,
+        MEMBERS_INTRO, MEMBERS_LOADING,
+    };
+    use crate::state::datasource::{LoadState, Provenance};
+    use crate::state::org::OrgListState;
+    use crate::ui::settings_gpui::view::AccountPanelBody;
+
+    #[test]
+    fn from_account_failed_keeps_reason_and_demo_label() {
+        let model = AccountPanelModel::from_account(
+            LoadState::<AccountPanelBody>::Failed("账号服务不可用".to_string()),
+            Provenance::Demo,
+        );
+        assert!(
+            matches!(model.body(), AccountPanelBody::Failed(reason) if reason == "账号服务不可用"),
+            "fail-closed：失败原因必须原样透出，不得退化成空"
+        );
+        assert_eq!(model.failed_title(), "获取失败");
+        assert_eq!(model.intro(), ACCOUNT_DEMO_INTRO);
+    }
+
+    #[test]
+    fn provenance_intro_is_honest_per_source() {
+        let demo = AccountPanelModel::from_account(
+            LoadState::<AccountPanelBody>::Loading,
+            Provenance::Demo,
+        );
+        assert_eq!(demo.intro(), ACCOUNT_DEMO_INTRO, "Demo 不得标成已接通");
+        let runtime = AccountPanelModel::from_account(
+            LoadState::<AccountPanelBody>::Loading,
+            Provenance::Runtime,
+        );
+        assert_eq!(runtime.intro(), ACCOUNT_RUNTIME_INTRO);
+        assert_eq!(runtime.loading_text(), "获取中");
+    }
+
+    #[test]
+    fn placeholder_exit_keeps_member_list_semantics() {
+        let state = OrgListState::new();
+        let model = AccountPanelModel::from_members(&state);
+        assert!(
+            matches!(model.body(), AccountPanelBody::Loading),
+            "从未加载的成员清单必须保持「正在加载」，不得变成空"
+        );
+        assert_eq!(model.intro(), MEMBERS_INTRO);
+        assert_eq!(model.loading_text(), MEMBERS_LOADING);
+        assert_eq!(model.failed_title(), MEMBERS_FAILED_TITLE);
+    }
+}
