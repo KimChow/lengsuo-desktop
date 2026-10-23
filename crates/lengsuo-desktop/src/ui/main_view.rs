@@ -23,6 +23,26 @@ pub enum MainView {
     Environments,
     /// **组织与权限可见性**（A 域；点侧栏「组织」入口）。
     Organization,
+    /// **技能**（点侧栏「技能」入口）。
+    SkillsMarket,
+    /// **专家中心**（点侧栏「专家中心」入口）。
+    ExpertCenter,
+    /// **灵感社区**（点侧栏「灵感社区」入口）。
+    Discover,
+    /// **我的文件**（点侧栏「我的文件」入口）。
+    MyFiles,
+    /// **助理协作空间**（点侧栏「助理协作空间」入口）。
+    Colleagues,
+    /// **团队知识库**（点侧栏「团队知识库」入口）。
+    KnowledgeBase,
+    /// **定时任务**（点侧栏「定时任务」入口）。
+    Automation,
+    /// **连接器**（点侧栏「连接器」入口）。
+    Connectors,
+    /// **智能体邮箱**（点侧栏「智能体邮箱」入口）。
+    AgentMail,
+    /// **消息中心**（点侧栏「消息中心」入口）。
+    MessageCenter,
 }
 
 /// 频道视图的说明文案（数据源在运行时侧，本仓未接）。
@@ -45,6 +65,16 @@ pub fn resolve(selected_nav: Option<NavKind>) -> MainView {
         Some(NavKind::Agents) => MainView::Agents,
         Some(NavKind::Environments) => MainView::Environments,
         Some(NavKind::Organization) => MainView::Organization,
+        Some(NavKind::SkillsMarket) => MainView::SkillsMarket,
+        Some(NavKind::ExpertCenter) => MainView::ExpertCenter,
+        Some(NavKind::Discover) => MainView::Discover,
+        Some(NavKind::MyFiles) => MainView::MyFiles,
+        Some(NavKind::Colleagues) => MainView::Colleagues,
+        Some(NavKind::KnowledgeBase) => MainView::KnowledgeBase,
+        Some(NavKind::Automation) => MainView::Automation,
+        Some(NavKind::Connectors) => MainView::Connectors,
+        Some(NavKind::AgentMail) => MainView::AgentMail,
+        Some(NavKind::MessageCenter) => MainView::MessageCenter,
     }
 }
 

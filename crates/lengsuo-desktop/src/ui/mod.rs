@@ -28,6 +28,10 @@ pub mod session_render;
 pub mod sidebar;
 pub mod tool_card;
 
+// === 波次 5：主区面板视图族（一卡一文件；模块声明由主理人一次性落盘） ===
+#[cfg(feature = "ui")]
+pub mod panel_views;
+
 // === 批二：GPUI 接线层 ===
 // 上面的模块产出**渲染描述**（纯数据、无窗口可测）；下面的模块把描述
 // 真正接到 GPUI 元素树上。分开是为了让描述层保持可测、接线层可替换。

@@ -19,8 +19,9 @@ use gpui_kit::*;
 
 use crate::ui::env_gpui::EnvViewGpui;
 use crate::ui::layout::STREAM_MIN_WIDTH;
-use crate::ui::main_view::{self, MainView};
+use crate::ui::main_view::MainView;
 use crate::ui::org_gpui::OrgViewGpui;
+use crate::ui::panel_views;
 use crate::ui::session_gpui::SessionStreamGpui;
 
 /// 渲染主区。
@@ -40,8 +41,10 @@ pub(super) fn render_main_area(
             .min_w(px(STREAM_MIN_WIDTH))
             .h_full()
             .child(session.clone()),
-        MainView::Channels => placeholder(main_view::CHANNELS_PLACEHOLDER, theme),
-        MainView::Agents => placeholder(main_view::AGENTS_PLACEHOLDER, theme),
+        // 波次 5：频道 / 智能体管理由占位改为**真实视图体**（当前为诚实占位数据，
+        // 数据源在运行时侧；等跨线契约就绪后由 switch-source 类卡换源）。
+        MainView::Channels => panel_views::channels::main_area(theme),
+        MainView::Agents => panel_views::agents::main_area(theme),
         // 环境管理是**真实视图**（挂在 `AppShell.env_view` 上）：
         // ⚠️ 条目内容当前是 `EnvViewGpui::demo()` 的演示数据，真实来源在运行时侧。
         MainView::Environments => div()
@@ -56,22 +59,15 @@ pub(super) fn render_main_area(
             .min_w(px(STREAM_MIN_WIDTH))
             .h_full()
             .child(org.clone()),
+        MainView::SkillsMarket => panel_views::skills_market::main_area(theme),
+        MainView::ExpertCenter => panel_views::expert_center::main_area(theme),
+        MainView::Discover => panel_views::discover::main_area(theme),
+        MainView::MyFiles => panel_views::my_files::main_area(theme),
+        MainView::Colleagues => panel_views::colleagues::main_area(theme),
+        MainView::KnowledgeBase => panel_views::knowledge_base::main_area(theme),
+        MainView::Automation => panel_views::automation::main_area(theme),
+        MainView::Connectors => panel_views::connectors::main_area(theme),
+        MainView::AgentMail => panel_views::agent_mail::main_area(theme),
+        MainView::MessageCenter => panel_views::message_center::main_area(theme),
     }
-}
-
-/// 占位说明：居中的一行灰字，说明这块视图的数据源还没接。
-///
-/// 返回**具体的 `Div`**（不是 `impl IntoElement`）：三个分支的类型必须一致，
-/// 不透明类型无法与 `Div` 统一。
-fn placeholder(text: &str, theme: &Theme) -> Div {
-    div()
-        .flex_1()
-        .min_w(px(STREAM_MIN_WIDTH))
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_sm()
-        .text_color(theme.muted_foreground)
-        .child(text.to_owned())
 }

@@ -171,7 +171,7 @@ fn unread_count_ignores_archived_sessions() {
 #[test]
 fn nav_entries_expose_channels_and_agents_in_order() {
     let entries = nav_entries(2, 3, 0, 0, None);
-    assert_eq!(entries.len(), 4);
+    assert_eq!(entries.len(), 14);
     assert_eq!(entries[0].kind, NavKind::Channels);
     assert_eq!(entries[0].count, 2);
     assert_eq!(entries[0].title, CHANNELS_TITLE);
@@ -186,6 +186,27 @@ fn nav_entries_expose_channels_and_agents_in_order() {
     assert_eq!(entries[3].kind, NavKind::Organization);
     assert_eq!(entries[3].count, 0);
     assert_eq!(entries[3].title, ORGANIZATION_TITLE);
+    // 波次 5：其后追加 10 个入口（技能 → 专家中心 → … → 消息中心）。
+    let tail: Vec<NavKind> = entries.iter().skip(4).map(|e| e.kind).collect();
+    assert_eq!(
+        tail,
+        [
+            NavKind::SkillsMarket,
+            NavKind::ExpertCenter,
+            NavKind::Discover,
+            NavKind::MyFiles,
+            NavKind::Colleagues,
+            NavKind::KnowledgeBase,
+            NavKind::Automation,
+            NavKind::Connectors,
+            NavKind::AgentMail,
+            NavKind::MessageCenter,
+        ]
+    );
+    for entry in entries.iter().skip(4) {
+        assert!(entry.count == 0 && !entry.selected);
+        assert!(!entry.title.trim().is_empty());
+    }
 }
 
 #[test]
@@ -239,7 +260,7 @@ fn nav_counts_come_from_state_and_reach_the_view() {
     assert_eq!(state.agent_count(), 3);
 
     let view = render(&state, 260.0);
-    assert_eq!(view.nav.len(), 4);
+    assert_eq!(view.nav.len(), 14);
     assert_eq!(view.nav[0].count, 2);
     assert_eq!(view.nav[1].count, 3);
     assert!(!view.nav[0].selected);
