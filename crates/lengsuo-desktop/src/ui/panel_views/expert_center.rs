@@ -291,7 +291,11 @@ fn expert_card(theme: &Theme, entry: &ExpertEntry) -> Div {
                 .child(SharedString::from(entry.name.clone())),
         )
         .child(labeled_line(theme, STRENGTH_LABEL, &entry.strengths))
-        .child(labeled_line(theme, ABILITY_INTRO_LABEL, &entry.ability_intro))
+        .child(labeled_line(
+            theme,
+            ABILITY_INTRO_LABEL,
+            &entry.ability_intro,
+        ))
 }
 
 /// 「标签 + 值」一行。
@@ -317,16 +321,82 @@ fn labeled_line(theme: &Theme, label: &'static str, value: &str) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, ExpertCenterState, ExpertCenterView, ExpertEntry, ABILITY_INTRO_LABEL,
+        ALL_CATEGORY, CATEGORY_LABEL, CREATE_EXPERT, EMPTY_TEXT, NOT_DELIVERED, STRENGTH_LABEL,
+        SUBTITLE, TITLE,
+    };
     use gpui_kit::component::Theme;
 
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert_eq!(TITLE, "专家中心");
+    fn sample_entries() -> Vec<ExpertEntry> {
+        [
+            ("甲", "金融", "风控", "介绍甲"),
+            ("乙", "金融", "投研", "介绍乙"),
+            ("丙", "法律", "合规", "介绍丙"),
+        ]
+        .into_iter()
+        .map(|(name, category, strengths, ability_intro)| ExpertEntry {
+            name: name.into(),
+            category: category.into(),
+            strengths: strengths.into(),
+            ability_intro: ability_intro.into(),
+        })
+        .collect()
     }
 
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn grouping_counts_by_category() {
+        let view = ExpertCenterView::build(Some(sample_entries()));
+        assert_eq!(view.categories(), vec!["金融", "法律"]);
+        let grouped = view.grouped();
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].0, "金融");
+        assert_eq!(grouped[0].1.len(), 2);
+        assert_eq!(grouped[1].0, "法律");
+        assert_eq!(grouped[1].1.len(), 1);
+        assert_eq!(grouped.iter().map(|(_, es)| es.len()).sum::<usize>(), 3);
+    }
+
+    #[test]
+    fn grouped_rows_reach_at_least_three_nodes() {
+        let view = ExpertCenterView::build(Some(sample_entries()));
+        // 元素树清单节点 = 每组 1 个分组头 + 组内每条 1 张卡片。
+        let nodes = view
+            .grouped()
+            .iter()
+            .map(|(_, entries)| 1 + entries.len())
+            .sum::<usize>();
+        assert!(nodes >= 3, "清单/分组节点仅 {nodes} 个");
+    }
+
+    #[test]
+    fn none_input_is_not_delivered_fail_closed() {
+        assert!(matches!(
+            ExpertCenterView::build(None).state(),
+            ExpertCenterState::NotDelivered
+        ));
+        // 未下发时筛选栏与清单都必须是空，不得伪造分组。
+        assert!(ExpertCenterView::build(None).categories().is_empty());
+        assert!(ExpertCenterView::build(None).grouped().is_empty());
+    }
+
+    #[test]
+    fn empty_input_yields_empty_state_not_empty_list() {
+        let view = ExpertCenterView::build(Some(Vec::new()));
+        assert!(matches!(view.state(), ExpertCenterState::Empty));
+        assert!(view.grouped().is_empty());
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_ui_table() {
+        assert_eq!(TITLE, "专家中心");
+        assert_eq!(SUBTITLE, "按行业分类浏览专家，召唤他们为你服务");
+        assert_eq!(ALL_CATEGORY, "全部");
+        assert_eq!(CATEGORY_LABEL, "行业分类");
+        assert_eq!(STRENGTH_LABEL, "擅长领域");
+        assert_eq!(ABILITY_INTRO_LABEL, "能力介绍");
+        assert_eq!(CREATE_EXPERT, "创建专家");
+        assert_eq!(EMPTY_TEXT, "暂无该分类的专家");
         assert_eq!(NOT_DELIVERED, "未下发");
     }
 
