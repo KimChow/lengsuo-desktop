@@ -394,7 +394,8 @@ fn centered_block(theme: &Theme, primary: &'static str, secondary: Option<&'stat
 mod tests {
     use super::{
         build, format_total, group_tasks, LastResult, ScheduledTask, TaskStatus, ViewState,
-        GROUP_CURRENT, GROUP_PAUSED, NOT_DELIVERED, TITLE,
+        ACTION_VIEW_RUN, EMPTY, EMPTY_ARCHIVED, EMPTY_FIRST_TASK, GROUP_CURRENT, GROUP_PAUSED,
+        NOT_DELIVERED, RESULT_FAILED, RESULT_SUCCESS, STATUS_ACTIVE, STATUS_PAUSED, TITLE,
     };
     use gpui_kit::component::Theme;
 
@@ -456,5 +457,88 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = super::main_area(&theme);
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_namespace() {
+        assert_eq!(
+            super::DESCRIPTION,
+            "配置定时任务，Workbuddy 将按计划定时执行任务"
+        );
+        assert_eq!(EMPTY, "暂无定时任务");
+        assert_eq!(EMPTY_FIRST_TASK, "开启你的第一个定时任务吧");
+        assert_eq!(EMPTY_ARCHIVED, "暂无归档记录");
+        assert_eq!(STATUS_ACTIVE, "已启用");
+        assert_eq!(STATUS_PAUSED, "已暂停");
+        assert_eq!(RESULT_SUCCESS, "成功");
+        assert_eq!(RESULT_FAILED, "失败");
+        assert_eq!(super::RESULT_PENDING, "待执行");
+        assert_eq!(ACTION_VIEW_RUN, "查看运行详情");
+        assert_eq!(super::ACTION_VIEW_TASK, "查看任务");
+        assert_eq!(super::ACTION_ARCHIVE, "归档");
+    }
+
+    #[test]
+    fn status_and_result_labels_map_verbatim() {
+        assert_eq!(TaskStatus::Active.label(), STATUS_ACTIVE);
+        assert_eq!(TaskStatus::Paused.label(), STATUS_PAUSED);
+        assert_eq!(LastResult::Success.label(), RESULT_SUCCESS);
+        assert_eq!(LastResult::Failed.label(), RESULT_FAILED);
+        assert_eq!(LastResult::Pending.label(), super::RESULT_PENDING);
+    }
+
+    #[test]
+    fn nodes_locate_title_and_at_least_three_row_nodes() {
+        let view = build(Some(vec![
+            task("晨报", TaskStatus::Active, LastResult::Success),
+            task("巡检", TaskStatus::Active, LastResult::Pending),
+            task("周清", TaskStatus::Paused, LastResult::Failed),
+        ]));
+        let nodes = view.nodes();
+        assert_eq!(nodes.first(), Some(&super::ViewNode::Title));
+        let rows = nodes
+            .iter()
+            .filter(|n| {
+                matches!(
+                    n,
+                    super::ViewNode::GroupHeader { .. } | super::ViewNode::TaskRow { .. }
+                )
+            })
+            .count();
+        assert!(rows >= 3, "group/row nodes = {rows}");
+        assert!(nodes.contains(&super::ViewNode::ArchivedEmpty));
+    }
+
+    #[test]
+    fn empty_and_not_delivered_nodes_stay_honest() {
+        let empty_nodes = build(Some(Vec::new())).nodes();
+        assert_eq!(empty_nodes.first(), Some(&super::ViewNode::Title));
+        assert!(empty_nodes.contains(&super::ViewNode::EmptyState));
+        assert!(!empty_nodes
+            .iter()
+            .any(|n| matches!(n, super::ViewNode::TaskRow { .. })));
+
+        let nd_nodes = build(None).nodes();
+        assert!(nd_nodes.contains(&super::ViewNode::NotDeliveredBlock));
+        assert!(!nd_nodes
+            .iter()
+            .any(|n| matches!(n, super::ViewNode::TaskRow { .. })));
+    }
+
+    #[test]
+    fn render_every_state_without_panic() {
+        let theme = Theme::default();
+        let _ = super::main_area(&theme);
+        for view in [
+            build(None),
+            build(Some(Vec::new())),
+            build(Some(vec![task(
+                "晨报",
+                TaskStatus::Active,
+                LastResult::Success,
+            )])),
+        ] {
+            let _ = super::render(&view, &theme);
+        }
     }
 }
