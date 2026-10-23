@@ -16,23 +16,39 @@ use crate::ui::sidebar::{SessionRow, SidebarSection, SidebarView};
 
 use super::{row_marks, select_row, toggle_archived, MarkKind, SidebarViewGpui};
 
-/// 计数徽标（未读数、隐藏的归档数）。
-pub(super) fn render_count_badge(count: usize, theme: &Theme) -> impl IntoElement {
+/// 实心小角标：警示底色 + 高对比前景（计数角标与未读标记共用同一档样式）。
+fn solid_badge(text: &str, theme: &Theme) -> AnyElement {
     div()
         .rounded_full()
         .px_1()
         .text_xs()
         .text_color(theme.button_warning_foreground)
         .bg(theme.button_warning)
-        .child(count.to_string())
+        .child(text.to_owned())
+        .into_any_element()
+}
+
+/// 计数徽标（未读数、隐藏的归档数）。
+pub(super) fn render_count_badge(count: usize, theme: &Theme) -> AnyElement {
+    solid_badge(&count.to_string(), theme)
 }
 
 /// 行标记（置顶 / 归档 / 未读）。
-pub(super) fn render_mark(mark: &super::RowMark, theme: &Theme) -> impl IntoElement {
+///
+/// 未读是行动信号 ⇒ 实心角标（最强一档）；置顶 / 归档只是属性 ⇒ 描边胶囊弱一档。
+/// 三种状态在视觉上必须一眼可分，不能只存在枚举里。
+pub(super) fn render_mark(mark: &super::RowMark, theme: &Theme) -> AnyElement {
+    match mark.kind {
+        MarkKind::Unread => solid_badge(mark.label, theme),
+        _ => outlined_mark(mark, theme),
+    }
+}
+
+/// 描边胶囊（置顶 / 归档）：弱一档的属性标记。
+fn outlined_mark(mark: &super::RowMark, theme: &Theme) -> AnyElement {
     let color = match mark.kind {
         MarkKind::Pinned => theme.accent,
-        MarkKind::Archived => theme.muted_foreground,
-        MarkKind::Unread => theme.button_warning,
+        _ => theme.muted_foreground,
     };
     div()
         .rounded_full()
@@ -42,6 +58,7 @@ pub(super) fn render_mark(mark: &super::RowMark, theme: &Theme) -> impl IntoElem
         .border_1()
         .border_color(color)
         .child(mark.label)
+        .into_any_element()
 }
 
 /// 一行会话：标题 + 标记；选中项高亮；点击回写选中态。
