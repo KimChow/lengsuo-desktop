@@ -76,3 +76,51 @@ pub fn body(delivered: Option<Vec<Row>>) -> Body {
         _ => Body::NotDelivered,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 未下发（None）与空下发（Some(vec![])）都必须走 NotDelivered（fail-closed，
+    /// 不退化成空列表）。
+    #[test]
+    fn body_none_and_empty_is_not_delivered() {
+        assert_eq!(body(None), Body::NotDelivered);
+        assert_eq!(body(Some(Vec::new())), Body::NotDelivered);
+    }
+
+    /// 有内容 ⇒ 行清单：行数一致、首行文案（动作/标签）来自文案全表常量。
+    #[test]
+    fn body_delivered_rows() {
+        let rows = vec![
+            Row {
+                name: "agent-01".to_owned(),
+                disabled: false,
+            },
+            Row {
+                name: "agent-02".to_owned(),
+                disabled: true,
+            },
+        ];
+        let Body::Delivered(rendered) = body(Some(rows)) else {
+            panic!("有内容必须返回 Delivered");
+        };
+        assert_eq!(rendered.len(), 2);
+        assert_eq!(rendered[0].name, "agent-01");
+        assert_eq!(rendered[0].action(), ACTION_DISABLE);
+        assert_eq!(rendered[0].tag(), None);
+        assert_eq!(rendered[1].action(), ACTION_CANCEL_DISABLE);
+        assert_eq!(rendered[1].tag(), Some(TAG_DISABLED));
+    }
+
+    /// 文案常量逐字取自文案全表（`grep -F` 逐字命中口径的守护断言）。
+    #[test]
+    fn copy_verbatim_from_catalog() {
+        assert_eq!(ITEM_TITLE, "智能体");
+        assert_eq!(ACTION_ENABLE, "开启");
+        assert_eq!(ACTION_DISABLE, "禁用");
+        assert_eq!(ACTION_CANCEL_DISABLE, "取消禁用");
+        assert_eq!(TAG_DISABLED, "禁用中");
+        assert_eq!(TITLE, "扩展");
+    }
+}
