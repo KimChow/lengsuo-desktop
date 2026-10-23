@@ -240,11 +240,9 @@ pub fn remain_percent_text(percent: u64) -> String {
 /// 剩余百分比（展示算术，非业务判定；`total` 为 0 视为 0%，⛔ 不除零）。
 #[must_use]
 pub const fn remain_percent(used: u64, total: u64) -> u64 {
-    if total == 0 {
-        0
-    } else {
-        (total.saturating_sub(used)) * 100 / total
-    }
+    ((total.saturating_sub(used)) * 100)
+        .checked_div(total)
+        .unwrap_or(0)
 }
 
 /// 由快照映射面板主体（纯函数：未下发 ⇒ [`SubscriptionBody::NotDelivered`]）。
