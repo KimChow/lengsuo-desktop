@@ -11,7 +11,7 @@
 #![cfg(all(test, feature = "ui"))]
 use super::{assert_rendered, CANVAS_H, CANVAS_W};
 use crate::ui::gpui_input::{SkeletonInput, PLACEHOLDER};
-use crate::ui::input_area::{InputMode, SendButtonKind};
+use crate::ui::input_area::InputMode;
 use crate::ui::input_gpui::InputAreaGpui;
 use gpui_kit::component::Theme;
 use gpui_kit::AppContext as _;
