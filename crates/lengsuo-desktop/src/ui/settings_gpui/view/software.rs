@@ -134,3 +134,81 @@ pub fn body(tools: Option<&[ToolRow]>) -> Body {
         _ => Body::NotDelivered,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_rows() -> Vec<ToolRow> {
+        vec![
+            ToolRow {
+                tool: "Git Bash".into(),
+                version: "1.2.3".into(),
+                enabled: true,
+                install_dir: "C:\\tools\\git".into(),
+                description: known_description("gitbash").unwrap().into(),
+            },
+            ToolRow {
+                tool: "Python".into(),
+                version: "3.12.0".into(),
+                enabled: false,
+                install_dir: "C:\\tools\\python".into(),
+                description: known_description("python").unwrap().into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn undelivered_snapshot_yields_not_delivered() {
+        assert_eq!(body(None), Body::NotDelivered);
+        // 下发为空清单同样按未下发处理（不退化成空表格）。
+        assert_eq!(body(Some(&[])), Body::NotDelivered);
+    }
+
+    #[test]
+    fn delivered_snapshot_yields_rows() {
+        let rows = sample_rows();
+        let Body::Content(got) = body(Some(&rows)) else {
+            panic!("有内容必须走 Content 分支");
+        };
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].tool, "Git Bash");
+        // 首行文案：说明列取的是 desc.gitbash 的随包文案（逐字）。
+        assert_eq!(got[0].description, DESC_GITBASH);
+    }
+
+    #[test]
+    fn status_and_toggle_labels_follow_enabled() {
+        let rows = sample_rows();
+        assert_eq!(rows[0].status_text(), STATUS_ENABLED);
+        assert_eq!(rows[0].toggle_label(), ACTION_DISABLE);
+        assert_eq!(rows[1].status_text(), STATUS_DISABLED);
+        assert_eq!(rows[1].toggle_label(), ACTION_ENABLE);
+    }
+
+    #[test]
+    fn known_description_only_for_known_ids() {
+        for id in ["gitbash", "nodejs", "python", "shell"] {
+            assert!(
+                known_description(id).is_some(),
+                "已知工具 {id} 应有随包说明"
+            );
+        }
+        assert!(known_description("unknown-tool").is_none());
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_key_table() {
+        // 抽查关键文案（逐字，含全角标点）——防手改漂移。
+        assert_eq!(
+            BUNDLED_RUNTIME_PATH,
+            "内置运行时安装在 ~/.workbuddy/ 目录下。"
+        );
+        assert_eq!(TARGET_PLATFORM, "主要面向 Windows。");
+        assert_eq!(
+            DESC_NODEJS,
+            "基于 Chrome V8 引擎的 JavaScript 运行时，用于服务端开发。"
+        );
+        assert_eq!(NOT_DELIVERED, "服务端尚未下发内容。");
+    }
+}

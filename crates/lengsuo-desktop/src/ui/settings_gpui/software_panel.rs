@@ -57,7 +57,7 @@ fn render_body(theme: &Theme, body: &panel_view::Body) -> AnyElement {
 }
 
 /// 通用区块：小节标题 + 若干说明行（全部为下发文案，静态只读）。
-fn section(theme: &Theme, title: &str, lines: &[&str]) -> Div {
+fn section(theme: &Theme, title: &'static str, lines: &[&'static str]) -> Div {
     let mut el = div().flex().flex_col().gap_1().child(
         div()
             .text_sm()
@@ -70,7 +70,7 @@ fn section(theme: &Theme, title: &str, lines: &[&str]) -> Div {
             div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(line),
+                .child(*line),
         );
     }
     el
@@ -99,17 +99,11 @@ fn runtime_tools_section(theme: &Theme, body: &panel_view::Body) -> Div {
                 .rounded_lg()
                 .p_3()
                 .child(table_header(theme))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(match body {
-                            // fail-closed：未下发 ⇒ 显式提示，⛔ 不退化成空表格。
-                            panel_view::Body::NotDelivered => not_delivered_row(theme),
-                            panel_view::Body::Content(rows) => content_rows(theme, rows),
-                        }),
-                ),
+                .child(div().flex().flex_col().gap_1().child(match body {
+                    // fail-closed：未下发 ⇒ 显式提示，⛔ 不退化成空表格。
+                    panel_view::Body::NotDelivered => not_delivered_row(theme),
+                    panel_view::Body::Content(rows) => content_rows(theme, rows),
+                })),
         )
 }
 
@@ -119,17 +113,20 @@ fn table_header(theme: &Theme) -> Div {
         .flex()
         .flex_row()
         .gap_2()
-        .child(head_cell(theme, panel_view::COL_TOOL, W_TOOL))
-        .child(head_cell(theme, panel_view::COL_VERSION, W_VERSION))
-        .child(head_cell(theme, panel_view::COL_STATUS, W_STATUS))
+        .child(head_cell(theme, panel_view::COL_TOOL, Some(W_TOOL)))
+        .child(head_cell(theme, panel_view::COL_VERSION, Some(W_VERSION)))
+        .child(head_cell(theme, panel_view::COL_STATUS, Some(W_STATUS)))
         .child(head_cell(theme, panel_view::COL_INSTALL_DIR, None))
         .child(head_cell(theme, panel_view::COL_DESCRIPTION, None))
         .child(div().flex_1())
 }
 
 /// 列头单元格（`width = None` ⇒ 弹性列：安装目录 / 说明）。
-fn head_cell(theme: &Theme, text: &str, width: Option<f32>) -> Div {
-    let mut cell = div().text_xs().font_bold().text_color(theme.muted_foreground);
+fn head_cell(theme: &Theme, text: &'static str, width: Option<f32>) -> Div {
+    let mut cell = div()
+        .text_xs()
+        .font_bold()
+        .text_color(theme.muted_foreground);
     cell = match width {
         Some(w) => cell.w(px(w)).flex_shrink_0(),
         None => cell.flex_1(),
@@ -220,9 +217,36 @@ fn row_actions(theme: &Theme, row: &panel_view::ToolRow) -> Div {
 }
 
 /// 单个动作文案（弱化着色 = 非交互）。
-fn action_text(theme: &Theme, text: &str) -> Div {
+fn action_text(theme: &Theme, text: &'static str) -> Div {
     div()
         .text_xs()
         .text_color(theme.muted_foreground)
         .child(text)
+}
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
+    use super::{panel_view, render_body};
+    use gpui_kit::component::Theme;
+
+    /// 断言口径：构造元素树不 panic（真机布局由 `render_assert_tests` 门禁兜底）。
+    #[test]
+    fn render_not_delivered_branch_does_not_panic() {
+        // 生产路径：无运行时状态通道 ⇒ 未下发分支。
+        let _el = render_body(&Theme::default(), &panel_view::Body::NotDelivered);
+    }
+
+    #[test]
+    fn render_content_branch_does_not_panic() {
+        let rows = vec![panel_view::ToolRow {
+            tool: "Git Bash".into(),
+            version: "1.2.3".into(),
+            enabled: true,
+            install_dir: "C:\\tools\\git".into(),
+            description: panel_view::known_description("gitbash").unwrap().into(),
+        }];
+        let _el = render_body(&Theme::default(), &panel_view::Body::Content(rows));
+    }
 }
