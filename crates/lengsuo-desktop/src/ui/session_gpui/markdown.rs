@@ -3,9 +3,9 @@
 //! **不是完整 CommonMark**：只认下面这些语法，其余一律原样输出为文本。
 //!
 //! 块级：标题（`#`~`###`）、无序列表（`- ` / `* ` / `+ `）、有序列表（`1. `）、
-//! 围栏代码块（```` ``` ```` 与 `~~~`）。多行连续文本合并为段落。
-//! 行内：`**粗体**`、`` `code` ``、`*斜体*`。链接 / 图片 / 表格 / 内嵌 HTML /
-//! 引用块**不支持**，原样保留。
+//! 围栏代码块（```` ``` ```` 与 `~~~`）、GFM 管道表格。多行连续文本合并为段落。
+//! 行内：`**粗体**`、`` `code` ``、`*斜体*`。链接 / 图片 / 内嵌 HTML /
+//! 引用块**不支持**，原样保留。表格单元格按分隔行决定对齐，不解析行内语法。
 //!
 //! fail-closed：未闭合围栏、超长行 ⇒ 整个输入回退为单个纯文本段落，
 //! **不丢内容、不渲染成空白**。
@@ -29,6 +29,20 @@ pub(super) enum MarkdownBlock {
     },
     /// 围栏代码块（内容原样，不解析行内）。
     CodeBlock(String),
+    /// GFM 管道表格；列数以表头为准，`align` 由分隔行决定。
+    Table {
+        header: Vec<String>,
+        rows: Vec<Vec<String>>,
+        align: Vec<Align>,
+    },
+}
+
+/// 表格单元格对齐（分隔行 `:--` / `--:` / `:-:`，无冒号默认左对齐）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Align {
+    Left,
+    Center,
+    Right,
 }
 
 /// 行内片段（只承担「长什么样」，颜色与字重由渲染层决定）。
@@ -66,38 +80,56 @@ pub(super) fn parse(input: &str) -> Vec<MarkdownBlock> {
         return fallback(input);
     }
     let mut blocks = Vec::new();
-    let mut lines = input.lines();
-    while let Some(line) = lines.next() {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
         if let Some((marker, _)) = fence(line) {
             let mut body = String::new();
             let mut closed = false;
-            for inner in lines.by_ref() {
-                if fence(inner).is_some_and(|(m, _)| m == marker) {
+            let mut j = i + 1;
+            while j < lines.len() {
+                if fence(lines[j]).is_some_and(|(m, _)| m == marker) {
                     closed = true;
+                    j += 1;
                     break;
                 }
-                body.push_str(inner);
+                body.push_str(lines[j]);
                 body.push('\n');
+                j += 1;
             }
             if !closed {
                 // 未闭合围栏：不猜边界，整段回退纯文本。
                 return fallback(input);
             }
             blocks.push(MarkdownBlock::CodeBlock(body));
+            i = j;
+        } else if let Some((header, align, rows)) = parse_table(&lines[i..]) {
+            let consumed = rows.len();
+            blocks.push(MarkdownBlock::Table {
+                header,
+                rows,
+                align,
+            });
+            i += 2 + consumed;
         } else if let Some((level, text)) = heading(line) {
             blocks.push(MarkdownBlock::Heading {
                 level,
                 spans: parse_inline(text),
             });
+            i += 1;
         } else if let Some((number, text)) = list_item(line) {
             blocks.push(MarkdownBlock::ListItem {
                 number,
                 spans: parse_inline(text),
             });
+            i += 1;
         } else if line.trim().is_empty() {
             // 空行分隔段落。
+            i += 1;
         } else {
             blocks.push(MarkdownBlock::Paragraph(parse_inline(line)));
+            i += 1;
         }
     }
     blocks
@@ -108,6 +140,67 @@ fn fallback(input: &str) -> Vec<MarkdownBlock> {
     vec![MarkdownBlock::Paragraph(vec![InlineSpan::Text(
         input.to_owned(),
     )])]
+}
+
+/// 识别 GFM 管道表格：`lines[0]` 为表头，`lines[1]` 必须是分隔行。
+///
+/// 两侧竖线可省略；两行都须含 `|`；无分隔行 / 分隔行列数与表头不符 ⇒
+/// `None`（不误吞普通段落）。数据行到首个不含 `|` 的行为止，
+/// 列数以表头为准补齐/截断。
+#[must_use]
+// 表头/对齐/数据行三元组直给，不另设类型别名。
+#[allow(clippy::type_complexity)]
+fn parse_table(lines: &[&str]) -> Option<(Vec<String>, Vec<Align>, Vec<Vec<String>>)> {
+    let header_line = *lines.first()?;
+    let delimiter_line = *lines.get(1)?;
+    if !header_line.contains('|') || !delimiter_line.contains('|') {
+        return None;
+    }
+    let header = split_row(header_line);
+    let delimiter = split_row(delimiter_line);
+    if header.len() != delimiter.len() {
+        return None;
+    }
+    let align = delimiter
+        .iter()
+        .map(|cell| align_of(cell))
+        .collect::<Option<Vec<_>>>()?;
+    let n_cols = header.len();
+    let mut rows = Vec::new();
+    for line in &lines[2..] {
+        if !line.contains('|') {
+            break;
+        }
+        let mut cells = split_row(line);
+        cells.resize(n_cols, String::new());
+        cells.truncate(n_cols);
+        rows.push(cells);
+    }
+    Some((header, align, rows))
+}
+
+/// 切出 `| a | b |` 的单元格（两侧竖线可省，逐格去空白）。
+fn split_row(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let body = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let body = body.strip_suffix('|').unwrap_or(body);
+    body.split('|').map(|c| c.trim().to_owned()).collect()
+}
+
+/// 分隔行单元格 → 对齐；只许 `-` 与至多两端 `:`，其余 ⇒ `None`（不是表格）。
+fn align_of(cell: &str) -> Option<Align> {
+    let left = cell.strip_prefix(':');
+    let body = left.unwrap_or(cell);
+    let right = body.strip_suffix(':');
+    let core = right.unwrap_or(body);
+    if core.is_empty() || !core.chars().all(|c| c == '-') {
+        return None;
+    }
+    Some(match (left.is_some(), right.is_some()) {
+        (true, true) => Align::Center,
+        (false, true) => Align::Right,
+        _ => Align::Left,
+    })
 }
 
 /// 识别围栏行，返回 `(围栏字符, 剩余字符数)`。
@@ -204,7 +297,7 @@ fn flush(buf: &mut String, spans: &mut Vec<InlineSpan>) {
 #[cfg(test)]
 mod tests {
     // 显式导入（不用 `use super::*`），理由见 mod.rs 测试段。
-    use super::{parse, parse_inline, InlineSpan, MarkdownBlock, MAX_LINES};
+    use super::{parse, parse_inline, parse_table, Align, InlineSpan, MarkdownBlock, MAX_LINES};
 
     fn plain(text: &str) -> Vec<InlineSpan> {
         vec![InlineSpan::Text(text.to_owned())]
@@ -323,6 +416,70 @@ mod tests {
     }
 
     #[test]
+    fn table_parses_header_align_and_rows() {
+        let (header, align, rows) = parse_table(&[
+            "| 名称 | 数量 | 备注 |",
+            "| :-- | --: | :-: |",
+            "| 甲 | 1 | x |",
+            "| 乙 | 2 | y |",
+        ])
+        .unwrap();
+        assert_eq!(header, ["名称", "数量", "备注"]);
+        assert_eq!(align, [Align::Left, Align::Right, Align::Center]);
+        assert_eq!(rows, [["甲", "1", "x"], ["乙", "2", "y"]]);
+        // 两侧竖线可省，无冒号默认左对齐。
+        let (h, a, r) = parse_table(&["a | b", "--- | ---:", "1 | 2"]).unwrap();
+        assert_eq!(h, ["a", "b"]);
+        assert_eq!(a, [Align::Left, Align::Right]);
+        assert_eq!(r, [["1", "2"]]);
+    }
+
+    #[test]
+    fn table_without_delimiter_row_is_none() {
+        assert!(parse_table(&["| a | b |", "| 1 | 2 |"]).is_none());
+        assert!(parse_table(&["a | b", "普通行"]).is_none());
+        // parse 层面：无分隔行的带竖线文本不误吞，仍是段落。
+        assert_eq!(
+            parse("a | b\nc | d"),
+            vec![
+                MarkdownBlock::Paragraph(plain("a | b")),
+                MarkdownBlock::Paragraph(plain("c | d")),
+            ]
+        );
+    }
+
+    #[test]
+    fn ragged_table_rows_follow_header_width() {
+        let (_, _, rows) = parse_table(&[
+            "| a | b | c |",
+            "| - | - | - |",
+            "| 1 |",
+            "| 1 | 2 | 3 | 4 |",
+        ])
+        .unwrap();
+        assert_eq!(rows, [["1", "", ""], ["1", "2", "3"]]);
+    }
+
+    #[test]
+    fn table_block_sits_between_other_blocks() {
+        assert_eq!(
+            parse("# 标\n| a | b |\n| --- | :-: |\n| 1 | 2 |\n尾"),
+            vec![
+                MarkdownBlock::Heading {
+                    level: 1,
+                    spans: plain("标")
+                },
+                MarkdownBlock::Table {
+                    header: vec!["a".into(), "b".into()],
+                    rows: vec![vec!["1".into(), "2".into()]],
+                    align: vec![Align::Left, Align::Center],
+                },
+                MarkdownBlock::Paragraph(plain("尾")),
+            ]
+        );
+    }
+
+    #[test]
     fn empty_and_blank_input_yield_no_blocks() {
         assert!(parse("").is_empty());
         assert!(parse("\n\n\n").is_empty());
@@ -352,6 +509,7 @@ mod tests {
                 }
                 Self::Heading { spans, .. } => spans.iter().map(|s| s.text()).collect(),
                 Self::CodeBlock(body) => body.clone(),
+                Self::Table { header, rows, .. } => format!("{header:?}|{rows:?}"),
             }
         }
     }
