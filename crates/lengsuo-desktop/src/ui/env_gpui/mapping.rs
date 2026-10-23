@@ -1,6 +1,7 @@
 //! 映射层（无 `feature = "ui"` 门控）：描述字段 → 界面语义。
 //! 纯数据，随 `cargo test` 一起跑；不依赖 GPUI。
 
+use crate::state::datasource::LoadState;
 use crate::state::env_group::{EmptyReason, EnvGroupState, GroupFilter};
 use crate::state::env_list::EnvStatus;
 use crate::ui::env_view::{CardStatus, EnvView, GroupRow};
@@ -161,4 +162,72 @@ pub fn demo_state() -> EnvGroupState {
         json!({"id": "demo-4", "name": "本地沙箱"}),
     ]);
     state
+}
+
+/// 把注入的三态快照水合成视图状态：**只换来源，不改行/分组结构**——
+/// 行清单仍由 [`crate::ui::env_view::render`] 从状态产出，字段与分组语义原样。
+///
+/// - `Ready(snapshot)` ⇒ 原样采用快照（快照自带健康态，如实表达）；
+/// - `Loading` ⇒ 加载态（未拉取过 ≠ 空集，不得报「暂无环境」）；
+/// - `Failed(reason)` ⇒ fail-closed：记录原因，绝不退化成空列表。
+#[must_use]
+pub fn hydrate(load: LoadState<EnvGroupState>) -> EnvGroupState {
+    match load {
+        LoadState::Ready(snapshot) => snapshot,
+        // 默认态即「尚未拉取」的加载态（见 `EnvListViewState::Default`）。
+        LoadState::Loading => EnvGroupState::new(),
+        LoadState::Failed(reason) => {
+            let mut state = EnvGroupState::new();
+            state.fail(reason);
+            state
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{demo_state, hydrate, main_pane, MainPane};
+    use crate::state::datasource::LoadState;
+    use crate::state::env_group::GroupFilter;
+    use crate::state::env_list::EnvStatus;
+    use crate::ui::env_view;
+
+    /// ① 注入 Ready 快照 ⇒ 行数 == 快照组数（每个分组恰好一行）。
+    #[test]
+    fn ready_snapshot_hydrates_one_row_per_group() {
+        let snap = demo_state();
+        let state = hydrate(LoadState::Ready(snap.clone()));
+        assert_eq!(state, snap, "Ready 快照原样采用（只换来源，不改结构）");
+        let view = env_view::render(&state);
+        let group_rows = view
+            .sidebar
+            .iter()
+            .filter(|row| matches!(row.filter, GroupFilter::Group(_)))
+            .count();
+        assert_eq!(group_rows, snap.groups().len(), "每个快照分组恰好一行");
+        assert_eq!(view.cards.len(), snap.entries().len());
+    }
+
+    /// ② 注入 Failed ⇒ 原因保留、fail-closed，不退化成空列表。
+    #[test]
+    fn failed_snapshot_keeps_reason_fail_closed() {
+        let state = hydrate(LoadState::Failed("环境服务不可达".to_owned()));
+        assert_eq!(state.status(), EnvStatus::Failed);
+        assert_eq!(state.last_error(), Some("环境服务不可达"));
+        let view = env_view::render(&state);
+        assert_eq!(main_pane(&view), MainPane::Failed);
+        assert_eq!(view.error.as_deref(), Some("环境服务不可达"));
+        assert_eq!(view.empty, None, "失败不得伪装成「暂无环境」");
+    }
+
+    /// ③ 注入 Loading ⇒ 加载态，不 panic、不报空数据。
+    #[test]
+    fn loading_snapshot_stays_loading_not_no_data() {
+        let state = hydrate(LoadState::Loading);
+        assert_eq!(state.status(), EnvStatus::Loading);
+        let view = env_view::render(&state);
+        assert_eq!(main_pane(&view), MainPane::Loading);
+        assert!(view.loading);
+        assert_eq!(view.empty_text, None, "未拉取过 ≠ 空集");
+    }
 }
