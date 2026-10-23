@@ -277,8 +277,8 @@ mod tests {
 mod render_tests {
     use gpui_kit::component::Theme;
     use gpui_kit::{
-        div, point, px, size, AnyElement, Bounds, IntoElement, ParentElement as _, Pixels,
-        TestAppContext,
+        point, px, size, AppContext as _, Bounds, Context, Entity, IntoElement, Pixels, Render,
+        TestAppContext, Window,
     };
 
     use super::{render_preview, BADGE_SELECTOR, DISPATCH_NOTICE_SELECTOR};
@@ -290,21 +290,34 @@ mod render_tests {
         }
     }
 
+    /// 测试探针视图：把被测内容包进一个**真实 view**。
+    ///
+    /// ⚠️ 必须经 `Entity` 绘制：GPUI 的文本绘制会调 `Window::current_view()`，而
+    /// `rendered_entity_stack` 只在「在某个 view 内渲染」时才非空 ⇒ 直接画**裸元素**
+    /// （非 `Entity`）会在 paint 期 panic（gpui `window.rs` 的 `last().copied().unwrap()`）。
+    struct PreviewProbe {
+        content: PreviewContent,
+    }
+
+    impl Render for PreviewProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::default();
+            render_preview(&self.content, &theme)
+        }
+    }
+
     /// 无窗口渲染一帧，返回 `selector` 命名节点的实际布局 bounds。
-    fn draw_and_find(
-        build: impl FnOnce(&mut TestAppContext) -> AnyElement,
-        selector: &'static str,
-    ) -> Option<Bounds<Pixels>> {
+    fn draw_and_find(content: PreviewContent, selector: &'static str) -> Option<Bounds<Pixels>> {
         let mut ctx = TestAppContext::single();
         // 接线层统一用主题 token 取色；不预置全局 Theme 会 panic。
         ctx.update(|cx| cx.set_global(Theme::default()));
 
-        let element = build(&mut ctx);
+        let entity: Entity<PreviewProbe> = ctx.new(|_cx| PreviewProbe { content });
         let visual = ctx.add_empty_window();
         let (_layout, _prepaint) = visual.draw(
             point(px(0.0), px(0.0)),
             size(px(800.0), px(600.0)),
-            |_window, _cx| div().child(element).into_any_element(),
+            |_window, _cx| entity.into_any_element(),
         );
         visual.debug_bounds(selector)
     }
@@ -312,10 +325,7 @@ mod render_tests {
     #[test]
     fn badge_node_is_locatable_and_laid_out() {
         for path in ["src/main.rs", "docs/spec.pdf", "notes.md"] {
-            let bounds = draw_and_find(
-                |_| render_preview(&target(path), &Theme::default()).into_any_element(),
-                BADGE_SELECTOR,
-            );
+            let bounds = draw_and_find(target(path), BADGE_SELECTOR);
             let bounds =
                 bounds.unwrap_or_else(|| panic!("{path}：徽标节点没进入渲染帧（未记录选择器）"));
             assert!(
@@ -327,10 +337,7 @@ mod render_tests {
 
     #[test]
     fn dispatch_notice_is_locatable_while_undispatched() {
-        let bounds = draw_and_find(
-            |_| render_preview(&target("notes.md"), &Theme::default()).into_any_element(),
-            DISPATCH_NOTICE_SELECTOR,
-        );
+        let bounds = draw_and_find(target("notes.md"), DISPATCH_NOTICE_SELECTOR);
         assert!(
             bounds.is_some(),
             "内容未下发时必须显示统一提示行（fail-closed）"
