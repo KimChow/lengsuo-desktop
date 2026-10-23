@@ -105,12 +105,13 @@ pub(super) fn parse(input: &str) -> Vec<MarkdownBlock> {
             blocks.push(MarkdownBlock::CodeBlock(body));
             i = j;
         } else if let Some((header, align, rows)) = parse_table(&lines[i..]) {
+            let consumed = rows.len();
             blocks.push(MarkdownBlock::Table {
                 header,
                 rows,
                 align,
             });
-            i += 2 + rows.len();
+            i += 2 + consumed;
         } else if let Some((level, text)) = heading(line) {
             blocks.push(MarkdownBlock::Heading {
                 level,
@@ -147,6 +148,8 @@ fn fallback(input: &str) -> Vec<MarkdownBlock> {
 /// `None`（不误吞普通段落）。数据行到首个不含 `|` 的行为止，
 /// 列数以表头为准补齐/截断。
 #[must_use]
+// 表头/对齐/数据行三元组直给，不另设类型别名。
+#[allow(clippy::type_complexity)]
 fn parse_table(lines: &[&str]) -> Option<(Vec<String>, Vec<Align>, Vec<Vec<String>>)> {
     let header_line = *lines.first()?;
     let delimiter_line = *lines.get(1)?;
@@ -294,7 +297,7 @@ fn flush(buf: &mut String, spans: &mut Vec<InlineSpan>) {
 #[cfg(test)]
 mod tests {
     // 显式导入（不用 `use super::*`），理由见 mod.rs 测试段。
-    use super::{parse, parse_inline, InlineSpan, MarkdownBlock, MAX_LINES};
+    use super::{parse, parse_inline, parse_table, Align, InlineSpan, MarkdownBlock, MAX_LINES};
 
     fn plain(text: &str) -> Vec<InlineSpan> {
         vec![InlineSpan::Text(text.to_owned())]
@@ -408,6 +411,70 @@ mod tests {
                     number: Some(2),
                     spans: plain("第二")
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn table_parses_header_align_and_rows() {
+        let (header, align, rows) = parse_table(&[
+            "| 名称 | 数量 | 备注 |",
+            "| :-- | --: | :-: |",
+            "| 甲 | 1 | x |",
+            "| 乙 | 2 | y |",
+        ])
+        .unwrap();
+        assert_eq!(header, ["名称", "数量", "备注"]);
+        assert_eq!(align, [Align::Left, Align::Right, Align::Center]);
+        assert_eq!(rows, [["甲", "1", "x"], ["乙", "2", "y"]]);
+        // 两侧竖线可省，无冒号默认左对齐。
+        let (h, a, r) = parse_table(&["a | b", "--- | ---:", "1 | 2"]).unwrap();
+        assert_eq!(h, ["a", "b"]);
+        assert_eq!(a, [Align::Left, Align::Right]);
+        assert_eq!(r, [["1", "2"]]);
+    }
+
+    #[test]
+    fn table_without_delimiter_row_is_none() {
+        assert!(parse_table(&["| a | b |", "| 1 | 2 |"]).is_none());
+        assert!(parse_table(&["a | b", "普通行"]).is_none());
+        // parse 层面：无分隔行的带竖线文本不误吞，仍是段落。
+        assert_eq!(
+            parse("a | b\nc | d"),
+            vec![
+                MarkdownBlock::Paragraph(plain("a | b")),
+                MarkdownBlock::Paragraph(plain("c | d")),
+            ]
+        );
+    }
+
+    #[test]
+    fn ragged_table_rows_follow_header_width() {
+        let (_, _, rows) = parse_table(&[
+            "| a | b | c |",
+            "| - | - | - |",
+            "| 1 |",
+            "| 1 | 2 | 3 | 4 |",
+        ])
+        .unwrap();
+        assert_eq!(rows, [["1", "", ""], ["1", "2", "3"]]);
+    }
+
+    #[test]
+    fn table_block_sits_between_other_blocks() {
+        assert_eq!(
+            parse("# 标\n| a | b |\n| --- | :-: |\n| 1 | 2 |\n尾"),
+            vec![
+                MarkdownBlock::Heading {
+                    level: 1,
+                    spans: plain("标")
+                },
+                MarkdownBlock::Table {
+                    header: vec!["a".into(), "b".into()],
+                    rows: vec![vec!["1".into(), "2".into()]],
+                    align: vec![Align::Left, Align::Center],
+                },
+                MarkdownBlock::Paragraph(plain("尾")),
             ]
         );
     }
