@@ -170,7 +170,11 @@ impl AppShell {
                 // 顺序：审批在前，文件意图在后（互不依赖，保持既有阅读顺序）。
                 shell.sync_file_intent(cx);
             }),
-            cx.observe(&input, |shell: &mut Self, _, cx| shell.drain_outbox(cx)),
+            cx.observe(&input, |shell: &mut Self, _, cx| {
+                // 先回显、后收停止：发送与停止互斥，先回显再收停止不会互相覆盖。
+                shell.drain_outbox(cx);
+                shell.drain_stop_intents(cx);
+            }),
         ];
 
         // 终端抽屉变化 ⇒ 消费「运行 / 中断」意图 + 让根视图重排

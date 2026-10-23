@@ -63,6 +63,7 @@
 //! 文件划分：`demo.rs`（演示数据）、`launch.rs`（窗口启动）、`main_area.rs`（主区
 //! 三分支渲染）、`sync.rs`（纯函数 + 根视图的同步方法）、`prefs_file.rs`（偏好落盘）、
 //! `terminal_drawer.rs`（终端抽屉的宿主侧：意图消费 + 本地回显）、
+//! `stop_intent.rs`（停止意图的宿主侧：消费 + 记账）、
 //! `settings.rs`（设置窗口的状态快照）、`shell.rs`（根视图结构与生命周期方法）、
 //! `render.rs`（标题栏 + 根元素树）、
 //! `tests.rs` / `sync_tests.rs`（单元测试）。
@@ -77,6 +78,7 @@ mod render;
 mod settings;
 mod shell;
 mod sidebar_collapse;
+mod stop_intent;
 mod sync;
 #[cfg(test)]
 mod sync_tests;
