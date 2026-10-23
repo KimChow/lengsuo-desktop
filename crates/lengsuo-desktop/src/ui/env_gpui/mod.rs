@@ -24,6 +24,9 @@
 
 #[cfg(feature = "ui")]
 mod filter_bar;
+#[cfg(test)]
+#[cfg(feature = "ui")]
+mod filter_render_tests;
 mod mapping;
 #[cfg(feature = "ui")]
 mod render;
