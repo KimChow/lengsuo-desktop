@@ -24,7 +24,16 @@ mod data;
 mod help;
 mod hotkeys;
 mod org;
+// === 波次 1：8 个设置面板的描述层（占位落盘，由 ui-settings-* 卡补齐）===
+pub mod claw;
+pub mod extensions;
+pub mod laboratory;
+pub mod mcp_consent;
+pub mod memory;
+pub mod models;
 mod permissions;
+pub mod software;
+pub mod subscription;
 
 pub use self::data::{
     data_panel_body, data_summary, empty_state_text, group_display_name, DataPanelBody,

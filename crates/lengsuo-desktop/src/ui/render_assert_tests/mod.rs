@@ -33,6 +33,14 @@ mod blocks;
 mod env;
 mod input;
 mod org_terminal;
+mod sp_claw;
+mod sp_extensions;
+mod sp_laboratory;
+mod sp_mcp_consent;
+mod sp_memory;
+mod sp_models;
+mod sp_software;
+mod sp_subscription;
 mod views;
 
 /// 探针选择器：每帧只放一个探针，名字固定即可（每个用例独立窗口）。

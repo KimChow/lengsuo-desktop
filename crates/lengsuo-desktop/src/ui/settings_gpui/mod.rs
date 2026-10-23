@@ -17,6 +17,11 @@
 //! - `data_panel.rs`：「数据管理」面板的环境分组**只读**清单。
 //! - `org_panel.rs`：「账号」面板的组织成员**只读**清单。
 //! - `help_panel.rs`：「帮助与反馈」面板的版本 / 快捷键 / 命令表**只读**清单。
+//! - 波次 1 的 8 个面板接线层：`models_panel.rs` / `software_panel.rs` /
+//!   `extensions_panel.rs` / `memory_panel.rs` / `subscription_panel.rs` /
+//!   `claw_panel.rs` / `laboratory_panel.rs` / `mcp_consent_panel.rs`
+//!   （描述层是 `view/` 下的同名模块）——**当前均为占位实现**，
+//!   由 `ui-settings-*` 卡补成完整面板。
 //! - `tests.rs`：单元测试（显式导入，不用 `use super::*`）。
 //!
 //! 硬约定：
@@ -50,6 +55,23 @@ mod security_panel;
 mod system_perm_panel;
 #[cfg(feature = "ui")]
 mod theme_panel;
+// === 波次 1：8 个设置面板的接线层（占位落盘，由 ui-settings-* 卡补齐）===
+#[cfg(feature = "ui")]
+mod claw_panel;
+#[cfg(feature = "ui")]
+mod extensions_panel;
+#[cfg(feature = "ui")]
+mod laboratory_panel;
+#[cfg(feature = "ui")]
+mod mcp_consent_panel;
+#[cfg(feature = "ui")]
+mod memory_panel;
+#[cfg(feature = "ui")]
+mod models_panel;
+#[cfg(feature = "ui")]
+mod software_panel;
+#[cfg(feature = "ui")]
+mod subscription_panel;
 #[cfg(feature = "ui")]
 mod window;
 

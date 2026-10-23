@@ -29,13 +29,21 @@ use crate::ui::gpui_app::AppShell;
 use crate::ui::palette_gpui::hotkey_from_keystroke;
 use crate::ui::settings_gpui::view::{HotkeyPanel, PanelId, SettingsView, ThemeChoice};
 
+use super::claw_panel;
 use super::data_panel;
+use super::extensions_panel;
 use super::help_panel;
 use super::hotkey_panel;
 use super::hotkey_panel::EditState;
+use super::laboratory_panel;
+use super::mcp_consent_panel;
+use super::memory_panel;
+use super::models_panel;
 use super::nav;
 use super::org_panel;
 use super::security_panel;
+use super::software_panel;
+use super::subscription_panel;
 use super::system_perm_panel;
 use super::theme_panel;
 
@@ -169,6 +177,17 @@ impl SettingsGpui {
         }
     }
 
+    /// 带指定**选中面板**构造（宿主 / 渲染断言用）。
+    ///
+    /// 面板内容分发在 [`Self::render`] 的 `match` 上 ⇒ 要断言「某个面板画得出来」，
+    /// 就必须能把它选中。本构造器是那一句的**公开入口**（描述层的 `selected`
+    /// 是公开字段，但 `select` 需要 `&mut SettingsView`）。
+    #[must_use]
+    pub fn with_panel(cx: &mut Context<Self>, panel: PanelId) -> Self {
+        let mut this = Self::new(cx);
+        let _ = this.view.select(panel);
+        this
+    }
     /// 当前视图（只读）：宿主与测试读它。
     #[must_use]
     pub fn view(&self) -> &SettingsView {
@@ -346,15 +365,15 @@ impl Render for SettingsGpui {
                 system_perm_panel::render_system_perm_panel(&self.flags, &theme, cx)
             }
             PanelId::DataManagement => data_panel::render_data_panel(&self.data, &theme, cx),
+            PanelId::Models => models_panel::render_models_panel(&theme, cx),
+            PanelId::SoftwareConfig => software_panel::render_software_panel(&theme, cx),
+            PanelId::Extensions => extensions_panel::render_extensions_panel(&theme, cx),
+            PanelId::Memory => memory_panel::render_memory_panel(&theme, cx),
+            PanelId::SubscriptionUsage => subscription_panel::render_subscription_panel(&theme, cx),
+            PanelId::Claw => claw_panel::render_claw_panel(&theme, cx),
+            PanelId::Laboratory => laboratory_panel::render_laboratory_panel(&theme, cx),
+            PanelId::McpConsent => mcp_consent_panel::render_mcp_consent_panel(&theme, cx),
             PanelId::Help => help_panel::render_help_panel(self.registry.bindings(), &theme, cx),
-            _ => div()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(format!(
-                    "「{}」面板待实现：本卡只做导航与占位，功能见 docs/settings-window-status.md。",
-                    self.view.current_title()
-                ))
-                .into_any_element(),
         };
 
         // 顶栏：当前面板名 + 关闭按钮。
