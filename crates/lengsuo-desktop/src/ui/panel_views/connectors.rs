@@ -269,7 +269,11 @@ fn centered_hint(theme: &Theme, text: &'static str) -> Div {
 
 /// 清单主体：可用连接器分组 + 行，已连接条目再进危险区分组。
 fn entries_body(theme: &Theme, rows: &[ConnectorRow]) -> Div {
-    let mut list = div().flex_1().flex().flex_col().child(group_header(theme, GROUP_AVAILABLE));
+    let mut list = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .child(group_header(theme, GROUP_AVAILABLE));
     for row in rows {
         list = list.child(entry_row(theme, row));
     }
@@ -296,7 +300,11 @@ fn group_header(theme: &Theme, text: &'static str) -> Div {
 
 /// 清单行：名称 + 说明在左，状态 + 动作在右。
 fn entry_row(theme: &Theme, row: &ConnectorRow) -> Div {
-    let mut actions = div().flex().items_center().gap_2().child(status_text(theme, row));
+    let mut actions = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(status_text(theme, row));
     if let Some(action) = row.action_text() {
         actions = actions.child(action_chip(theme, action));
     }
@@ -391,8 +399,9 @@ fn danger_row(theme: &Theme, row: &ConnectorRow) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, render, ConnectorCenter, Node, EMPTY_HINT, GROUP_AVAILABLE, NOT_DELIVERED,
-        TIP_INFO, TITLE,
+        main_area, render, ConnectorCenter, Node, ACTION_AUTHORIZE, ACTION_REVOKE, CATALOG,
+        EMPTY_HINT, GROUP_AVAILABLE, GROUP_DANGER, NOT_DELIVERED, REVOKE_DESC, STATUS_CONNECTED,
+        STATUS_DISCONNECTED, TIP_INFO, TITLE,
     };
     use gpui_kit::component::Theme;
 
@@ -402,6 +411,12 @@ mod tests {
         assert_eq!(TITLE, "连接器");
         assert_eq!(TIP_INFO, "连接第三方应用");
         assert_eq!(GROUP_AVAILABLE, "可用连接器");
+        assert_eq!(GROUP_DANGER, "危险操作");
+        assert_eq!(STATUS_CONNECTED, "已连接");
+        assert_eq!(STATUS_DISCONNECTED, "未连接");
+        assert_eq!(ACTION_AUTHORIZE, "授权");
+        assert_eq!(ACTION_REVOKE, "撤销授权");
+        assert_eq!(REVOKE_DESC, "确定要撤销此连接器的授权吗？");
         assert_eq!(EMPTY_HINT, "暂无可选连接器");
         assert_eq!(NOT_DELIVERED, "未下发");
     }
@@ -427,7 +442,54 @@ mod tests {
         let theme = Theme::default();
         let _ = render(&theme, &ConnectorCenter::build(None));
         let _ = render(&theme, &ConnectorCenter::build(Some(&[])));
-        let _ = render(&theme, &ConnectorCenter::build(Some(&[true, false, false, false])));
+        let _ = render(
+            &theme,
+            &ConnectorCenter::build(Some(&[true, false, false, false])),
+        );
+    }
+
+    /// 元素树结构：标题节点 + ≥3 个清单/分组节点；分组与计数正确。
+    #[test]
+    fn entries_tree_has_title_and_at_least_three_list_nodes() {
+        let nodes = ConnectorCenter::build(Some(&[true, false, false, false])).nodes();
+        assert_eq!(nodes.first(), Some(&Node::Title));
+        let groups: Vec<&'static str> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Group(text) => Some(*text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(groups, vec![GROUP_AVAILABLE, GROUP_DANGER]);
+        let entries: Vec<&'static str> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Entry { name, .. } => Some(*name),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(entries.len(), CATALOG.len());
+        assert!(entries.len() >= 3);
+        assert_eq!(entries, vec!["CNB", "GitHub", "Figma", "工蜂 Git"]);
+        assert!(nodes.contains(&Node::Danger { name: "CNB" }));
+    }
+
+    /// 状态/动作随授权状态走：未连接 → 未连接 + 授权；已连接 → 无行内动作、进危险区撤销。
+    #[test]
+    fn status_and_action_follow_connection_state() {
+        let nodes = ConnectorCenter::build(Some(&[false, true])).nodes();
+        assert!(nodes.contains(&Node::Entry {
+            name: "CNB",
+            status: STATUS_DISCONNECTED,
+            action: Some(ACTION_AUTHORIZE),
+        }));
+        assert!(nodes.contains(&Node::Entry {
+            name: "GitHub",
+            status: STATUS_CONNECTED,
+            action: None,
+        }));
+        assert!(nodes.contains(&Node::Danger { name: "GitHub" }));
+        assert!(!nodes.contains(&Node::Danger { name: "CNB" }));
     }
 
     #[test]
