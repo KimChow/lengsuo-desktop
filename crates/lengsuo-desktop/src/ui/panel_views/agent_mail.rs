@@ -353,6 +353,17 @@ mod tests {
         assert_eq!(build(Some(&snapshot)).state, PaneState::Empty);
     }
 
+    /// fail-closed 与空态互斥：数据缺席（「未下发」）≠ 已下发但无内容。
+    #[test]
+    fn not_delivered_is_distinct_from_empty() {
+        let blank = AccountSnapshot {
+            activation: None,
+            alias: None,
+        };
+        assert_ne!(build(None).state, PaneState::Empty);
+        assert_ne!(build(None).state, build(Some(&blank)).state);
+    }
+
     /// 文案逐字一致（对多个 key 断言，⛔ 不许自编中文）。
     #[test]
     fn copy_is_verbatim_from_string_table() {
