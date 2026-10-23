@@ -52,7 +52,11 @@ pub fn demo_agents() -> Vec<AgentEntry> {
 /// 文案逐字取自文案全表的助理状态词（在线 / 空闲；表内无独立「离线」键）。
 #[must_use]
 pub fn agent_status_label(online: bool) -> &'static str {
-    if online { "在线" } else { "空闲" }
+    if online {
+        "在线"
+    } else {
+        "空闲"
+    }
 }
 
 /// 数据来源标注：C9 契约未就绪 ⇒ 恒为 [`Provenance::Demo`]（⛔ 不许标 Runtime）。
@@ -147,4 +151,76 @@ pub(super) fn render(
             )
     }))
     .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    //! 智能体视图体保真断言（纯函数部分，无窗口可跑）。
+    //!
+    //! 显式导入、不写 `use super::*`：避免 glob 带入的 GPUI `test` 属性宏
+    //! 遮蔽标准库 `#[test]`（同 render_assert_tests 的约定）。
+
+    use crate::state::datasource::Provenance;
+
+    use super::{agent_status_label, demo_agents, provenance};
+
+    /// 演示条目数与入口计数角标一致（demo_state 的 agent_count = 3），
+    /// 且在线 / 空闲两态都有（状态胶囊两个分支都得走到）。
+    #[test]
+    fn demo_agents_match_nav_badge_count_and_cover_both_states() {
+        let agents = demo_agents();
+        assert_eq!(agents.len(), 3, "条目数必须与入口角标一致");
+        assert!(agents.iter().any(|agent| agent.online), "必须有在线条目");
+        assert!(agents.iter().any(|agent| !agent.online), "必须有空闲条目");
+    }
+
+    /// ② 双态文案必须可分，且逐字等于文案全表的状态词。
+    #[test]
+    fn agent_status_label_states_differ() {
+        let (online, idle) = (agent_status_label(true), agent_status_label(false));
+        assert_ne!(online, idle, "在线 / 空闲文案必须可分");
+        assert_eq!(online, "在线");
+        assert_eq!(idle, "空闲");
+    }
+
+    /// 如实标注：C9 就绪前来源恒为 Demo（⛔ 不许标 Runtime）。
+    #[test]
+    fn provenance_is_demo_until_runtime_contract_lands() {
+        assert_eq!(provenance(), Provenance::Demo);
+    }
+}
+
+#[cfg(all(test, feature = "ui"))]
+mod render_tests {
+    //! 智能体视图体元素级断言：整帧画得出来且布局非零。
+    //!
+    //! 显式导入、不写 `use super::*`（同 render_assert_tests 的约定）；
+    //! 元素级断言复用 render_assert_tests 的无窗口绘制骨架。
+
+    use gpui_kit::component::Theme;
+    use gpui_kit::{AppContext as _, IntoElement as _};
+
+    use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
+    use crate::ui::sidebar::nav::agents_entry;
+    use crate::ui::sidebar_gpui::render::HostedElement;
+
+    use super::{demo_agents, provenance, render};
+
+    /// ③ 视图体元素树非空：横幅 + 标题 + 全部智能体行整帧渲染，布局非零。
+    ///
+    /// 有状态滚动容器（`.id`）在绘制期要取「当前视图」，裸画会 panic ⇒
+    /// 与 nav.rs 同款，包一层 `HostedElement` 宿主实体再画。
+    #[test]
+    fn agents_view_body_renders_nonzero() {
+        let bounds = draw_probe(|ctx| {
+            let body = render(
+                agents_entry(3, false).title,
+                &demo_agents(),
+                provenance(),
+                &Theme::default(),
+            );
+            ctx.new(|_| HostedElement(body)).into_any_element()
+        });
+        assert_rendered(bounds, "智能体列表视图体");
+    }
 }

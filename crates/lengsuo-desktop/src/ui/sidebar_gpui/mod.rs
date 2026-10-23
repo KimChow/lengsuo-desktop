@@ -303,12 +303,9 @@ impl Render for SidebarViewGpui {
                 channels::provenance(),
                 theme,
             ),
-            Some((NavKind::Agents, title)) => agents::render(
-                title,
-                &agents::demo_agents(),
-                agents::provenance(),
-                theme,
-            ),
+            Some((NavKind::Agents, title)) => {
+                agents::render(title, &agents::demo_agents(), agents::provenance(), theme)
+            }
             _ => {
                 if let Some(text) = view.empty_text {
                     render::render_empty(text, theme).into_any_element()
