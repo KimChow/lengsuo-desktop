@@ -103,6 +103,7 @@ fn render_action(
     id: &'static str,
     label: &str,
     color: gpui_kit::Hsla,
+    border: gpui_kit::Hsla,
     intent: panel_view::Intent,
     cx: &mut Context<SettingsGpui>,
 ) -> AnyElement {
@@ -112,7 +113,7 @@ fn render_action(
         .py_1()
         .rounded_sm()
         .border_1()
-        .border_color(theme.border_color(intent))
+        .border_color(border)
         .text_sm()
         .text_color(color)
         .cursor_pointer()
@@ -132,14 +133,6 @@ fn render_action(
         .into_any_element()
 }
 
-/// 按钮边框配色：允许走 `theme.border`，拒绝用更弱的弱化边框（同色系不新增依赖）。
-fn theme_border_color(theme: &Theme, intent: panel_view::Intent) -> gpui_kit::Hsla {
-    match intent {
-        panel_view::Intent::Allow => theme.border,
-        panel_view::Intent::Deny => theme.border,
-    }
-}
-
 /// 点击意图的可读名（日志用；与描述层枚举一一对应）。
 fn intent_label(intent: panel_view::Intent) -> &'static str {
     match intent {
@@ -154,8 +147,6 @@ mod tests {
     ///
     /// ⚠️ 无窗口渲染断言（不 panic + 布局非零 + 元素可定位）由
     /// `render_assert_tests/sp_mcp_consent.rs` 承担，本模块不重复搭探针。
-    use super::*;
-
     #[test]
     fn render_card_action_ids_unique() {
         // 允许 / 拒绝两个按钮 id 必须互异（GPUI 同 id 元素会拦截点击）。
