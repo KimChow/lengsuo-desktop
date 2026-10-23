@@ -201,8 +201,8 @@ fn header_row(theme: &Theme) -> Div {
         .debug_selector(|| HEADER_SELECTOR.to_owned())
         .text_color(theme.muted_foreground)
         .child(div().flex_1().min_w_0().child(HEADER_NAME))
-        .child(div().w_28().child(HEADER_OWNER))
-        .child(div().w_36().child(HEADER_TIME))
+        .child(div().w(px(112.0)).child(HEADER_OWNER))
+        .child(div().w(px(144.0)).child(HEADER_TIME))
 }
 
 fn entry_row(theme: &Theme, row: [&str; 3]) -> Div {
@@ -218,14 +218,14 @@ fn entry_row(theme: &Theme, row: [&str; 3]) -> Div {
         )
         .child(
             div()
-                .w_28()
+                .w(px(112.0))
                 .truncate()
                 .text_color(theme.muted_foreground)
                 .child(owner.to_owned()),
         )
         .child(
             div()
-                .w_36()
+                .w(px(144.0))
                 .truncate()
                 .text_color(theme.muted_foreground)
                 .child(updated_time.to_owned()),
@@ -332,5 +332,117 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = gpui_kit::component::Theme::default();
         let _ = super::main_area(&theme);
+    }
+}
+
+/// 接线层的无窗口渲染断言：`TestAppContext` + `VisualTestContext::draw`
+/// 跑完整 layout + prepaint + paint。
+///
+/// ⛔ 不写 `use super::*`：避免 GPUI 的 `test` 属性宏遮蔽标准库 `#[test]`。
+#[cfg(test)]
+mod render_tests {
+    use super::{
+        main_area, render, FileEntry, MyFilesView, BODY_SELECTOR, HEADER_SELECTOR, TITLE_SELECTOR,
+        TOOLBAR_SELECTOR,
+    };
+    use gpui_kit::component::Theme;
+    use gpui_kit::{
+        div, point, px, size, IntoElement, ParentElement as _, Styled as _, TestAppContext,
+    };
+
+    /// 画一帧并断言每个命名节点都真的进了渲染帧且排版非零。
+    /// `debug_bounds` 只认 `'static` 选择器 ⇒ 参数收 `'static` 切片（调用点全是字面量）。
+    fn assert_nodes_present(view: &MyFilesView, checks: &'static [(&'static str, &'static str)]) {
+        let mut ctx = TestAppContext::single();
+        ctx.update(|cx| cx.set_global(Theme::default()));
+
+        let theme = Theme::default();
+        let element = render(view, &theme);
+
+        let visual = ctx.add_empty_window();
+        let (_layout, _prepaint) = visual.draw(
+            point(px(0.0), px(0.0)),
+            size(px(960.0), px(640.0)),
+            |_window, _cx| div().size_full().flex().child(element).into_any_element(),
+        );
+        for (selector, what) in checks {
+            let bounds = visual
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{what}：节点未进入渲染帧（debug_selector 未记录）"));
+            assert!(
+                bounds.size.width > px(0.0) && bounds.size.height > px(0.0),
+                "{what}：布局宽高为 0，节点没真正参与排版"
+            );
+        }
+    }
+
+    fn sample_entries(n: usize) -> Vec<FileEntry> {
+        (0..n)
+            .map(|i| FileEntry {
+                name: format!("f{i}.md"),
+                updated_by: format!("u{i}"),
+                updated_time: format!("2026-10-{i:02}"),
+            })
+            .collect()
+    }
+
+    /// 元素树可定位：标题节点 + 工具栏 / 表头 / 状态体三个分组节点（未下发态）。
+    #[test]
+    fn tree_locates_title_and_three_group_rows_when_not_delivered() {
+        assert_nodes_present(
+            &MyFilesView::not_delivered(),
+            &[
+                (TITLE_SELECTOR, "标题行"),
+                (TOOLBAR_SELECTOR, "工具栏操作行"),
+                (HEADER_SELECTOR, "表头行"),
+                (BODY_SELECTOR, "状态体（未下发）"),
+            ],
+        );
+    }
+
+    /// 空态整帧：状态体渲染空态说明，不是空列表。
+    #[test]
+    fn tree_locates_empty_state_notice() {
+        assert_nodes_present(
+            &MyFilesView::build(vec![]),
+            &[
+                (TITLE_SELECTOR, "标题行"),
+                (BODY_SELECTOR, "状态体（空态）"),
+            ],
+        );
+    }
+
+    /// 条目态整帧：清单体逐条渲染（行数断言在纯函数层测试）。
+    #[test]
+    fn tree_locates_rows_when_entries_delivered() {
+        assert_nodes_present(
+            &MyFilesView::build(sample_entries(3)),
+            &[
+                (TITLE_SELECTOR, "标题行"),
+                (TOOLBAR_SELECTOR, "工具栏操作行"),
+                (HEADER_SELECTOR, "表头行"),
+                (BODY_SELECTOR, "清单体（条目行）"),
+            ],
+        );
+    }
+
+    /// `main_area`（未下发默认态）完整绘制不 panic。
+    #[test]
+    fn main_area_draws_full_tree_without_panic() {
+        let mut ctx = TestAppContext::single();
+        ctx.update(|cx| cx.set_global(Theme::default()));
+
+        let element = main_area(&Theme::default());
+
+        let visual = ctx.add_empty_window();
+        let (_layout, _prepaint) = visual.draw(
+            point(px(0.0), px(0.0)),
+            size(px(960.0), px(640.0)),
+            |_window, _cx| div().size_full().flex().child(element).into_any_element(),
+        );
+        let bounds = visual
+            .debug_bounds(TITLE_SELECTOR)
+            .expect("main_area：标题行未进入渲染帧");
+        assert!(bounds.size.height > px(0.0));
     }
 }
