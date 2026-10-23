@@ -163,7 +163,7 @@ fn field_row(label: &'static str, description: &str) -> Row {
 #[cfg(test)]
 mod tests {
     // 显式导入符号（不用 `use super::*`）：与仓内约定保持一致。
-    use super::{body, catalog, FIELDS_ADVANCED, LOCAL_MODELS_TITLE, SavedModels};
+    use super::{body, catalog, SavedModels, FIELDS_ADVANCED, LOCAL_MODELS_TITLE};
 
     #[test]
     fn undelivered_is_explicit_not_empty() {
