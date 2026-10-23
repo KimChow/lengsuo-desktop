@@ -2,6 +2,7 @@
 //!
 //! 与 [`super::blocks`] 同属接线层：只把描述字段映射成元素，不重新实现业务判断。
 //! 点击只产出**意图**（见 [`super::approval_intent`]）：不判定权限、不落盘、不放宽可见性。
+//! 列表级三态分流见 [`render_approval_list`]：`Failed` ⇒ 失败原因上屏（fail-closed）。
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
@@ -10,7 +11,9 @@ use gpui_kit::*;
 use super::approval_intent::ApprovalRequest;
 use super::blocks::approval_button_colors;
 use super::{with_click, BlockCtx};
-use crate::ui::approval_card::{ApprovalAction, ApprovalButton, ApprovalCardView};
+use crate::ui::approval_card::{
+    ApprovalAction, ApprovalButton, ApprovalCardView, ApprovalListView,
+};
 
 /// 审批卡：**只读渲染**。三个按钮，点击只记本地选择，绝不放行。
 pub(super) fn render_approval(card: &ApprovalCardView, ctx: &BlockCtx<'_>) -> AnyElement {
@@ -104,4 +107,34 @@ pub(super) fn render_approval_button(
             let _intent = view.record_intent(&request);
         },
     )
+}
+
+/// 审批区列表（C3 三态分流）：`Ready` ⇒ 逐卡渲染；`Loading` ⇒ 加载态；
+/// `Failed` ⇒ 失败原因原样上屏（fail-closed，⛔ 不静默退化成空列表、⛔ 不伪造请求）。
+///
+/// 来源标注随 [`ApprovalListView`] 携带、如实可查；按本卡纪律不改卡片视觉结构，
+/// 不另加界面角标。
+// C3 接线入口：Block 流切到 ApprovalListView 后由宿主调用，此前仅测试可达。
+#[allow(dead_code)]
+pub(super) fn render_approval_list(view: &ApprovalListView, ctx: &BlockCtx<'_>) -> AnyElement {
+    let theme = ctx.theme;
+    match view {
+        ApprovalListView::Loading => div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child("加载中…")
+            .into_any_element(),
+        ApprovalListView::Ready { cards, .. } => {
+            let mut list = div().flex().flex_col().gap_2().w_full();
+            for card in cards {
+                list = list.child(render_approval(card, ctx));
+            }
+            list.into_any_element()
+        }
+        ApprovalListView::Failed { reason } => div()
+            .text_xs()
+            .text_color(theme.warning)
+            .child(reason.clone())
+            .into_any_element(),
+    }
 }
