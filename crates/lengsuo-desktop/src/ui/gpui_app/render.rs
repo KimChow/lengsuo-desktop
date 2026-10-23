@@ -39,6 +39,9 @@ impl Render for AppShell {
         // 兜底回显：输入区发送后 `cx.notify()` 会经 observe 触发 `drain_outbox`；
         // 这里在组装元素树之前再消费一次，保证同一帧内回显已写入会话流。只读消费，不投递。
         self.drain_outbox(cx);
+        // 兜底消费停止意图（同一帧兜底）：observe 之外的再次读取，保证停止
+        // 已在组装元素树前落到宿主状态（清等待态），⛔ 不投递停止。
+        self.drain_stop_intents(cx);
 
         // 兜底回写：右栏点审批按钮后 `cx.notify()` 会经 observe 触发 drain；
         // 这里在组装元素树之前再消费一次，保证同一帧内决策已进会话流。
