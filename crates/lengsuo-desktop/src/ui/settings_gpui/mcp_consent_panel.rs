@@ -146,15 +146,30 @@ fn intent_label(intent: panel_view::Intent) -> &'static str {
     }
 }
 
+/// 接线层自检：两条渲染分支（未下发 / 卡片）构建不 panic 即为通过。
+///
+/// ⚠️ 无窗口渲染断言（不 panic + 布局非零 + 元素可定位）由
+/// `render_assert_tests/sp_mcp_consent.rs` 承担，本模块不重复搭探针。
 #[cfg(test)]
 mod tests {
-    /// 接线层自检：两条渲染分支（未下发 / 卡片）都不 panic 即为通过。
-    ///
-    /// ⚠️ 无窗口渲染断言（不 panic + 布局非零 + 元素可定位）由
-    /// `render_assert_tests/sp_mcp_consent.rs` 承担，本模块不重复搭探针。
+    use super::render_body;
+    use crate::ui::settings_gpui::view::mcp_consent as panel_view;
+    use gpui_kit::component::Theme;
+
+    /// 分支 (a)：未下发 ⇒ 提示文案分支构建不 panic（fail-closed，不伪造数据）。
     #[test]
-    fn render_card_action_ids_unique() {
-        // 允许 / 拒绝两个按钮 id 必须互异（GPUI 同 id 元素会拦截点击）。
-        assert_ne!("mcp-consent-allow", "mcp-consent-deny");
+    fn not_delivered_branch_builds_without_panic() {
+        let body = panel_view::body(None);
+        let _ = render_body(body, &Theme::default());
+    }
+
+    /// 分支 (b)：有内容 ⇒ 卡片 + 动作行构建不 panic（点击只落日志，不判权限）。
+    #[test]
+    fn card_branch_builds_without_panic() {
+        let request = panel_view::ConsentRequest {
+            mcp_server_name: "demo-server".to_string(),
+        };
+        let body = panel_view::body(Some(&request));
+        let _ = render_body(body, &Theme::default());
     }
 }
