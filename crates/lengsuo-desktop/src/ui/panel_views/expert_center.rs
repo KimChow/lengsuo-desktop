@@ -125,32 +125,193 @@ impl ExpertCenterView {
 ///
 /// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
 /// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
+///
+/// 当前无数据源：`build(None)` 走「未下发」fail-closed 分支；
+/// 空态与条目分支等数据源就绪后由换源卡点亮，**不改视图结构**。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    let view = ExpertCenterView::build(None);
+    let page = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(header(theme));
+    match view.state() {
+        ExpertCenterState::NotDelivered => page.child(centered_note(theme, NOT_DELIVERED)),
+        ExpertCenterState::Empty => page
+            .child(filter_bar(theme, &view))
+            .child(centered_note(theme, EMPTY_TEXT)),
+        ExpertCenterState::Entries(_) => page
+            .child(filter_bar(theme, &view))
+            .child(group_list(theme, &view).flex_1()),
+    }
+}
+
+/// 标题行：标题 + 副标题，右侧「创建专家」入口（静态，待接线）。
+fn header(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
         .child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(TITLE),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SUBTITLE),
+                ),
         )
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .border_1()
+                .border_color(theme.border)
+                .rounded_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(CREATE_EXPERT),
+        )
+}
+
+/// 居中说明行（未下发 / 空态共用）。
+fn centered_note(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 行业分类筛选栏：首项「全部」+ 去重分类。
+fn filter_bar(theme: &Theme, view: &ExpertCenterView) -> Div {
+    let mut bar = div()
+        .flex()
+        .flex_wrap()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(category_chip(theme, ALL_CATEGORY, true));
+    for category in view.categories() {
+        bar = bar.child(category_chip(theme, category, false));
+    }
+    bar
+}
+
+/// 分类 chip：选中项用 accent 边框，未选中用普通边框。
+fn category_chip(theme: &Theme, label: impl Into<SharedString>, selected: bool) -> Div {
+    let label = label.into();
+    let (fg, border) = if selected {
+        (theme.foreground, theme.accent)
+    } else {
+        (theme.muted_foreground, theme.border)
+    };
+    div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .border_1()
+        .border_color(border)
+        .rounded_sm()
+        .text_color(fg)
+        .child(label)
+}
+
+/// 分组清单：每个行业分类一行分组头 + 该分类下的专家卡片。
+fn group_list(theme: &Theme, view: &ExpertCenterView) -> Div {
+    let mut list = div().flex().flex_col().gap_3().px_4().pb_4();
+    for (category, entries) in view.grouped() {
+        list = list.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(group_header(theme, category))
+                .children(entries.into_iter().map(|entry| expert_card(theme, entry))),
+        );
+    }
+    list
+}
+
+/// 分组头：「行业分类」标签 + 分类名。
+fn group_header(theme: &Theme, category: &str) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(CATEGORY_LABEL),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(SharedString::from(category)),
+        )
+}
+
+/// 专家卡片：名称 + 擅长领域 + 能力介绍。
+fn expert_card(theme: &Theme, entry: &ExpertEntry) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_3()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(SharedString::from(entry.name.clone())),
+        )
+        .child(labeled_line(theme, STRENGTH_LABEL, &entry.strengths))
+        .child(labeled_line(theme, ABILITY_INTRO_LABEL, &entry.ability_intro))
+}
+
+/// 「标签 + 值」一行。
+fn labeled_line(theme: &Theme, label: &'static str, value: &str) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(
+            div()
+                .flex_none()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(label),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.foreground)
+                .child(SharedString::from(value)),
         )
 }
 
