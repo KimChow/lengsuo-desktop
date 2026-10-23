@@ -158,8 +158,15 @@ use gpui_kit::*;
 ///
 /// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
 /// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
+///
+/// 数据源未接入 ⇒ [`classify`] 收到 `None` ⇒ 恒为「未下发」分支（fail-closed）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(&build(classify(None)), theme)
+}
+
+/// 按纯数据描述渲染全部区块（测试经此覆盖三分支）。
+fn render(view: &团队知识库View, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
@@ -175,15 +182,204 @@ pub fn main_area(theme: &Theme) -> Div {
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
+        .child(search_row(theme))
+        .child(
+            div()
+                .px_4()
+                .pb_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SEARCH_TRIGGER_TIP),
+        )
+        .child(filter_row(theme))
+        .child(results_area(&view.results, theme))
+}
+
+/// 搜索行：占位符 + 搜索入口（静态展示，输入态等数据源接入后再接）。
+fn search_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .pt_2()
+        .flex()
+        .items_center()
+        .gap_2()
         .child(
             div()
                 .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.border)
+                .text_color(theme.muted_foreground)
+                .child(SEARCH_PLACEHOLDER),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.accent)
+                .child(SEARCH_BUTTON_LABEL),
+        )
+}
+
+/// 筛选行：每组 = 标签 + 默认项，行尾「更多」。
+fn filter_row(theme: &Theme) -> Div {
+    let mut row = div()
+        .px_4()
+        .pb_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .flex_wrap();
+    for group in [FILTER_LOCATION, FILTER_OWNER, FILTER_TIME, FILTER_TYPE] {
+        row = row.child(filter_chip(group.label, group.options[0], theme));
+    }
+    row.child(
+        div()
+            .text_sm()
+            .text_color(theme.accent)
+            .child(FILTER_MORE),
+    )
+}
+
+/// 一枚筛选片：标签（弱）+ 当前值（强）。
+fn filter_chip(label: &'static str, value: &'static str, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .child(
+            div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(label),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(value),
+        )
+}
+
+/// 结果区三分支：未下发 / 空态 / 清单（各分支同为 `Div`）。
+fn results_area(results: &ResultsState, theme: &Theme) -> Div {
+    match results {
+        ResultsState::NotDelivered => div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED),
+        ResultsState::Empty => div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .font_bold()
+                    .text_color(theme.foreground)
+                    .child(EMPTY_TITLE),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(EMPTY_DESCRIPTION),
+            ),
+        ResultsState::Entries(entries) => entries_area(entries, theme),
+    }
+}
+
+/// 清单分支：标题 + 计数 + 按位置分组（分组头 + 行），末尾「已加载全部结果」。
+fn entries_area(entries: &[KnowledgeDoc], theme: &Theme) -> Div {
+    let mut area = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .px_4()
+        .pt_1()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(SEARCH_RESULTS_TITLE),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(result_count_label(entries.len())),
+                ),
+        );
+    for (location, docs) in group_by_location(entries) {
+        area = area.child(
+            div()
+                .pt_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(location)),
+        );
+        for doc in docs {
+            area = area.child(doc_row(doc, theme));
+        }
+    }
+    area.child(
+        div()
+            .pt_2()
+            .pb_3()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(LOADED_ALL),
+    )
+}
+
+/// 一条清单行：文档名（主）+ 所有者 + 位置（辅）。
+fn doc_row(doc: &KnowledgeDoc, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .py_1()
+        .child(
+            div()
+                .flex_1()
+                .min_w_32()
+                .truncate()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(SharedString::from(doc.name.as_str())),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(doc.owner.as_str())),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(doc.location.as_str())),
         )
 }
 
