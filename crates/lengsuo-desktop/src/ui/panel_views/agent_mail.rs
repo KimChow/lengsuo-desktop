@@ -277,8 +277,11 @@ fn row_element(theme: &Theme, row: &Row) -> Div {
             div()
                 .rounded_md()
                 .bg(theme.muted)
-                .px_2()
-                .py_1()
+                .flex()
+                .items_center()
+                .min_h(px(48.))
+                .min_w(px(48.))
+                .px_3()
                 .text_color(theme.foreground)
                 .child(*label)
         })),
