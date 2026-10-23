@@ -6,12 +6,13 @@
 //! - 斜体：`theme.muted_foreground`（gpui 无斜体开关，用弱化色区分）
 //! - 行内代码：`theme.mono_font_family` + `theme.selection` 底色
 //! - 代码块：`theme.mono_font_family` + `theme.selection` 底色
+//! - 表格：表头 `theme.muted` 底 + 粗体，行间 `theme.border` 分隔
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::{div, AnyElement, IntoElement, ParentElement as _, Styled as _};
 
-use super::markdown::{InlineSpan, MarkdownBlock};
+use super::markdown::{Align, InlineSpan, MarkdownBlock};
 use super::CONTENT_MAX_W;
 
 /// 渲染一段正文（解析失败时解析层已回退成纯文本段落）。
@@ -67,7 +68,47 @@ fn render_block(block: &MarkdownBlock, theme: &Theme) -> AnyElement {
             .whitespace_nowrap()
             .child(body.trim_end_matches('\n').to_owned())
             .into_any_element(),
+        MarkdownBlock::Table {
+            header,
+            rows,
+            align,
+        } => {
+            let mut table = div().flex().flex_col().w_full();
+            table = table.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .bg(theme.muted)
+                    .font_bold()
+                    .child(render_table_row(header, align)),
+            );
+            for row in rows {
+                table = table.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .border_t_1()
+                        .border_color(theme.border)
+                        .child(render_table_row(row, align)),
+                );
+            }
+            table.into_any_element()
+        }
     }
+}
+
+/// 表格一行：各列等宽（`flex_1`），水平对齐由分隔行决定。
+fn render_table_row(cells: &[String], align: &[Align]) -> impl IntoElement {
+    let mut row = div().flex().flex_row().gap_2();
+    for (i, text) in cells.iter().enumerate() {
+        let cell = match align.get(i).copied().unwrap_or(Align::Left) {
+            Align::Left => div().flex().flex_1().justify_start(),
+            Align::Center => div().flex().flex_1().justify_center(),
+            Align::Right => div().flex().flex_1().justify_end(),
+        };
+        row = row.child(cell.child(text.clone()));
+    }
+    row
 }
 
 fn render_spans(spans: &[InlineSpan], theme: &Theme) -> impl IntoElement {
