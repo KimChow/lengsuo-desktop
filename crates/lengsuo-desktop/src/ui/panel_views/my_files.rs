@@ -124,38 +124,140 @@ impl MyFilesView {
 
 // ===================== GPUI 层 =====================
 
+/// 渲染断言的节点标记（只在 debug + test-support 构建记录，生产零开销）。
+const TITLE_SELECTOR: &str = "my-files-title";
+const TOOLBAR_SELECTOR: &str = "my-files-toolbar";
+const HEADER_SELECTOR: &str = "my-files-header";
+const BODY_SELECTOR: &str = "my-files-body";
+
 /// 主区渲染。
 ///
 /// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
 /// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
+/// 数据源未接 ⇒ 按 `NotDelivered` 态如实渲染「未下发」。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    let view = MyFilesView::not_delivered();
+    render(&MyFilesView::not_delivered(), theme)
+}
+
+/// 把纯数据描述接到元素树：标题行 + 工具栏操作行 + 三列表格 + 状态体。
+fn render(view: &MyFilesView, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
-        .child(
-            div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
+        .child(title_row(theme))
+        .child(toolbar_row(theme))
+        .child(header_row(theme))
+        .child(body(view, theme))
+}
+
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .debug_selector(|| TITLE_SELECTOR.to_owned())
+        .flex()
+        .items_center()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 工具栏操作行：本卡只落结构与文案，不接行为（接行为归后续接线卡）。
+fn toolbar_row(theme: &Theme) -> Div {
+    div()
+        .debug_selector(|| TOOLBAR_SELECTOR.to_owned())
+        .flex()
+        .items_center()
+        .gap_4()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .children(TOOLBAR_ACTIONS.iter().map(|action| div().child(*action)))
+}
+
+/// 三列表格行骨架：名称自适应，更新人 / 最近编辑定宽。
+fn table_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_4()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
+        .text_sm()
+}
+
+fn header_row(theme: &Theme) -> Div {
+    table_row(theme)
+        .debug_selector(|| HEADER_SELECTOR.to_owned())
+        .text_color(theme.muted_foreground)
+        .child(div().flex_1().min_w_0().child(HEADER_NAME))
+        .child(div().w_28().child(HEADER_OWNER))
+        .child(div().w_36().child(HEADER_TIME))
+}
+
+fn entry_row(theme: &Theme, row: [&str; 3]) -> Div {
+    let [name, owner, updated_time] = row;
+    table_row(theme)
         .child(
             div()
                 .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(view.body_notice().unwrap_or(NOT_DELIVERED)),
+                .min_w_0()
+                .truncate()
+                .text_color(theme.foreground)
+                .child(name.to_owned()),
         )
+        .child(
+            div()
+                .w_28()
+                .truncate()
+                .text_color(theme.muted_foreground)
+                .child(owner.to_owned()),
+        )
+        .child(
+            div()
+                .w_36()
+                .truncate()
+                .text_color(theme.muted_foreground)
+                .child(updated_time.to_owned()),
+        )
+}
+
+/// 状态体：`Entries` ⇒ 逐条渲染；空态 / 未下发 ⇒ 居中一行说明。
+fn body(view: &MyFilesView, theme: &Theme) -> Div {
+    let base = div()
+        .debug_selector(|| BODY_SELECTOR.to_owned())
+        .flex_1()
+        .flex()
+        .flex_col();
+    match view.state() {
+        MyFilesState::Entries(_) => {
+            base.children(view.rows().into_iter().map(|row| entry_row(theme, row)))
+        }
+        MyFilesState::Empty => notice(base, theme, EMPTY),
+        MyFilesState::NotDelivered => notice(base, theme, NOT_DELIVERED),
+    }
+}
+
+fn notice(base: Div, theme: &Theme, text: &'static str) -> Div {
+    base.child(
+        div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(theme.muted_foreground)
+            .child(text),
+    )
 }
 
 #[cfg(test)]
@@ -215,5 +317,20 @@ mod tests {
         assert!(matches!(view.state(), MyFilesState::NotDelivered));
         assert_eq!(view.body_notice(), Some(NOT_DELIVERED));
         assert!(view.rows().is_empty());
+    }
+
+    /// 视图描述的节点清单：标题 + ≥3 个分组/清单行来源。
+    #[test]
+    fn view_describes_title_plus_at_least_three_group_rows() {
+        assert_eq!(TOOLBAR_ACTIONS.len(), 5);
+        let view = MyFilesView::build(vec![entry("a.md"), entry("b.png"), entry("c.zip")]);
+        assert!(view.rows().len() >= 3);
+    }
+
+    /// ④ `main_area(&Theme::default())` 不 panic。
+    #[test]
+    fn main_area_builds_without_panic() {
+        let theme = gpui_kit::component::Theme::default();
+        let _ = super::main_area(&theme);
     }
 }
