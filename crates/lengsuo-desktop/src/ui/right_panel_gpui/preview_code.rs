@@ -27,7 +27,7 @@ pub(super) fn line_no_width(total: usize) -> usize {
     visible_range(total).1.max(1).to_string().len().max(3)
 }
 
-/// 等宽容器标记：挂在容器 `.id()` 上，渲染断言据此定位等宽字体区。
+/// 等宽容器标记：以 `debug_selector` 挂在容器上，渲染断言据此定位等宽字体区。
 pub(super) const MONO_CONTAINER_ID: &str = "preview-code-mono";
 
 /// 未下发态的诚实提示（⛔ 不伪造代码内容）。
@@ -41,7 +41,7 @@ pub(super) fn render(_path: &str, theme: &gpui_kit::component::Theme) -> AnyElem
 /// `lines` 为契约下发的行（`None` = 未下发）。
 fn render_lines(lines: Option<&[&str]>, theme: &gpui_kit::component::Theme) -> AnyElement {
     let container = div()
-        .id(MONO_CONTAINER_ID)
+        .debug_selector(|| MONO_CONTAINER_ID.to_owned())
         .font_family(theme.mono_font_family.clone())
         .bg(theme.muted)
         .rounded_md()
@@ -99,9 +99,13 @@ fn line_row(no: usize, text: &str, width: usize, theme: &gpui_kit::component::Th
         .child(div().min_w_0().child(text.to_string()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ui"))]
 mod tests {
-    use super::*;
+    use super::code_rows;
+    use super::{is_truncated, line_no_width, render, visible_range, MAX_LINES, MONO_CONTAINER_ID};
+    use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
+    use gpui_kit::component::Theme;
+    use gpui_kit::{point, px, size, AnyElement, Bounds, IntoElement as _, Pixels, TestAppContext};
 
     /// 行号列宽：最小 3 位、按位数扩展、截断后以 2000 计。
     #[test]
@@ -119,5 +123,35 @@ mod tests {
         assert!(is_truncated(2001));
         assert_eq!(visible_range(1999), (0, 1999));
         assert_eq!(visible_range(2001), (0, MAX_LINES));
+    }
+
+    /// 无窗口画一帧，取等宽容器的实际 bounds（标记挂生产侧，测试直查）。
+    fn draw_mono_bounds(element: AnyElement) -> Option<Bounds<Pixels>> {
+        let mut ctx = TestAppContext::single();
+        ctx.update(|cx| cx.set_global(Theme::default()));
+        let visual = ctx.add_empty_window();
+        let (_layout, _prepaint) = visual.draw(
+            point(px(0.0), px(0.0)),
+            size(px(800.0), px(600.0)),
+            |_window, _cx| element,
+        );
+        visual.debug_bounds(MONO_CONTAINER_ID)
+    }
+
+    /// 未下发态（当前运行时唯一真实态）：等宽容器可定位 + 布局非零 + 不 panic。
+    #[test]
+    fn undelivered_state_locates_mono_container() {
+        let bounds = draw_mono_bounds(render("main.rs", &Theme::default()));
+        assert_rendered(bounds, "代码预览未下发态等宽容器");
+    }
+
+    /// 有码截断态：整棵行树（含截断提示行）能完整画过且探针非零。
+    #[test]
+    fn truncated_rows_tree_renders_non_empty() {
+        let bounds = draw_probe(|_cx| {
+            let lines = vec!["fn main() {}"; 2501];
+            code_rows(&lines, &Theme::default()).into_any_element()
+        });
+        assert_rendered(bounds, "代码预览截断态行树");
     }
 }
