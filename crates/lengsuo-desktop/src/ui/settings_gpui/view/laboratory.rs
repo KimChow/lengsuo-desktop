@@ -35,7 +35,8 @@ pub const DISABLE: &str = "关闭";
 /// `settings.laboratory.disableTitle`。
 pub const DISABLE_TITLE: &str = "关闭频道？";
 /// `settings.laboratory.disableDescription`。
-pub const DISABLE_DESCRIPTION: &str = "关闭后频道数据会保留，但不会收取新消息通知，可以随时再次打开。";
+pub const DISABLE_DESCRIPTION: &str =
+    "关闭后频道数据会保留，但不会收取新消息通知，可以随时再次打开。";
 /// `settings.laboratory.retry`。
 pub const RETRY: &str = "重试";
 /// `settings.laboratory.failure`。
