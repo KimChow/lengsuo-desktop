@@ -10,9 +10,10 @@ use gpui_kit::component::ActiveTheme as _;
 #[cfg(feature = "ui")]
 use gpui_kit::*;
 
+use super::filter_bar::{render_clear_filter_button, render_search_box, FilterBox};
 use super::mapping::{
-    active_group_row, demo_state, empty_state_text, filter_key, main_pane, select_card,
-    set_group_filter, status_tone, MainPane, StatusTone,
+    active_group_row, demo_state, empty_recovery, empty_state_text, filter_key, main_pane,
+    select_card, set_group_filter, status_tone, MainPane, StatusTone,
 };
 use crate::state::env_group::EnvGroupState;
 use crate::ui::env_view::{CardStatus, GroupRow};
@@ -24,6 +25,7 @@ use crate::ui::env_view::{CardStatus, GroupRow};
 #[cfg(feature = "ui")]
 pub struct EnvViewGpui {
     state: EnvGroupState,
+    pub(super) filter: FilterBox,
 }
 
 #[cfg(feature = "ui")]
@@ -31,7 +33,10 @@ impl EnvViewGpui {
     /// 用一份环境分组状态构造视图。
     #[must_use]
     pub fn new(state: EnvGroupState) -> Self {
-        Self { state }
+        Self {
+            state,
+            filter: FilterBox::default(),
+        }
     }
 
     /// 从只读引用构造视图（内部克隆一份状态）。
@@ -250,7 +255,8 @@ fn render_loading(theme: &gpui_kit::component::Theme) -> impl IntoElement {
 
 #[cfg(feature = "ui")]
 impl Render for EnvViewGpui {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.filter.ensure(window, cx);
         let theme = cx.theme();
         let entity = cx.entity();
         // 描述层产出渲染描述；本文件只做「描述 → 元素」的映射。
@@ -306,6 +312,11 @@ impl Render for EnvViewGpui {
         // 右侧主区
         let mut main = div().flex_1().h_full().flex().flex_col().gap_2().p_3();
 
+        // 关键词搜索框（无条件渲染）
+        if let Some(textarea) = self.filter.textarea().cloned() {
+            main = main.child(render_search_box(&textarea, theme));
+        }
+
         // 降级提示（描述层保证 invalid_count > 0 时必有）
         if let Some(notice) = &view.degraded_notice {
             main = main.child(render_notice(notice, theme));
@@ -326,12 +337,18 @@ impl Render for EnvViewGpui {
             // 描述层给 None 的情形（如全部条目解析失败）只显示降级提示，
             // 不得补一句「暂无环境」——那是谎称没有数据。
             if let Some(text) = empty_state_text(&view) {
-                main = main.child(
+                let mut line = div().flex().items_center().gap_2().child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
                         .child(text.to_owned()),
                 );
+                if empty_recovery(self.state.empty_reason(), self.state.is_filter_active())
+                    .is_some()
+                {
+                    line = line.child(render_clear_filter_button(&entity, theme));
+                }
+                main = main.child(line);
             }
         } else {
             let grid = div()

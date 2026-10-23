@@ -1,7 +1,7 @@
 //! 映射层（无 `feature = "ui"` 门控）：描述字段 → 界面语义。
 //! 纯数据，随 `cargo test` 一起跑；不依赖 GPUI。
 
-use crate::state::env_group::{EnvGroupState, GroupFilter};
+use crate::state::env_group::{EmptyReason, EnvGroupState, GroupFilter};
 use crate::state::env_list::EnvStatus;
 use crate::ui::env_view::{CardStatus, EnvView, GroupRow};
 
@@ -95,6 +95,57 @@ pub fn set_group_filter(state: &mut EnvGroupState, filter: GroupFilter) -> bool 
         return false;
     }
     state.set_group_filter(filter);
+    true
+}
+
+/// 空态恢复动作：只有「筛选造成的空态」才给恢复入口。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyRecovery {
+    /// 清除分组筛选与关键词。
+    ClearFilter,
+}
+
+/// 「清除筛选」按钮文案（唯一来源，界面不另写字面量）。
+pub const CLEAR_FILTER_LABEL: &str = "清除筛选";
+/// 搜索框占位文案（唯一来源）。
+pub const SEARCH_PLACEHOLDER: &str = "按名称搜索环境";
+
+/// 该不该显示恢复入口。
+///
+/// - `FilteredOut` 且确有筛选 ⇒ 显示（清筛选能恢复）；
+/// - `NoData` ⇒ 不显示（本来就没数据，点了没用 = 假按钮）；
+/// - `None`（不显示空态）⇒ 不显示。
+#[must_use]
+pub fn empty_recovery(empty: Option<EmptyReason>, filter_active: bool) -> Option<EmptyRecovery> {
+    match empty {
+        Some(EmptyReason::FilteredOut) if filter_active => Some(EmptyRecovery::ClearFilter),
+        _ => None,
+    }
+}
+
+/// 筛选栏要显示的摘要（关键词原样给界面，不 trim、不另造）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilterSummary {
+    /// 当前关键词（原值）。
+    pub keyword: String,
+    /// 是否存在有效筛选（纯空白关键词不算）。
+    pub active: bool,
+}
+
+#[must_use]
+pub fn filter_summary(state: &EnvGroupState) -> FilterSummary {
+    FilterSummary {
+        keyword: state.keyword().to_owned(),
+        active: state.is_filter_active(),
+    }
+}
+
+/// 点「清除筛选」：分组与关键词一起清。返回是否真的变了（已无筛选 ⇒ false）。
+pub fn clear_filter(state: &mut EnvGroupState) -> bool {
+    if !state.is_filter_active() {
+        return false;
+    }
+    state.clear_filter();
     true
 }
 

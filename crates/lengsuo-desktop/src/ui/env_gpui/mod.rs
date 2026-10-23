@@ -22,6 +22,8 @@
 //! 目录结构：`env_gpui/mod.rs` + `mapping.rs` + `render.rs` + `tests.rs`。
 //! 公开 API 与拆分前一字不变（见下方 `pub use`）。
 
+#[cfg(feature = "ui")]
+mod filter_bar;
 mod mapping;
 #[cfg(feature = "ui")]
 mod render;
@@ -29,8 +31,9 @@ mod render;
 mod tests;
 
 pub use mapping::{
-    active_group_row, demo_state, empty_state_text, filter_key, main_pane, select_card,
-    set_group_filter, status_tone, MainPane, StatusTone,
+    active_group_row, clear_filter, demo_state, empty_recovery, empty_state_text, filter_key,
+    filter_summary, main_pane, select_card, set_group_filter, status_tone, EmptyRecovery,
+    FilterSummary, MainPane, StatusTone, CLEAR_FILTER_LABEL, SEARCH_PLACEHOLDER,
 };
 #[cfg(feature = "ui")]
 pub use render::EnvViewGpui;
