@@ -10,12 +10,15 @@
 //! （[`InputAreaState::set_candidates`]），本仓**不读盘**、不扫描文件系统。
 //!
 //! 目录结构：`input_area/mod.rs` + `state.rs`（核心方法）+ `mention.rs`（`@` 提及）
-//! + `tests.rs`（原 `mod tests`）。公开 API 与拆分前一字不变。
+//! + `chips.rs`（附件 chip）+ `tests.rs`（原 `mod tests`）。公开 API 与拆分前一字不变。
 
+mod chips;
 mod mention;
 mod state;
 #[cfg(test)]
 mod tests;
+
+pub use chips::{chip_label, chip_order};
 
 /// 会话模式。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -117,4 +120,6 @@ pub struct InputAreaState {
     pub(super) in_flight: bool,
     /// 候选文件路径（由调用方注入；本仓不读盘）。
     pub(super) candidates: Vec<String>,
+    /// 附件路径（由调用方注入；本仓不读盘、不发上传请求）。
+    pub(super) attachments: Vec<String>,
 }
