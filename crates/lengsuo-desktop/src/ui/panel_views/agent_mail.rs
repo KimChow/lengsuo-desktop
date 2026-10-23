@@ -208,6 +208,23 @@ pub fn build(snapshot: Option<&AccountSnapshot>) -> AgentMailPane {
 #[cfg(feature = "ui")]
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &build(None))
+}
+
+/// 把纯数据层接到元素树：标题行 + （分组/清单行 | 空态 | 「未下发」）。
+#[cfg(feature = "ui")]
+fn render(theme: &Theme, pane: &AgentMailPane) -> Div {
+    let body = match &pane.state {
+        PaneState::NotDelivered => centered_hint(theme, NOT_DELIVERED),
+        PaneState::Empty => centered_hint(theme, EMPTY_HINT),
+        PaneState::Entries(rows) => div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .children(rows.iter().map(|row| row_element(theme, row))),
+    };
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
@@ -221,18 +238,51 @@ pub fn main_area(theme: &Theme) -> Div {
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
-                .child(TITLE),
+                .child(pane.title),
         )
-        .child(
+        .child(body)
+}
+
+/// 空态 / 「未下发」的居中说明行（fail-closed，不得退化成空白）。
+#[cfg(feature = "ui")]
+fn centered_hint(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 单行元素：分组标题 / 状态徽标 / 提示 / 别名地址 / 操作行。
+///
+/// 操作行当前只渲染文案（无交互）；点击派发由后续接线卡落。
+#[cfg(feature = "ui")]
+fn row_element(theme: &Theme, row: &Row) -> Div {
+    let base = div()
+        .text_sm()
+        .rounded_md()
+        .border()
+        .border_color(theme.border)
+        .px_3()
+        .py_2();
+    match row {
+        Row::Group(label) => base.text_color(theme.muted_foreground).child(*label),
+        Row::Status(label) => base.text_color(theme.foreground).child(*label),
+        Row::Hint(text) => base.text_color(theme.muted_foreground).child(*text),
+        Row::Alias(text) => base.text_color(theme.foreground).child(text.as_str()),
+        Row::Actions(labels) => base.flex().gap_2().children(labels.iter().map(|label| {
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .rounded_md()
+                .bg(theme.muted)
+                .px_2()
+                .py_1()
+                .text_color(theme.foreground)
+                .child(*label)
+        })),
+    }
 }
 
 #[cfg(test)]
@@ -342,11 +392,29 @@ mod tests {
         );
     }
 
-    /// `main_area` 不 panic（GPUI 层冒烟）。
+    /// `main_area` 不 panic（GPUI 层冒烟；当前无数据源 ⇒ 如实「未下发」）。
     #[cfg(feature = "ui")]
     #[test]
     fn main_area_builds_without_panic() {
         let theme = gpui_kit::component::Theme::default();
         let _ = super::main_area(&theme);
+    }
+
+    /// 元素树三分支（未下发/空态/清单）都能构建。
+    #[cfg(feature = "ui")]
+    #[test]
+    fn render_covers_all_pane_states() {
+        let theme = gpui_kit::component::Theme::default();
+        let blank = AccountSnapshot {
+            activation: None,
+            alias: None,
+        };
+        let activated = AccountSnapshot {
+            activation: Some(Activation::Activated),
+            alias: Some("x@y.z".to_owned()),
+        };
+        for pane in [build(None), build(Some(&blank)), build(Some(&activated))] {
+            let _ = super::render(&theme, &pane);
+        }
     }
 }
