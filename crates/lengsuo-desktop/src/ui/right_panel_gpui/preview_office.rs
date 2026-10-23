@@ -72,13 +72,13 @@ fn header_row(path: &str, kind: OfficeKind, theme: &gpui_kit::component::Theme) 
         .gap_2()
         .px_3()
         .py_2()
-        .border_b()
+        .border_b_1()
         .border_color(theme.border)
         .child(
             div()
                 .px_2()
                 .py_1()
-                .rounded()
+                .rounded_sm()
                 .bg(theme.muted)
                 .text_xs()
                 .text_color(theme.foreground)
@@ -103,14 +103,14 @@ fn toolbar_row(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div {
         .gap_2()
         .px_3()
         .py_2()
-        .border_b()
+        .border_b_1()
         .border_color(theme.border);
     for item in toolbar_items(kind) {
         row = row.child(
             div()
                 .px_2()
                 .py_1()
-                .rounded()
+                .rounded_sm()
                 .border_1()
                 .border_color(theme.border)
                 .text_xs()
@@ -123,13 +123,11 @@ fn toolbar_row(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div {
 
 /// 占位区：Word/Slide 为页面、Sheet 为网格，中央叠未下发提示。
 fn placeholder_area(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .p_6()
-        .child(
-            div().relative().child(placeholder_frame(kind, theme)).child(
+    div().flex().items_center().justify_center().p_6().child(
+        div()
+            .relative()
+            .child(placeholder_frame(kind, theme))
+            .child(
                 div()
                     .absolute()
                     .size_full()
@@ -140,7 +138,7 @@ fn placeholder_area(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div
                         div()
                             .px_3()
                             .py_1()
-                            .rounded()
+                            .rounded_sm()
                             .bg(theme.background)
                             .border_1()
                             .border_color(theme.border)
@@ -149,7 +147,7 @@ fn placeholder_area(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div
                             .child(NOT_DELIVERED),
                     ),
             ),
-        )
+    )
 }
 
 /// 占位框架：Word 竖版页、Slide 横版页、Sheet 网格。均为空画布，不伪造内容。
@@ -158,10 +156,10 @@ fn placeholder_frame(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Di
         .bg(theme.background)
         .border_1()
         .border_color(theme.border)
-        .rounded();
+        .rounded_sm();
     match kind {
         OfficeKind::Word => frame.w_64().h_96(),
-        OfficeKind::Slide => frame.w_96().h_52(),
+        OfficeKind::Slide => frame.w_96().h_64(),
         OfficeKind::Sheet => sheet_grid(theme),
     }
 }
@@ -174,19 +172,19 @@ fn sheet_grid(theme: &gpui_kit::component::Theme) -> Div {
         .w_96()
         .h_64()
         .overflow_hidden()
-        .rounded()
+        .rounded_sm()
         .bg(theme.background)
         .border_1()
         .border_color(theme.border);
     for row in 0..6 {
         let mut line = div().flex().flex_1();
         if row + 1 < 6 {
-            line = line.border_b().border_color(theme.border);
+            line = line.border_b_1().border_color(theme.border);
         }
         for col in 0..4 {
             let mut cell = div().flex_1();
             if col + 1 < 4 {
-                cell = cell.border_r().border_color(theme.border);
+                cell = cell.border_r_1().border_color(theme.border);
             }
             line = line.child(cell);
         }
@@ -197,7 +195,30 @@ fn sheet_grid(theme: &gpui_kit::component::Theme) -> Div {
 
 #[cfg(all(test, feature = "ui"))]
 mod tests {
-    use super::{kind_label, office_kind, toolbar_items, OfficeKind};
+    use super::{kind_label, office_kind, render, toolbar_items, OfficeKind};
+    use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
+    use gpui_kit::component::Theme;
+    use gpui_kit::px;
+
+    /// 断言③：三类子类型的渲染元素树非空（无窗口真实绘制一帧）。
+    #[test]
+    fn render_office_tree_is_nonempty() {
+        let cases = [
+            ("计划.docx", "Word", OfficeKind::Word),
+            ("预算.xlsx", "Sheet", OfficeKind::Sheet),
+            ("路演.pptx", "Slide", OfficeKind::Slide),
+        ];
+        for (path, what, kind) in cases {
+            assert_eq!(office_kind(path), kind, "{what}：分派不符");
+            let bounds = draw_probe(|_| render(path, &Theme::default()));
+            let bounds = assert_rendered(bounds, what);
+            assert!(
+                bounds.size.width > px(240.0),
+                "{what}：渲染树宽度异常 {:?}",
+                bounds.size
+            );
+        }
+    }
 
     /// 断言①：office_kind 三类各一例 + 未知扩展名。
     #[test]
