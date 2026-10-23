@@ -270,31 +270,124 @@ impl 定时任务View {
 /// 数据源未接线：当前固定 `build(None)`（fail-closed「未下发」）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render(&build(None), theme)
+}
+
+/// 按节点描述渲染（[`main_area`] 的渲染核；测试直接驱动各状态）。
+fn render(view: &定时任务View, theme: &Theme) -> Div {
+    let mut column = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
-        .flex_col()
-        .child(
+        .flex_col();
+    for node in view.nodes() {
+        column = column.child(node_element(&node, theme));
+    }
+    column
+}
+
+/// 单个节点的元素树翻译（只翻译，不计算；颜色一律主题 token）。
+fn node_element(node: &ViewNode, theme: &Theme) -> Div {
+    match node {
+        ViewNode::Title => div()
+            .px_4()
+            .py_2()
+            .text_sm()
+            .font_bold()
+            .text_color(theme.foreground)
+            .child(TITLE),
+        ViewNode::Description => div()
+            .px_4()
+            .pb_2()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(DESCRIPTION),
+        ViewNode::GroupHeader { label, summary } => div()
+            .px_4()
+            .py_1()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .bg(theme.muted)
+            .text_xs()
+            .font_medium()
+            .text_color(theme.muted_foreground)
+            .child(*label)
+            .child(summary.clone()),
+        ViewNode::TaskRow {
+            name,
+            badges,
+            actions,
+        } => {
+            let mut trailing = div().flex().flex_row().items_center().gap_2().text_xs();
+            for badge in badges {
+                trailing = trailing.child(badge_chip(badge, theme));
+            }
+            for (rank, action) in actions.iter().enumerate() {
+                let color = if rank == 0 {
+                    theme.accent
+                } else {
+                    theme.muted_foreground
+                };
+                trailing = trailing.child(div().py_1().text_color(color).child(*action));
+            }
             div()
                 .px_4()
                 .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
                 .flex()
+                .flex_row()
                 .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(name.clone()),
+                )
+                .child(trailing)
+        }
+        ViewNode::ArchivedEmpty => div()
+            .px_4()
+            .py_2()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(EMPTY_ARCHIVED),
+        ViewNode::EmptyState => centered_block(theme, EMPTY, Some(EMPTY_FIRST_TASK)),
+        ViewNode::NotDeliveredBlock => centered_block(theme, NOT_DELIVERED, None),
+    }
+}
+
+/// 徽标（状态 / 结果），触摸目标按无障碍基线留足内边距。
+fn badge_chip(label: &'static str, theme: &Theme) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .bg(theme.muted)
+        .text_color(theme.muted_foreground)
+        .child(label)
+}
+
+/// 居中状态块：主文案 + 可选引导文案（空态 / 未下发共用）。
+fn centered_block(theme: &Theme, primary: &'static str, secondary: Option<&'static str>) -> Div {
+    let mut block = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .py_6()
+        .text_sm()
+        .text_color(theme.muted_foreground);
+    block = block.child(div().child(primary));
+    if let Some(hint) = secondary {
+        block = block.child(div().text_xs().child(hint));
+    }
+    block
 }
 
 #[cfg(test)]
