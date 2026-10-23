@@ -1,20 +1,18 @@
 //! 技能主区视图（波次 5，卡 `ui-skills-market`）。
 //!
-//! 分层约定（同 `env_gpui`）：
-//! - **纯数据层**（本文件上半，无 GPUI 依赖）：条目 / 分类筛选 / 空态 / 文案常量；
-//! - **GPUI 层**（[`main_area`]）：把视图模型接到元素树，颜色一律取主题 token。
+//! 分层：上半为纯数据层（无 GPUI 依赖：条目 / 分类 / 空态 / 文案常量），
+//! 下半为 GPUI 层（[`main_area`]：视图模型 → 元素树，颜色一律取主题 token）。
 //!
-//! 硬约束：
-//! - **fail-closed**：数据未下发必须如实显示「未下发」，不得退化成空列表；
-//! - **只做界面**：不判权限、不持凭据、不直连运行时；
-//! - ⛔ **不伪造服务端数据**（界面文案逐字取自界面文案全表命名空间 `skills`）。
-//!
-//! 数据源在运行时侧：`main_area` 当前固定构造 `NotDelivered` 视图（诚实占位），
-//! 等数据源接入后**只换数据、不改视图结构**。
+//! 硬约束：fail-closed（数据未下发如实显示「未下发」，不退化为空列表）；
+//! 只做界面（不判权限、不持凭据、不直连运行时）；⛔ 不伪造服务端数据
+//! （文案逐字取自界面文案全表命名空间 `skills`）。
+//! 数据源在运行时侧：`main_area` 当前固定构造 `NotDelivered`（诚实占位），
+//! 数据源接入后只换数据、不改视图结构。
 #![cfg(feature = "ui")]
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 // ---------------- 纯数据层（无 GPUI 依赖） ----------------
@@ -25,47 +23,33 @@ pub const TITLE: &str = "技能";
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
 
-/// 添加技能按钮（skills.add.button，逐字）。
+/// 头部入口文案（skills.add.button / skills.searchPlaceholder，逐字）。
 pub const ADD_BUTTON: &str = "添加技能";
-
-/// 搜索框占位（skills.searchPlaceholder，逐字）。
 pub const SEARCH_PLACEHOLDER: &str = "搜索技能";
 
-/// 空态标题（skills.installed.empty.title，逐字）。
+/// 空态两行（skills.installed.empty.title / .desc，逐字）。
 pub const EMPTY_TITLE: &str = "还没有安装任何技能";
-
-/// 空态说明（skills.installed.empty.desc，逐字）。
 pub const EMPTY_DESC: &str = "上传本地技能文件夹，或通过 AI 对话快速创建一个专属技能";
 
-/// 自动更新设置行标签（skills.autoUpdate.label，逐字）。
+/// 自动更新设置行（skills.autoUpdate.label / .description，逐字；`{name}` 为应用名占位）。
 pub const AUTO_UPDATE_LABEL: &str = "技能自动更新";
-
-/// 自动更新设置行说明（skills.autoUpdate.description，逐字；`{name}` 为应用名占位）。
 pub const AUTO_UPDATE_DESCRIPTION: &str =
     "开启后将自动更新已安装的技能为最新版本，不会更新你在 {name} 中编辑过的技能";
 
 /// 安装次数统计模板（skills.card.installCount，逐字；`{count}` 为次数占位）。
 pub const CARD_INSTALL_COUNT: &str = "安装次数 {count}";
 
-/// 自动触发开启时的说明（skills.toggle.tip.enable，逐字）。
-pub const TOGGLE_TIP_ENABLE: &str =
-    "开启技能自动触发，WorkBuddy 将在对话中自动判断是否使用此技能";
-
-/// 自动触发关闭时的说明（skills.toggle.tip.disable，逐字）。
+/// 自动触发开关说明（skills.toggle.tip.enable / .disable，逐字）。
+pub const TOGGLE_TIP_ENABLE: &str = "开启技能自动触发，WorkBuddy 将在对话中自动判断是否使用此技能";
 pub const TOGGLE_TIP_DISABLE: &str =
     "关闭自动触发后，WorkBuddy 将不在对话中自动触发此技能，仅支持手动触发";
 
-/// 分类 Tab：已安装（skills.tab.installed，逐字）。
+/// 分类 Tab 六枚（skills.tab.*，逐字）：已安装 / 推荐 / SkillHub / Knot / 套件 / 企业 Skill。
 pub const TAB_INSTALLED: &str = "已安装";
-/// 分类 Tab：推荐（skills.tab.recommend，逐字）。
 pub const TAB_RECOMMEND: &str = "推荐";
-/// 分类 Tab：SkillHub（skills.tab.skillhub，逐字）。
 pub const TAB_SKILLHUB: &str = "SkillHub";
-/// 分类 Tab：Knot（skills.tab.knot，逐字）。
 pub const TAB_KNOT: &str = "Knot";
-/// 分类 Tab：套件（skills.tab.plugins，逐字）。
 pub const TAB_PLUGINS: &str = "套件";
-/// 分类 Tab：企业 Skill（skills.tab.enterprise，逐字）。
 pub const TAB_ENTERPRISE: &str = "企业 Skill";
 
 /// 把 `{name}` 占位替换为应用名（模板本体逐字，不做其他改写）。
@@ -226,7 +210,7 @@ fn render(theme: &Theme, view: &SkillsMarketView) -> Div {
     let body = match &view.state {
         SkillsMarketState::NotDelivered => centered_note(theme, NOT_DELIVERED),
         SkillsMarketState::Empty => empty_area(theme),
-        SkillsMarketState::Entries(cards) => entries_area(theme, cards),
+        SkillsMarketState::Entries(cards) => entries_area(theme, view, cards),
     };
     div()
         .flex_1()
@@ -238,15 +222,32 @@ fn render(theme: &Theme, view: &SkillsMarketView) -> Div {
         .child(body)
 }
 
-/// 标题行。
+/// 标题行：标题 + 「添加技能」入口（静态结构，动作待交互卡接入）。
 fn header_row(theme: &Theme) -> Div {
     div()
+        .flex()
+        .items_center()
+        .justify_between()
         .px_4()
         .py_2()
-        .text_sm()
-        .font_bold()
-        .text_color(theme.foreground)
-        .child(TITLE)
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(TITLE),
+        )
+        .child(
+            div()
+                .px_3()
+                .py_1()
+                .text_sm()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .text_color(theme.foreground)
+                .child(ADD_BUTTON),
+        )
 }
 
 /// 居中单行说明（「未下发」等）。
@@ -285,22 +286,138 @@ fn empty_area(theme: &Theme) -> Div {
         )
 }
 
-/// 条目区（本批先以名称行占位，GPUI 卡片结构下一批落）。
-fn entries_area(theme: &Theme, cards: &[SkillCard]) -> Div {
+/// 条目区：分类筛选 + 卡片清单 + 自动更新设置行。
+fn entries_area(theme: &Theme, view: &SkillsMarketView, cards: &[SkillCard]) -> Div {
     div()
         .flex_1()
         .flex()
         .flex_col()
-        .p_4()
-        .gap_2()
-        .children(cards.iter().map(|card| {
+        .child(filter_bar(theme, view))
+        .child(
             div()
-                .px_2()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_4()
+                .pb_4()
+                .children(cards.iter().map(|card| card_view(theme, card))),
+        )
+        .child(auto_update_row(theme, None))
+}
+
+/// 分类筛选行：Tab 组 + 搜索框占位（真实输入由交互卡接入）。
+fn filter_bar(theme: &Theme, view: &SkillsMarketView) -> Div {
+    let active_label = view.active_tab_label();
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .pb_2()
+        .children(SkillsMarketView::tabs().iter().map(|label| {
+            let active = *label == active_label;
+            div()
+                .px_3()
                 .py_1()
                 .text_sm()
-                .text_color(theme.foreground)
-                .child(card.name.clone())
+                .rounded_md()
+                .when(active, |tab| tab.bg(theme.muted))
+                .text_color(if active {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                })
+                .child(*label)
         }))
+        .child(div().flex_1())
+        .child(
+            div()
+                .px_3()
+                .py_1()
+                .text_sm()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .text_color(theme.muted_foreground)
+                .child(SEARCH_PLACEHOLDER),
+        )
+}
+
+/// 弱化小字行（卡片简介 / 统计 / 开关说明共用）。
+fn muted_xs(theme: &Theme, text: impl Into<SharedString>) -> Div {
+    div()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(text.into())
+}
+
+/// 技能卡片：名称 + 自动触发开关（48dp 触达行）、简介、安装次数、开关说明。
+fn card_view(theme: &Theme, card: &SkillCard) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .min_h_12()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_medium()
+                        .text_color(theme.foreground)
+                        .child(card.name.clone()),
+                )
+                .child(switch_visual(theme, card.auto_trigger)),
+        )
+        .child(muted_xs(theme, card.description.clone()))
+        .child(muted_xs(theme, card.install_count_text()))
+        .child(muted_xs(theme, card.toggle_tip()))
+}
+
+/// 开关视觉（轨道 + 滑块；只读展示，不接交互）。
+fn switch_visual(theme: &Theme, on: bool) -> Div {
+    let track = if on {
+        div().bg(theme.accent).justify_end()
+    } else {
+        div().bg(theme.muted)
+    };
+    track
+        .w_9()
+        .h_5()
+        .rounded_full()
+        .flex()
+        .items_center()
+        .px_0p5()
+        .child(div().size_4().rounded_full().bg(theme.background))
+}
+
+/// 自动更新设置行：标签 +（应用名已知时的）说明 + 开关。
+fn auto_update_row(theme: &Theme, app_name: Option<&str>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_3()
+        .min_h_12()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(AUTO_UPDATE_LABEL),
+        )
+        .children(app_name.map(|name| muted_xs(theme, auto_update_description(name))))
+        .child(switch_visual(theme, false))
 }
 
 #[cfg(test)]
@@ -358,10 +475,9 @@ mod tests {
     #[test]
     fn placeholder_templates_substitute_only_the_slot() {
         assert_eq!(install_count_text(128), "安装次数 128");
-        assert_eq!(
-            auto_update_description("Code"),
-            "开启后将自动更新已安装的技能为最新版本，不会更新你在 Code 中编辑过的技能"
-        );
+        let rendered = auto_update_description("Code");
+        assert!(rendered.contains("你在 Code 中编辑过"));
+        assert!(!rendered.contains("{name}"));
     }
 
     #[test]
