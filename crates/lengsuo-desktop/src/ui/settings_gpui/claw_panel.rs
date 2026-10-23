@@ -1,19 +1,25 @@
 //! 「Claw 设置」面板的接线层（`feature = "ui"` 隔离）。
 //!
-//! ⚠️ 本文件当前是**波次 1 占位实现**：只把描述层的标题 + 「未下发」提示
-//! 映射成元素，证明「该面板在 15 项导航里可点、点了真的渲染出内容」。
-//! 由 `ui-settings-claw` 卡补成完整面板（文案逐字取自 `settings.claw`）。
+//! 渲染分支由描述层 [`body`](crate::ui::settings_gpui::view::claw::body) 决定：
+//! 服务端未下发通道状态 ⇒ 整体显示「未下发」提示；有内容 ⇒ 只读行清单。
 //!
-//! 硬约束：**只读**、**fail-closed**、颜色**一律取自 `cx.theme()`**（⛔ 不硬编码）、
-//! ⛔ 界面不判定权限、⛔ 界面不持有凭据、⛔ 不伪造服务端数据。
+//! 硬约束：**只读**（行不可点、不给增删改）、**fail-closed**、
+//! 颜色**一律取自 `cx.theme()`**（⛔ 不硬编码）、⛔ 界面不判定权限、
+//! ⛔ 界面不持有凭据、⛔ 不伪造服务端数据。
 #![cfg(feature = "ui")]
 use super::window::SettingsGpui;
 use crate::ui::settings_gpui::view::claw as panel_view;
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
-/// 渲染「Claw 设置」面板（当前为占位：标题 + 「未下发」提示）。
+/// 渲染「Claw 设置」面板。
+///
+/// ponytail: 服务端通道状态下发后接进 `body()`；当前无后端 ⇒ 恒走「未下发」分支。
 pub(super) fn render_claw_panel(theme: &Theme, _cx: &mut Context<SettingsGpui>) -> AnyElement {
+    panel(theme, panel_view::body(&[])).into_any_element()
+}
+/// 标题 + 主体（两条渲染分支都在这里，便于无窗口单测）。
+fn panel(theme: &Theme, body: panel_view::Body) -> Div {
     div()
         .flex()
         .flex_col()
@@ -25,11 +31,61 @@ pub(super) fn render_claw_panel(theme: &Theme, _cx: &mut Context<SettingsGpui>) 
                 .text_color(theme.foreground)
                 .child(panel_view::TITLE),
         )
-        .child(
+        .child(body_element(theme, body))
+}
+/// 主体：未下发 ⇒ 「未下发」提示；有内容 ⇒ 区块标题/说明 + 行清单。
+fn body_element(theme: &Theme, body: panel_view::Body) -> Div {
+    match body {
+        panel_view::Body::NotDelivered => div().flex().flex_col().gap_2().child(
             div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
                 .child(panel_view::NOT_DELIVERED),
+        ),
+        panel_view::Body::Rows(rows) => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_sm()
+                    .font_bold()
+                    .text_color(theme.foreground)
+                    .child(panel_view::SECTION_TITLE),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(panel_view::SECTION_DESC),
+            )
+            .children(rows.into_iter().map(|row| row_element(theme, row))),
+    }
+}
+/// 一行通道：上行「标题 + 状态」，下行集成说明。
+fn row_element(theme: &Theme, row: panel_view::Row) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(row.label),
+                )
+                .child(div().text_sm().text_color(theme.accent).child(row.value)),
         )
-        .into_any_element()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(row.desc),
+        )
 }
