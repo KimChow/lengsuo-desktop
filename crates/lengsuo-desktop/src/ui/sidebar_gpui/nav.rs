@@ -1,4 +1,4 @@
-//! 边栏两个导航入口的 GPUI 渲染：频道入口 + 智能体管理入口。
+//! 边栏导航入口的 GPUI 渲染：频道入口 + 智能体管理入口（+ 环境 / 组织）。
 //!
 //! 对齐 A15 的**界面部分**：入口可点、有计数角标、选中态明确。
 //! ⛔ 不实现频道收发、不实现智能体创建、不实现多代理角色模型 ——
@@ -14,6 +14,7 @@ use gpui_kit::*;
 use crate::ui::sidebar::nav::NavEntry;
 
 use super::SidebarViewGpui;
+use super::render::render_count_badge;
 
 /// 渲染一个导航入口：标题 + 计数角标。
 ///
@@ -51,14 +52,10 @@ pub(super) fn render_nav_entry(
             .child(entry.title),
     );
 
-    // 计数角标：0 不显示（不是「显示 0」）。
+    // 计数角标：0 不显示（不是「显示 0」）。复用会话区的徽标样式，同一条边栏里
+    // 「角标」长一个样，不另造一套。
     if entry.count > 0 {
-        element = element.child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(entry.count.to_string()),
-        );
+        element = element.child(render_count_badge(entry.count, theme));
     }
 
     let entity = entity.clone();
@@ -72,7 +69,7 @@ pub(super) fn render_nav_entry(
     })
 }
 
-/// 边栏顶部的两个导航入口（频道 + 智能体管理）。
+/// 边栏顶部的导航入口列表（顺序与条目由描述层决定）。
 pub(super) fn render_nav(
     entries: &[NavEntry],
     entity: &Entity<SidebarViewGpui>,
