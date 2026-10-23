@@ -27,13 +27,76 @@ pub(super) fn line_no_width(total: usize) -> usize {
     visible_range(total).1.max(1).to_string().len().max(3)
 }
 
-/// 渲染代码预览（占位，接线层待填充）。
-pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
+/// 等宽容器标记：挂在容器 `.id()` 上，渲染断言据此定位等宽字体区。
+pub(super) const MONO_CONTAINER_ID: &str = "preview-code-mono";
+
+/// 未下发态的诚实提示（⛔ 不伪造代码内容）。
+pub(super) const NOT_DELIVERED_TEXT: &str = "内容未下发（等运行时契约）";
+
+/// 渲染代码预览主体。内容未下发 ⇒ 未下发态；`render_lines` 保留给契约下发后接线。
+pub(super) fn render(_path: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
+    render_lines(None, theme)
+}
+
+/// `lines` 为契约下发的行（`None` = 未下发）。
+fn render_lines(lines: Option<&[&str]>, theme: &gpui_kit::component::Theme) -> AnyElement {
+    let container = div()
+        .id(MONO_CONTAINER_ID)
+        .font_family(theme.mono_font_family.clone())
+        .bg(theme.muted)
+        .rounded_md()
+        .p_2()
+        .text_xs();
+    match lines {
+        None => container
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED_TEXT)
+            .into_any_element(),
+        Some(lines) => container
+            .child(
+                // ponytail: 行数 ≤ MAX_LINES 已封顶，overflow 滚动够用；虚拟化等契约下发卡改签名时再上
+                div()
+                    .id("preview-code-scroll")
+                    .overflow_y_scroll()
+                    .max_h(px(480.0))
+                    .child(code_rows(lines, theme)),
+            )
+            .into_any_element(),
+    }
+}
+
+/// 逐行渲染：行号列（右对齐、等宽补位）+ 内容；截断时追加提示行。
+fn code_rows(lines: &[&str], theme: &gpui_kit::component::Theme) -> Div {
+    let total = lines.len();
+    let (start, end) = visible_range(total);
+    let width = line_no_width(total);
+    let mut rows = div().flex().flex_col().gap_0p5();
+    for (idx, line) in lines.iter().enumerate().take(end).skip(start) {
+        rows = rows.child(line_row(idx + 1, line, width, theme));
+    }
+    if is_truncated(total) {
+        rows = rows.child(
+            div()
+                .mt_2()
+                .text_color(theme.muted_foreground)
+                .child(format!("已截断（仅显示前 {MAX_LINES} 行）")),
+        );
+    }
+    rows
+}
+
+/// 单行：行号右对齐（按 `width` 补位，等宽字体下自然对齐）+ 代码文本。
+fn line_row(no: usize, text: &str, width: usize, theme: &gpui_kit::component::Theme) -> Div {
     div()
-        .text_xs()
-        .text_color(theme.muted_foreground)
-        .child(format!("{path}：代码预览尚未实现"))
-        .into_any_element()
+        .flex()
+        .gap_2()
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(theme.muted_foreground)
+                .child(format!("{no:>width$}", width = width)),
+        )
+        .child(div().min_w_0().child(text.to_string()))
 }
 
 #[cfg(test)]
