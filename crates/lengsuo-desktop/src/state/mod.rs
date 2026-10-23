@@ -5,6 +5,7 @@
 //! 下面的 `pub mod` 声明由主理人一次性落盘，使各任务卡只需改自己新建的
 //! 文件，避免多卡共改本文件造成路径归属冲突。
 
+pub mod datasource;
 pub mod env_group;
 pub mod env_list;
 pub mod file_intent;
