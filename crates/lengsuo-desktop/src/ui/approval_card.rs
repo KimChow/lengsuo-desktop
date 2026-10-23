@@ -340,4 +340,117 @@ mod tests {
         assert!(!card.title.contains("SecretTool"));
         assert_eq!(card.title, "执行操作");
     }
+
+    // ---- C3 消费侧契约：注入 / 三态 / 决定穷举 / 结果并回 ----
+
+    fn c3_request(id: &str, action: &str) -> ApprovalRequest {
+        ApprovalRequest {
+            id: id.into(),
+            action: action.into(),
+            detail: "rm -rf build".into(),
+        }
+    }
+
+    /// ① 注入 2 条请求 ⇒ 2 张卡（注入数 == 卡片数）；新卡挂起、不默认放行。
+    #[test]
+    fn from_requests_ready_injects_one_card_per_request() {
+        let view = ApprovalListView::from_requests(
+            LoadState::Ready(vec![c3_request("a1", "Bash"), c3_request("a2", "Edit")]),
+            Provenance::Demo,
+        );
+        let ApprovalListView::Ready { cards, provenance } = view else {
+            panic!("Ready 注入必须是 Ready 态");
+        };
+        assert_eq!(cards.len(), 2, "注入 2 条请求必须渲染 2 张卡");
+        assert_eq!(cards[0].id, "a1");
+        assert_eq!(cards[1].id, "a2");
+        assert_eq!(cards[0].summary, "rm -rf build");
+        assert!(cards.iter().all(|card| {
+            card.pending && card.resolved_allow.is_none() && card.buttons.len() == 3
+        }));
+        assert!(provenance.is_demo(), "契约未就绪必须如实标注 Demo");
+    }
+
+    /// ①' 加载/失败不产卡（⛔ 不伪造审批请求）；③ 失败原因原样携带，不 panic。
+    #[test]
+    fn loading_and_failed_fabricate_no_cards_and_carry_reason() {
+        let loading = ApprovalListView::from_requests(LoadState::Loading, Provenance::Runtime);
+        assert_eq!(loading, ApprovalListView::Loading);
+        assert!(loading.cards().is_empty());
+
+        let failed = ApprovalListView::from_requests(
+            LoadState::Failed("C3 审批请求未接通（演示态）".into()),
+            Provenance::Demo,
+        );
+        assert!(failed.cards().is_empty(), "失败不得伪造审批请求");
+        assert_eq!(failed.failure(), Some("C3 审批请求未接通（演示态）"));
+    }
+
+    /// ② decision 恰好三种取值（穷举）：三值两两互异，动作 ↔ 决定 1:1 往返。
+    /// 两个映射均无通配分支——新增第四种决定会直接编译失败。
+    #[test]
+    fn decision_has_exactly_three_kinds_exhaustive() {
+        let kinds = [
+            ApprovalDecisionKind::Allow,
+            ApprovalDecisionKind::Deny,
+            ApprovalDecisionKind::Always,
+        ];
+        assert_eq!(kinds.len(), 3);
+        for (i, left) in kinds.iter().enumerate() {
+            for right in &kinds[i + 1..] {
+                assert_ne!(left, right, "三种决定必须两两互异");
+            }
+        }
+        for action in ApprovalAction::ALL {
+            assert_eq!(action_of_decision(decision_of_action(action)), action);
+        }
+        // 展示语义沿用按钮语义：仅 deny 不放行（放行与否仍由运行时决定）
+        assert!(action_of_decision(ApprovalDecisionKind::Allow).allows());
+        assert!(!action_of_decision(ApprovalDecisionKind::Deny).allows());
+        assert!(action_of_decision(ApprovalDecisionKind::Always).allows());
+        assert!(action_of_decision(ApprovalDecisionKind::Always).is_always());
+    }
+
+    /// 结果并回按 id 匹配：并回后卡片停挂起、按钮全禁用；未知 id 不动（fail-closed）。
+    #[test]
+    fn apply_decision_matches_by_id_and_disables_buttons() {
+        let mut cards = vec![ApprovalCardView::from_request(&c3_request("a1", "Bash"))];
+        assert!(apply_decision(
+            &mut cards,
+            &ApprovalDecision {
+                id: "a1".into(),
+                decision: ApprovalDecisionKind::Deny,
+            }
+        ));
+        assert!(!cards[0].pending);
+        assert_eq!(cards[0].resolved_allow, Some(false));
+        assert!(cards[0].buttons.iter().all(|button| !button.enabled));
+
+        assert!(
+            !apply_decision(
+                &mut cards,
+                &ApprovalDecision {
+                    id: "missing".into(),
+                    decision: ApprovalDecisionKind::Allow,
+                }
+            ),
+            "未知 id 不得伪造并回"
+        );
+    }
+
+    /// 演示出口走契约进料口，来源如实标注 Demo（不标 Runtime）。
+    #[test]
+    fn demo_exit_routes_through_contract_and_labels_demo() {
+        let mut state = SessionStreamState::new();
+        state.push_approval(approval("a1", "Bash"));
+        let view = demo_list(&state);
+        let ApprovalListView::Ready { cards, provenance } = &view else {
+            panic!("演示出口必须产出就绪态");
+        };
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].id, "a1");
+        assert_eq!(cards[0].summary, "rm -rf build");
+        assert!(provenance.is_demo(), "演示数据不得标成 Runtime");
+        assert_eq!(pending_cards(&state).len(), 1, "既有出口不破坏");
+    }
 }
