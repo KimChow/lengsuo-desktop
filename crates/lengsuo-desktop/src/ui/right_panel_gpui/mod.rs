@@ -5,7 +5,7 @@
 //! - **接线层**（本模块）：把描述变成 GPUI 元素，**不重新实现**任何业务判断。
 //!
 //! 文件划分：`tabs.rs`（tab 入口 / 折叠按钮 / 角标）、`approvals.rs`（审批卡片）、
-//! `preview.rs`（文件预览内容）、`tests.rs`（单元测试）。
+//! `preview.rs`（文件预览内容）、`tasks.rs`（任务清单视图体）、`tests.rs`（单元测试）。
 //!
 //! 硬约束：
 //! - **三个 tab 始终可见**：折叠态也保留 tab 入口，否则无法恢复
@@ -14,6 +14,7 @@
 //!   才经 [`approval_card::decide`] 落决策，渲染本身绝不替用户放行。
 //! - **预览器未实现**（P3，见 `docs/ui-parity-spec.md` A14）：本层只显示
 //!   「要预览哪个文件」，不读文件、不渲染文件内容。
+//! - **任务清单是演示数据**：任务状态契约未就绪 ⇒ 视图体顶部如实标注，不伪造进度。
 //! - 颜色一律取自 `cx.theme()`，不硬编码。
 #![cfg(feature = "ui")]
 
@@ -25,6 +26,7 @@ mod preview_office;
 mod preview_pdf;
 mod preview_text;
 mod tabs;
+mod tasks;
 #[cfg(test)]
 mod tests;
 
@@ -156,8 +158,8 @@ impl RightPanelGpui {
 pub enum ContentBranch<'a> {
     /// 折叠态：不渲染内容。
     Collapsed,
-    /// 占位内容（任务清单）。
-    Placeholder { text: &'a str },
+    /// 任务清单内容（任务行 + 空态）。
+    Tasks,
     /// 预览内容（当前要预览的文件）。
     Preview { content: &'a PreviewContent },
     /// 待审批卡片（只含未决策项）。
@@ -170,25 +172,11 @@ pub enum ContentBranch<'a> {
 fn content_branch(content: &RightPanelContent) -> ContentBranch<'_> {
     match content {
         RightPanelContent::Collapsed => ContentBranch::Collapsed,
-        RightPanelContent::Placeholder { text } => ContentBranch::Placeholder { text },
+        RightPanelContent::Tasks => ContentBranch::Tasks,
         RightPanelContent::Preview(content) => ContentBranch::Preview { content },
         RightPanelContent::Approvals(cards) => ContentBranch::Approvals { cards },
         RightPanelContent::Empty { text } => ContentBranch::Empty { text },
     }
-}
-
-/// 占位内容（任务清单）。
-fn render_placeholder(text: &str, theme: &gpui_kit::component::Theme) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .p_3()
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .text_sm()
-        .text_color(theme.muted_foreground)
-        .child(text.to_owned())
 }
 
 /// 空态内容（审批待办为空 / 未选择文件）。
@@ -264,9 +252,7 @@ impl Render for RightPanelGpui {
         // 五种内容分支：外层是同一个滚动容器，内层按分支给内容。
         let body: AnyElement = match content_branch(&view.content) {
             ContentBranch::Collapsed => div().into_any_element(),
-            ContentBranch::Placeholder { text } => {
-                render_placeholder(text, theme).into_any_element()
-            }
+            ContentBranch::Tasks => tasks::render_demo(theme),
             ContentBranch::Preview { content } => {
                 preview::render_preview(content, theme).into_any_element()
             }

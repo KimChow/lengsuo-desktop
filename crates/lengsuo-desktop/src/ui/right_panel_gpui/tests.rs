@@ -68,10 +68,9 @@ fn badge_follows_pending_approval_count() {
 
 #[test]
 fn content_branch_covers_all_five_variants() {
-    let placeholder = RightPanelContent::Placeholder { text: "占位" };
     assert_eq!(
-        content_branch(&placeholder),
-        ContentBranch::Placeholder { text: "占位" }
+        content_branch(&RightPanelContent::Tasks),
+        ContentBranch::Tasks
     );
 
     let empty = RightPanelContent::Empty { text: "暂无" };
