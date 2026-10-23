@@ -2,6 +2,12 @@
 //!
 //! 依据：参考客户端基线 —— **工具名对用户不可见**，卡片标题写「读取文件」而非 `Read`。
 //! 本模块是纯映射，不依渲染；未知工具走「可读化」兜底而非原样暴露内部名。
+//!
+//! 逐字核对（文案全表 `tool.*`，共 203 条）：五类类别词（读取 / 创建 / 修改 /
+//! 执行命令 / 搜索）在全表**无对应键**（最接近的 `tool.readCodeDefinition`
+//! 是「读取代码定义」这个特定工具的标题，非通用类别词），故按 A16 保留本表。
+//! 全表有 `tool.unknownTool`＝「未知工具」，与既有兜底「执行操作」不同；
+//! 兜底字面被边界外测试锁定，统一对齐须跨文件改，见完成报告偏离清单。
 
 /// 已知工具的人话标题前缀。
 const KNOWN: &[(&str, &str)] = &[
@@ -63,6 +69,22 @@ mod tests {
         assert_eq!(tool_title("Read", Some("src/main.rs")), "读取 src/main.rs");
         assert_eq!(tool_title("Bash", None), "执行命令");
         assert_eq!(tool_title("Grep", Some("fn main")), "搜索 fn main");
+    }
+
+    #[test]
+    fn five_categories_get_distinct_human_titles() {
+        let cases = [
+            ("Read", "读取"),
+            ("Write", "创建"),
+            ("Edit", "修改"),
+            ("Bash", "执行命令"),
+            ("Grep", "搜索"),
+        ];
+        for (tool, label) in cases {
+            let title = tool_title(tool, Some("参数"));
+            assert_eq!(title, format!("{label} 参数"), "{tool} 应得人话标题");
+            assert!(!title.contains(tool), "标题不得露出工具英文名：{title}");
+        }
     }
 
     #[test]

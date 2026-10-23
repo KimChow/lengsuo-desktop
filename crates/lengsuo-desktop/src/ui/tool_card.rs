@@ -75,6 +75,29 @@ mod tests {
     }
 
     #[test]
+    fn five_category_cards_carry_their_argument_as_summary() {
+        // A2/A16：读=路径、命令=命令行、搜索=关键词；写 / 编辑同为参数摘要。
+        let cases = [
+            ("Read", "src/main.rs", "读取 src/main.rs"),
+            ("Write", "docs/plan.md", "创建 docs/plan.md"),
+            ("Edit", "src/lib.rs", "修改 src/lib.rs"),
+            ("Bash", "cargo test", "执行命令 cargo test"),
+            ("Grep", "fn main", "搜索 fn main"),
+        ];
+        for (tool, args, title) in cases {
+            let card = ToolCard::from_tool(Some(tool), args);
+            assert_eq!(card.title, title);
+            assert_eq!(card.summary, args, "{tool} 摘要应为参数原文");
+            assert!(
+                !card.title.contains(tool),
+                "标题不得露出工具英文名：{}",
+                card.title
+            );
+            assert!(card.folded, "{tool} 卡片默认折叠");
+        }
+    }
+
+    #[test]
     fn unknown_tool_never_leaks_internal_name() {
         let card = ToolCard::from_message(&call(Some("SecretInternalTool"), "payload"));
         assert!(
