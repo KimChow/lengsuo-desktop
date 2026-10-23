@@ -235,12 +235,7 @@ fn filter_row(theme: &Theme) -> Div {
     for group in [FILTER_LOCATION, FILTER_OWNER, FILTER_TIME, FILTER_TYPE] {
         row = row.child(filter_chip(group.label, group.options[0], theme));
     }
-    row.child(
-        div()
-            .text_sm()
-            .text_color(theme.accent)
-            .child(FILTER_MORE),
-    )
+    row.child(div().text_sm().text_color(theme.accent).child(FILTER_MORE))
 }
 
 /// 一枚筛选片：标签（弱）+ 当前值（强）。
@@ -260,12 +255,7 @@ fn filter_chip(label: &'static str, value: &'static str, theme: &Theme) -> Div {
                 .text_color(theme.muted_foreground)
                 .child(label),
         )
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.foreground)
-                .child(value),
-        )
+        .child(div().text_sm().text_color(theme.foreground).child(value))
 }
 
 /// 结果区三分支：未下发 / 空态 / 清单（各分支同为 `Div`）。
@@ -386,8 +376,10 @@ fn doc_row(doc: &KnowledgeDoc, theme: &Theme) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        build, classify, group_by_location, main_area, result_count_label, KnowledgeDoc,
-        ResultsState, NOT_DELIVERED, TITLE,
+        build, classify, group_by_location, main_area, render, result_count_label, KnowledgeDoc,
+        ResultsState, EMPTY_DESCRIPTION, EMPTY_TITLE, FILTER_LOCATION, FILTER_MORE, FILTER_OWNER,
+        FILTER_TIME, FILTER_TYPE, NOT_DELIVERED, SEARCH_PLACEHOLDER, SEARCH_RESULTS_TITLE,
+        SEARCH_TRIGGER_TIP, TITLE,
     };
     use gpui_kit::component::Theme;
 
@@ -398,6 +390,17 @@ mod tests {
             owner: owner.to_owned(),
             location: location.to_owned(),
         }
+    }
+
+    /// 5 条 / 3 个位置，供分组与渲染断言复用。
+    fn fixture() -> Vec<KnowledgeDoc> {
+        vec![
+            doc("周报", "张三", "产品部"),
+            doc("接口约定", "李四", "公共根目录"),
+            doc("调研记录", "张三", "产品部"),
+            doc("数据字典", "王五", "数据组"),
+            doc("上线清单", "李四", "公共根目录"),
+        ]
     }
 
     #[test]
@@ -411,20 +414,34 @@ mod tests {
     }
 
     #[test]
-    fn main_area_builds_without_panic() {
-        let theme = Theme::default();
-        let _ = main_area(&theme);
+    fn panel_copy_is_verbatim() {
+        assert_eq!(SEARCH_PLACEHOLDER, "搜索文档");
+        assert_eq!(SEARCH_TRIGGER_TIP, "按 Enter 键或点击搜索图标进行搜索");
+        assert_eq!(SEARCH_RESULTS_TITLE, "搜索结果");
+        assert_eq!(FILTER_MORE, "更多");
+        assert_eq!(EMPTY_TITLE, "未找到相关文档");
+        assert_eq!(EMPTY_DESCRIPTION, "请尝试更换关键词或调整筛选条件");
+    }
+
+    #[test]
+    fn filter_groups_are_verbatim() {
+        assert_eq!(FILTER_LOCATION.label, "位置");
+        assert_eq!(FILTER_LOCATION.options, ["全部位置"]);
+        assert_eq!(FILTER_OWNER.label, "所有者");
+        assert_eq!(FILTER_OWNER.options, ["全部", "我所有的", "他人所有"]);
+        assert_eq!(FILTER_TIME.label, "修改时间");
+        assert_eq!(
+            FILTER_TIME.options,
+            ["全部时间", "近7天", "近1个月", "起始时间 ~ 结束时间"]
+        );
+        assert_eq!(FILTER_TYPE.label, "类型");
+        assert_eq!(FILTER_TYPE.options.first(), Some(&"文档"));
+        assert!(FILTER_TYPE.options.contains(&"收集表"));
     }
 
     #[test]
     fn grouping_by_location_counts_and_preserves_order() {
-        let docs = vec![
-            doc("周报", "张三", "产品部"),
-            doc("接口约定", "李四", "公共根目录"),
-            doc("调研记录", "张三", "产品部"),
-            doc("数据字典", "王五", "数据组"),
-            doc("上线清单", "李四", "公共根目录"),
-        ];
+        let docs = fixture();
         let groups = group_by_location(&docs);
         let labels: Vec<&str> = groups.iter().map(|(location, _)| *location).collect();
         assert_eq!(labels, ["产品部", "公共根目录", "数据组"]);
@@ -449,5 +466,31 @@ mod tests {
     fn result_count_label_fills_template() {
         assert_eq!(result_count_label(5), "共 5 条结果");
         assert_eq!(result_count_label(0), "共 0 条结果");
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+    }
+
+    /// 元素树判据：标题节点 + ≥3 个分组/清单节点，且三分支都能整树构造。
+    #[test]
+    fn render_all_three_states_with_at_least_three_nodes() {
+        let theme = Theme::default();
+        let fixture = fixture();
+        let groups = group_by_location(&fixture);
+        assert_eq!(groups.len(), 3, "分组节点 ≥3");
+        assert!(fixture.len() >= 3, "清单行 ≥3");
+        assert_eq!(TITLE, "团队知识库", "标题节点");
+        for state in [
+            ResultsState::NotDelivered,
+            ResultsState::Empty,
+            ResultsState::Entries(fixture),
+        ] {
+            let view = build(state);
+            let _ = render(&view, &theme);
+        }
+        let _ = render(&build(ResultsState::default()), &theme);
     }
 }
