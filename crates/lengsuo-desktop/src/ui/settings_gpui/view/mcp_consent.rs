@@ -127,7 +127,10 @@ mod tests {
             CARD_TITLE_TEMPLATE,
             "是否允许向「{mcpServerName}」提供您的位置信息？"
         );
-        assert_eq!(CARD_DESCRIPTION, "该服务需要您的位置信息来提供本地化服务推荐");
+        assert_eq!(
+            CARD_DESCRIPTION,
+            "该服务需要您的位置信息来提供本地化服务推荐"
+        );
         assert_eq!(ALLOW, "允许");
         assert_eq!(DENY, "拒绝");
     }
