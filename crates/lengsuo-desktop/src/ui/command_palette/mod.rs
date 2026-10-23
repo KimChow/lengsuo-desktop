@@ -166,3 +166,149 @@ pub fn handle_hotkey(
 
 #[cfg(test)]
 mod tests;
+
+/// A7 对齐断言：五类来源统一搜索 + 按来源分组（纯描述层，无 GPUI 依赖）。
+///
+/// 与 `tests.rs` 同约定：显式导入，不用 `use super::*`（glob 会把 GPUI 的
+/// `test` 属性宏带进来，遮蔽标准库的 `#[test]`）。
+#[cfg(test)]
+mod sources_tests {
+    use crate::state::palette_state::search_state::{SearchItem, SearchSource};
+    use crate::state::palette_state::PaletteState;
+    use crate::ui::command_palette::{handle_key, render, PaletteAction, PaletteKey, EMPTY_TEXT};
+
+    /// 造一条最小条目（hint 缺省为空）。
+    fn item(source: SearchSource, id: &str, title: &str) -> SearchItem {
+        SearchItem {
+            source,
+            id: id.to_owned(),
+            title: title.to_owned(),
+            hint: None,
+        }
+    }
+
+    /// ① 五类来源各注入 ≥1 项 ⇒ 恰好 5 组、组标题非空、组顺序 = `SearchSource::ALL`、
+    /// 组内顺序按 id 稳定（来源故意乱序注入，组间仍按固定来源顺序输出）。
+    #[test]
+    fn five_sources_yield_five_titled_groups_in_all_order() {
+        let items = vec![
+            item(SearchSource::Session, "sess-1", "昨天的会话"),
+            item(SearchSource::File, "file-1", "季度报表"),
+            item(SearchSource::Mcp, "mcp-1", "数据库工具"),
+            item(SearchSource::Skill, "skill-1", "代码审查"),
+            item(SearchSource::Command, "cmd-open", "打开设置"),
+            item(SearchSource::Command, "cmd-save", "保存"),
+        ];
+        let mut state = PaletteState::with_items(items);
+        state.open();
+        let view = render(&state).expect("打开时必须渲染浮层");
+        assert_eq!(view.groups.len(), 5, "五类各注入 ≥1 项 ⇒ 恰好 5 组");
+        for (group, source) in view.groups.iter().zip(SearchSource::ALL.iter()) {
+            assert_eq!(group.source, *source, "分组顺序必须等于 SearchSource::ALL");
+            assert!(!group.title.is_empty(), "每个分组必须有非空标题");
+            assert!(!group.items.is_empty(), "注入过的来源不得整组消失");
+        }
+        let cmd = view
+            .groups
+            .iter()
+            .find(|g| g.source == SearchSource::Command)
+            .expect("命令组必须在场");
+        let ids: Vec<&str> = cmd.items.iter().map(|it| it.id.as_str()).collect();
+        assert_eq!(ids, vec!["cmd-open", "cmd-save"], "组内顺序按 id 保持稳定");
+    }
+
+    /// ② 同标题不同 id：选中与派发**按 id** 区分——选第 2 个不选中第 1 个，
+    /// 跨组同名条目也按 id 步进（不按标题、不按下标）。
+    #[test]
+    fn same_title_different_ids_select_and_dispatch_by_id() {
+        let items = vec![
+            item(SearchSource::Command, "dup-cmd-1", "重名条目"),
+            item(SearchSource::Command, "dup-cmd-2", "重名条目"),
+            item(SearchSource::Session, "dup-sess", "重名条目"),
+        ];
+        let mut state = PaletteState::with_items(items);
+        state.open();
+        // 打开即选中首项；若实现延后选中，先步进到位（有界，防死循环）。
+        for _ in 0..4 {
+            if state.selected_id().is_some() {
+                break;
+            }
+            state.select_next();
+        }
+        assert_eq!(state.selected_id(), Some("dup-cmd-1"), "初始选中应为第一项");
+
+        state.select_next();
+        assert_eq!(
+            state.selected_id(),
+            Some("dup-cmd-2"),
+            "同组同标题的第 2 项必须能单独选中"
+        );
+        assert_ne!(
+            state.selected_id(),
+            Some("dup-cmd-1"),
+            "选第 2 个不得选中第 1 个"
+        );
+
+        // 渲染描述同样按 id：两个同标题条目都在场，选中 id 精确指向第二个。
+        let view = render(&state).expect("打开时必须渲染浮层");
+        let cmd = view
+            .groups
+            .iter()
+            .find(|g| g.source == SearchSource::Command)
+            .expect("命令组必须在场");
+        assert_eq!(cmd.items.len(), 2);
+        assert_eq!(
+            cmd.items[0].title, cmd.items[1].title,
+            "用例前提：两条目标题相同"
+        );
+        assert_eq!(view.selected_id.as_deref(), Some("dup-cmd-2"));
+
+        // 跨组同名：向下按 id 进入会话组，退回第 2 项后回车派发。
+        state.select_next();
+        assert_eq!(
+            state.selected_id(),
+            Some("dup-sess"),
+            "跨组步进也按 id 定位"
+        );
+        state.select_previous();
+        assert_eq!(state.selected_id(), Some("dup-cmd-2"));
+        let action = handle_key(&mut state, PaletteKey::Enter);
+        assert_eq!(
+            action,
+            PaletteAction::Execute("dup-cmd-2".to_owned()),
+            "派发必须按 id 返回第 2 项，而非标题或第 1 项"
+        );
+    }
+
+    /// ③ 空查询且无数据 / 有数据但无匹配 ⇒ 不 panic，且给出**显式空态**
+    /// （fail-closed，不静默退化成空列表）；无可执行项时 Enter 不派发。
+    #[test]
+    fn empty_or_no_match_shows_explicit_empty_state() {
+        // 空查询 + 无任何注入：显式空态提示，而非什么都不渲染。
+        let mut state = PaletteState::with_items(Vec::new());
+        state.open();
+        let view = render(&state).expect("打开时必须渲染浮层");
+        assert_eq!(view.query, "");
+        assert!(view.groups.is_empty());
+        assert_eq!(view.empty_text, Some(EMPTY_TEXT), "必须给出显式空态提示");
+        assert_eq!(
+            handle_key(&mut state, PaletteKey::Enter),
+            PaletteAction::Ignored,
+            "无可执行项时 Enter 不得派发"
+        );
+
+        // 有数据但关键词全不匹配：同样显式空态，不 panic。
+        let mut state =
+            PaletteState::with_items(vec![item(SearchSource::Command, "cmd-x", "唯一命令")]);
+        state.open();
+        state.set_keyword("绝不匹配的词");
+        let view = render(&state).expect("打开时必须渲染浮层");
+        assert_eq!(view.query, "绝不匹配的词");
+        assert!(view.groups.is_empty(), "无匹配 ⇒ 无分组");
+        assert_eq!(
+            view.empty_text,
+            Some(EMPTY_TEXT),
+            "无匹配也必须显示显式空态"
+        );
+    }
+}
