@@ -175,7 +175,7 @@ mod tests;
 mod sources_tests {
     use crate::state::palette_state::search_state::{SearchItem, SearchSource};
     use crate::state::palette_state::PaletteState;
-    use crate::ui::command_palette::{handle_key, render, PaletteAction, PaletteKey};
+    use crate::ui::command_palette::{handle_key, render, PaletteAction, PaletteKey, EMPTY_TEXT};
 
     /// 造一条最小条目（hint 缺省为空）。
     fn item(source: SearchSource, id: &str, title: &str) -> SearchItem {
@@ -265,7 +265,11 @@ mod sources_tests {
 
         // 跨组同名：向下按 id 进入会话组，退回第 2 项后回车派发。
         state.select_next();
-        assert_eq!(state.selected_id(), Some("dup-sess"), "跨组步进也按 id 定位");
+        assert_eq!(
+            state.selected_id(),
+            Some("dup-sess"),
+            "跨组步进也按 id 定位"
+        );
         state.select_previous();
         assert_eq!(state.selected_id(), Some("dup-cmd-2"));
         let action = handle_key(&mut state, PaletteKey::Enter);
@@ -273,6 +277,38 @@ mod sources_tests {
             action,
             PaletteAction::Execute("dup-cmd-2".to_owned()),
             "派发必须按 id 返回第 2 项，而非标题或第 1 项"
+        );
+    }
+
+    /// ③ 空查询且无数据 / 有数据但无匹配 ⇒ 不 panic，且给出**显式空态**
+    /// （fail-closed，不静默退化成空列表）；无可执行项时 Enter 不派发。
+    #[test]
+    fn empty_or_no_match_shows_explicit_empty_state() {
+        // 空查询 + 无任何注入：显式空态提示，而非什么都不渲染。
+        let mut state = PaletteState::with_items(Vec::new());
+        state.open();
+        let view = render(&state).expect("打开时必须渲染浮层");
+        assert_eq!(view.query, "");
+        assert!(view.groups.is_empty());
+        assert_eq!(view.empty_text, Some(EMPTY_TEXT), "必须给出显式空态提示");
+        assert_eq!(
+            handle_key(&mut state, PaletteKey::Enter),
+            PaletteAction::Ignored,
+            "无可执行项时 Enter 不得派发"
+        );
+
+        // 有数据但关键词全不匹配：同样显式空态，不 panic。
+        let mut state =
+            PaletteState::with_items(vec![item(SearchSource::Command, "cmd-x", "唯一命令")]);
+        state.open();
+        state.set_keyword("绝不匹配的词");
+        let view = render(&state).expect("打开时必须渲染浮层");
+        assert_eq!(view.query, "绝不匹配的词");
+        assert!(view.groups.is_empty(), "无匹配 ⇒ 无分组");
+        assert_eq!(
+            view.empty_text,
+            Some(EMPTY_TEXT),
+            "无匹配也必须显示显式空态"
         );
     }
 }
