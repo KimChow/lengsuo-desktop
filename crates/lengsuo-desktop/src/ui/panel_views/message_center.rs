@@ -370,21 +370,169 @@ fn row(theme: &Theme, index: usize, entry: &MessageEntry) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, render_view, EmptyReason, MessageCenterView, MessageEntry, MessageListState,
+        RelativeTime, Tab, CACHE_EMPTY, EMPTY, GOTO_MAILBOX, NOT_DELIVERED, READ, TAB_ALL,
+        TAB_PENDING, TIME_HOURS_AGO, TITLE,
+    };
     use gpui_kit::component::Theme;
+    use gpui_kit::{
+        div, point, px, size, Bounds, IntoElement, ParentElement as _, Pixels, Styled as _,
+        TestAppContext,
+    };
 
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert_eq!(TITLE, "\u{6d88}\u{606f}\u{4e2d}\u{5fc3}");
+    fn entry(sender: &str, time: RelativeTime, unread: bool) -> MessageEntry {
+        MessageEntry {
+            sender: sender.to_owned(),
+            time,
+            unread,
+        }
+    }
+
+    fn three_entries() -> Vec<MessageEntry> {
+        vec![
+            entry("ops-bot", RelativeTime::JustNow, true),
+            entry("billing", RelativeTime::HoursAgo(3), true),
+            entry("release-bot", RelativeTime::Yesterday, false),
+        ]
+    }
+
+    /// \u{65e0}\u{7a97}\u{53e3}\u{753b}\u{4e00}\u{5e27}\u{ff0c}\u{9010}\u{4e2a}\u{8fd4}\u{56de}\u{9009}\u{62e9}\u{5668}\u{7684}\u{5e03}\u{5c40} bounds\uff08None \u{21d2} \u{6ca1}\u{8fdb}\u{6e32}\u{67d3}\u{5e27}\uff09\u{3002}
+    fn draw_and_locate(
+        model: &MessageCenterView,
+        selectors: &[&'static str],
+    ) -> Vec<Option<Bounds<Pixels>>> {
+        let mut ctx = TestAppContext::single();
+        let element = render_view(&Theme::default(), model);
+        let visual = ctx.add_empty_window();
+        visual.draw(
+            point(px(0.0), px(0.0)),
+            size(px(800.0), px(600.0)),
+            move |_window, _cx| div().flex().items_start().child(element).into_any_element(),
+        );
+        selectors.iter().map(|s| visual.debug_bounds(s)).collect()
     }
 
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn grouping_and_pending_counts_are_correct() {
+        let all = MessageCenterView::build(Tab::All, MessageListState::Entries(three_entries()));
+        assert_eq!(all.pending_count(), 2);
+        assert_eq!(all.visible_rows().len(), 3);
+
+        let pending =
+            MessageCenterView::build(Tab::Pending, MessageListState::Entries(three_entries()));
+        assert_eq!(pending.visible_rows().len(), 2);
+        assert!(pending.visible_rows().iter().all(|e| e.unread));
+
+        // \u{975e}\u{6e05}\u{5355}\u{6001}\uff08\u{672a}\u{4e0b}\u{53d1}/\u{7a7a}\u{6001}\uff09\u{4e0d}\u{5f97}\u{865a}\u{62a5}\u{5f85}\u{5904}\u{7406}\u{6570}\u{3002}
+        assert_eq!(MessageCenterView::not_delivered().pending_count(), 0);
+        assert_eq!(
+            MessageCenterView::build(Tab::All, MessageListState::Empty(EmptyReason::Messages))
+                .pending_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn empty_input_yields_empty_state_not_blank_list() {
+        let view =
+            MessageCenterView::build(Tab::All, MessageListState::Empty(EmptyReason::Messages));
+        assert!(
+            matches!(view.state, MessageListState::Empty(EmptyReason::Messages)),
+            "\u{7a7a}\u{8f93}\u{5165}\u{5fc5}\u{987b}\u{662f}\u{7a7a}\u{6001}\u{ff0c}\u{800c}\u{4e0d}\u{662f}\u{7a7a}\u{6e05}\u{5355}"
+        );
+        assert!(view.visible_rows().is_empty());
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_the_namespace() {
+        assert_eq!(TITLE, "\u{6d88}\u{606f}\u{4e2d}\u{5fc3}");
         assert_eq!(NOT_DELIVERED, "\u{672a}\u{4e0b}\u{53d1}");
+        assert_eq!(EMPTY, "\u{6682}\u{65e0}\u{6d88}\u{606f}");
+        assert_eq!(
+            CACHE_EMPTY,
+            "\u{6682}\u{65e0}\u{7f13}\u{5b58}\u{6d88}\u{606f}"
+        );
+        assert_eq!(GOTO_MAILBOX, "\u{524d}\u{5f80}\u{67e5}\u{770b}");
+        assert_eq!(READ, "\u{5df2}\u{8bfb}");
+        assert_eq!(TAB_ALL, "\u{5168}\u{90e8}");
+        assert_eq!(TAB_PENDING, "\u{5f85}\u{5904}\u{7406}");
+        assert_eq!(TIME_HOURS_AGO, "{n} \u{5c0f}\u{65f6}\u{524d}");
+        // `{n}` \u{5360}\u{4f4d}\u{7b26}\u{66ff}\u{6362}\u{540e}\u{4ecd}\u{662f}\u{9010}\u{5b57}\u{6a21}\u{677f}\u{7684}\u{5b9e}\u{4f8b}\u{5316}\u{3002}
+        assert_eq!(
+            RelativeTime::HoursAgo(3).label(),
+            "3 \u{5c0f}\u{65f6}\u{524d}"
+        );
+        assert_eq!(
+            RelativeTime::MinutesAgo(5).label(),
+            "5 \u{5206}\u{949f}\u{524d}"
+        );
+        assert_eq!(RelativeTime::DaysAgo(2).label(), "2 \u{5929}\u{524d}");
     }
 
     #[test]
     fn main_area_builds_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+
+    #[test]
+    fn not_delivered_render_is_fail_closed() {
+        let view = MessageCenterView::not_delivered();
+        let found = draw_and_locate(&view, &["msg-center-title", "msg-center-notdelivered"]);
+        assert!(
+            found.iter().all(Option::is_some),
+            "\u{672a}\u{4e0b}\u{53d1}\u{6001}\u{ff1a}\u{6807}\u{9898}\u{4e0e}\u{300c}\u{672a}\u{4e0b}\u{53d1}\u{300d}\u{8bf4}\u{660e}\u{90fd}\u{5fc5}\u{987b}\u{53ef}\u{5b9a}\u{4f4d}"
+        );
+
+        let leaked = draw_and_locate(&view, &["msg-center-row-0", "msg-center-empty"]);
+        assert!(
+            leaked.iter().all(Option::is_none),
+            "\u{6570}\u{636e}\u{672a}\u{4e0b}\u{53d1}\u{65f6}\u{4e0d}\u{5f97}\u{4f2a}\u{9020}\u{6e05}\u{5355}\u{884c}\u{ff0c}\u{4e5f}\u{4e0d}\u{5f97}\u{8bef}\u{663e}\u{7a7a}\u{6001}"
+        );
+    }
+
+    #[test]
+    fn entries_render_locates_title_and_three_rows() {
+        let view = MessageCenterView::build(Tab::All, MessageListState::Entries(three_entries()));
+        let selectors = [
+            "msg-center-title",
+            "msg-center-row-0",
+            "msg-center-row-1",
+            "msg-center-row-2",
+        ];
+        let found = draw_and_locate(&view, &selectors);
+        for (name, bounds) in selectors.iter().zip(&found) {
+            let bounds = bounds.unwrap_or_else(|| {
+                panic!("\u{8282}\u{70b9} {name} \u{6ca1}\u{8fdb}\u{5165}\u{6e32}\u{67d3}\u{5e27}")
+            });
+            assert!(
+                bounds.size.width > px(0.0),
+                "\u{8282}\u{70b9} {name} \u{5e03}\u{5c40}\u{5bbd}\u{5ea6}\u{4e3a} 0"
+            );
+            assert!(
+                bounds.size.height > px(0.0),
+                "\u{8282}\u{70b9} {name} \u{5e03}\u{5c40}\u{9ad8}\u{5ea6}\u{4e3a} 0"
+            );
+        }
+
+        let leaked = draw_and_locate(&view, &["msg-center-empty"]);
+        assert!(leaked[0].is_none(), "\u{6709}\u{6e05}\u{5355}\u{65f6}\u{4e0d}\u{5f97}\u{540c}\u{65f6}\u{663e}\u{793a}\u{7a7a}\u{6001}");
+    }
+
+    #[test]
+    fn empty_state_render_locates_note_without_rows() {
+        let view =
+            MessageCenterView::build(Tab::All, MessageListState::Empty(EmptyReason::Messages));
+        let found = draw_and_locate(&view, &["msg-center-empty", "msg-center-title"]);
+        assert!(
+            found.iter().all(Option::is_some),
+            "\u{7a7a}\u{6001}\u{ff1a}\u{6807}\u{9898}\u{4e0e}\u{7a7a}\u{6001}\u{8bf4}\u{660e}\u{90fd}\u{5fc5}\u{987b}\u{53ef}\u{5b9a}\u{4f4d}"
+        );
+
+        let leaked = draw_and_locate(&view, &["msg-center-row-0"]);
+        assert!(
+            leaked[0].is_none(),
+            "\u{7a7a}\u{6001}\u{4e0d}\u{5f97}\u{4f2a}\u{9020}\u{6e05}\u{5355}\u{884c}"
+        );
     }
 }
