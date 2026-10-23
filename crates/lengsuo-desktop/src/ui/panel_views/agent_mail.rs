@@ -264,7 +264,7 @@ fn row_element(theme: &Theme, row: &Row) -> Div {
     let base = div()
         .text_sm()
         .rounded_md()
-        .border()
+        .border(px(1.))
         .border_color(theme.border)
         .px_3()
         .py_2();
@@ -272,7 +272,7 @@ fn row_element(theme: &Theme, row: &Row) -> Div {
         Row::Group(label) => base.text_color(theme.muted_foreground).child(*label),
         Row::Status(label) => base.text_color(theme.foreground).child(*label),
         Row::Hint(text) => base.text_color(theme.muted_foreground).child(*text),
-        Row::Alias(text) => base.text_color(theme.foreground).child(text.as_str()),
+        Row::Alias(text) => base.text_color(theme.foreground).child(text.clone()),
         Row::Actions(labels) => base.flex().gap_2().children(labels.iter().map(|label| {
             div()
                 .rounded_md()
