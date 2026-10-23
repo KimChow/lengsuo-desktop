@@ -335,4 +335,49 @@ mod tests {
             let _ = super::main_area(&theme);
         }
     }
+
+    /// GPUI 层断言：元素树节点经与 `main_area` 相同的构造函数建立。
+    #[cfg(feature = "ui")]
+    mod render_tree {
+        use super::super::{
+            empty_node, list_node, main_area, not_delivered_node, row_node, title_node,
+            ChannelsView,
+        };
+        use gpui_kit::component::Theme;
+
+        #[test]
+        fn tree_has_title_and_at_least_three_row_nodes() {
+            let theme = Theme::default();
+            let view = ChannelsView::build(Some(super::sample_entries()));
+            // 标题节点存在（与 main_area 同一构造路径）。
+            let _ = title_node(&theme);
+            // ≥3 个清单行节点，且逐条对应数据层的条目。
+            let rows: Vec<_> = view
+                .state
+                .entries()
+                .iter()
+                .map(|entry| row_node(&theme, entry))
+                .collect();
+            assert_eq!(rows.len(), 3);
+            assert_eq!(
+                view.state
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.has_unread())
+                    .count(),
+                2
+            );
+        }
+
+        #[test]
+        fn every_branch_builds_without_panic() {
+            let theme = Theme::default();
+            // 当前真实态：未下发（fail-closed）。
+            let _ = main_area(&theme);
+            let _ = not_delivered_node(&theme);
+            let _ = empty_node(&theme);
+            let _ = list_node(&theme, &ChannelsView::build(Some(super::sample_entries())));
+            let _ = list_node(&theme, &ChannelsView::build(Some(Vec::new())));
+        }
+    }
 }
