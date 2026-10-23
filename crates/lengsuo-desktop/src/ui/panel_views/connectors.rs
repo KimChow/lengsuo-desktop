@@ -209,16 +209,39 @@ impl ConnectorCenter {
 /// 数据源未接线：当前固定 fail-closed（如实显示「未下发」）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &ConnectorCenter::NotDelivered)
+}
+
+/// 按给定状态渲染（接线卡以真实状态调用；GPUI 层逐字读纯数据层文案）。
+#[must_use]
+pub fn render(theme: &Theme, state: &ConnectorCenter) -> Div {
+    let body = match state {
+        ConnectorCenter::NotDelivered => centered_hint(theme, NOT_DELIVERED),
+        ConnectorCenter::Empty => centered_hint(theme, EMPTY_HINT),
+        ConnectorCenter::Entries(rows) => entries_body(theme, rows),
+    };
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme))
+        .child(body)
+}
+
+/// 标题行：标题 + 副标题。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .border_b_1()
+        .border_color(theme.border)
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
@@ -226,21 +249,150 @@ pub fn main_area(theme: &Theme) -> Div {
         )
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(TIP_INFO),
         )
+}
+
+/// 居中提示（未下发 / 空态）。
+fn centered_hint(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 清单主体：可用连接器分组 + 行，已连接条目再进危险区分组。
+fn entries_body(theme: &Theme, rows: &[ConnectorRow]) -> Div {
+    let mut list = div().flex_1().flex().flex_col().child(group_header(theme, GROUP_AVAILABLE));
+    for row in rows {
+        list = list.child(entry_row(theme, row));
+    }
+    let connected: Vec<&ConnectorRow> = rows.iter().filter(|row| row.connected).collect();
+    if !connected.is_empty() {
+        list = list.child(group_header(theme, GROUP_DANGER));
+        for row in connected {
+            list = list.child(danger_row(theme, row));
+        }
+    }
+    list
+}
+
+/// 分组标题行。
+fn group_header(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(text)
+}
+
+/// 清单行：名称 + 说明在左，状态 + 动作在右。
+fn entry_row(theme: &Theme, row: &ConnectorRow) -> Div {
+    let mut actions = div().flex().items_center().gap_2().child(status_text(theme, row));
+    if let Some(action) = row.action_text() {
+        actions = actions.child(action_chip(theme, action));
+    }
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(row.name),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(row.desc),
+                ),
+        )
+        .child(actions)
+}
+
+/// 状态文案：已连接用强调色，未连接用弱化色。
+fn status_text(theme: &Theme, row: &ConnectorRow) -> Div {
+    let color = if row.connected {
+        theme.accent
+    } else {
+        theme.muted_foreground
+    };
+    div()
+        .px_2()
+        .py_1()
+        .text_sm()
+        .text_color(color)
+        .child(row.status_text())
+}
+
+/// 动作位（描边小片；行为由接线卡接，这里只做展示）。
+fn action_chip(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .text_sm()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_color(theme.foreground)
+        .child(text)
+}
+
+/// 危险区行：名称 + 确认说明 + 撤销动作位。
+fn danger_row(theme: &Theme, row: &ConnectorRow) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(row.name),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(REVOKE_DESC),
+                ),
+        )
+        .child(action_chip(theme, ACTION_REVOKE))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, ConnectorCenter, Node, EMPTY_HINT, GROUP_AVAILABLE, NOT_DELIVERED, TIP_INFO,
-        TITLE,
+        main_area, render, ConnectorCenter, Node, EMPTY_HINT, GROUP_AVAILABLE, NOT_DELIVERED,
+        TIP_INFO, TITLE,
     };
     use gpui_kit::component::Theme;
 
@@ -267,6 +419,15 @@ mod tests {
         let nodes = ConnectorCenter::build(Some(&[])).nodes();
         assert_eq!(nodes, vec![Node::Title, Node::Hint(EMPTY_HINT)]);
         assert!(!nodes.iter().any(|node| matches!(node, Node::Group(_))));
+    }
+
+    /// render 各状态分支均不 panic（未下发 / 空态 / 清单）。
+    #[test]
+    fn render_all_states_without_panic() {
+        let theme = Theme::default();
+        let _ = render(&theme, &ConnectorCenter::build(None));
+        let _ = render(&theme, &ConnectorCenter::build(Some(&[])));
+        let _ = render(&theme, &ConnectorCenter::build(Some(&[true, false, false, false])));
     }
 
     #[test]
