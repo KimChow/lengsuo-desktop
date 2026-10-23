@@ -59,6 +59,25 @@ impl InputAreaState {
         self.in_flight = false;
     }
 
+    /// 进入等待态：置 `in_flight = true`，发送按钮切到「停止」形态。
+    ///
+    /// 与 [`Self::submit`] 的关系：`submit` 产出输入时**顺带**把 `in_flight`
+    /// 置为 `true`（同一语义，见其函数体末尾）；本方法是那一步的单独入口 ——
+    /// 只置位，不产出输入、不清空草稿。宿主恢复会话 / 测试摆状态走这里，
+    /// ⛔ 不要在别处再写第二套置位逻辑。
+    ///
+    /// 为什么公开：等待态（停止按钮）分支此前只有「草稿非空 → submit」这条
+    /// 链进得去；公开入口让无窗口渲染断言能把状态直接摆到等待态。
+    ///
+    /// 返回是否真的发生了变化（已在等待态时返回 `false`）。
+    pub fn begin_in_flight(&mut self) -> bool {
+        if self.in_flight {
+            return false;
+        }
+        self.in_flight = true;
+        true
+    }
+
     /// 只有非空草稿且没有未完成的发送时才可发送。
     #[must_use]
     pub fn can_send(&self) -> bool {
