@@ -166,3 +166,54 @@ pub fn handle_hotkey(
 
 #[cfg(test)]
 mod tests;
+
+/// A7 对齐断言：五类来源统一搜索 + 按来源分组（纯描述层，无 GPUI 依赖）。
+///
+/// 与 `tests.rs` 同约定：显式导入，不用 `use super::*`（glob 会把 GPUI 的
+/// `test` 属性宏带进来，遮蔽标准库的 `#[test]`）。
+#[cfg(test)]
+mod sources_tests {
+    use crate::state::palette_state::search_state::{SearchItem, SearchSource};
+    use crate::state::palette_state::PaletteState;
+    use crate::ui::command_palette::render;
+
+    /// 造一条最小条目（hint 缺省为空）。
+    fn item(source: SearchSource, id: &str, title: &str) -> SearchItem {
+        SearchItem {
+            source,
+            id: id.to_owned(),
+            title: title.to_owned(),
+            hint: None,
+        }
+    }
+
+    /// ① 五类来源各注入 ≥1 项 ⇒ 恰好 5 组、组标题非空、组顺序 = `SearchSource::ALL`、
+    /// 组内顺序按 id 稳定（来源故意乱序注入，组间仍按固定来源顺序输出）。
+    #[test]
+    fn five_sources_yield_five_titled_groups_in_all_order() {
+        let items = vec![
+            item(SearchSource::Session, "sess-1", "昨天的会话"),
+            item(SearchSource::File, "file-1", "季度报表"),
+            item(SearchSource::Mcp, "mcp-1", "数据库工具"),
+            item(SearchSource::Skill, "skill-1", "代码审查"),
+            item(SearchSource::Command, "cmd-open", "打开设置"),
+            item(SearchSource::Command, "cmd-save", "保存"),
+        ];
+        let mut state = PaletteState::with_items(items);
+        state.open();
+        let view = render(&state).expect("打开时必须渲染浮层");
+        assert_eq!(view.groups.len(), 5, "五类各注入 ≥1 项 ⇒ 恰好 5 组");
+        for (group, source) in view.groups.iter().zip(SearchSource::ALL.iter()) {
+            assert_eq!(group.source, *source, "分组顺序必须等于 SearchSource::ALL");
+            assert!(!group.title.is_empty(), "每个分组必须有非空标题");
+            assert!(!group.items.is_empty(), "注入过的来源不得整组消失");
+        }
+        let cmd = view
+            .groups
+            .iter()
+            .find(|g| g.source == SearchSource::Command)
+            .expect("命令组必须在场");
+        let ids: Vec<&str> = cmd.items.iter().map(|it| it.id.as_str()).collect();
+        assert_eq!(ids, vec!["cmd-open", "cmd-save"], "组内顺序按 id 保持稳定");
+    }
+}
