@@ -1,21 +1,24 @@
 //! 我的文件主区视图（波次 5，卡 `ui-my-files`）。
 //!
 //! 分层约定（同 `env_gpui`）：
-//! - **纯数据层**（本文件上半，无 GPUI 依赖）：条目 / 空态 / 诚实占位文案；
+//! - **纯数据层**（本文件上半，无 GPUI 依赖）：可枚举状态（未下发 / 空态 / 条目）
+//!   与逐字文案常量；GPUI 渲染是它的纯函数；
 //! - **GPUI 层**（[`main_area`]）：把描述接到元素树，颜色一律取主题 token。
 //!
 //! 硬约束：
 //! - **fail-closed**：数据未下发必须如实显示「未下发」，不得退化成空列表；
 //! - **只做界面**：不判权限、不持凭据、不直连运行时；
-//! - ⛔ **不伪造服务端数据**（界面文案逐字取自文案全表命名空间 `myFiles`）。
+//! - ⛔ **不伪造服务端数据**（界面文案逐字取自界面文案全表命名空间 `myFiles`）。
 //!
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后由
-//! `ui-*-switch-source` 类卡换数据源（**只换数据源、不改视图结构**）。
+//! 数据源在运行时侧：`main_area` 当前按 `NotDelivered` 态渲染，等跨线契约就绪后
+//! 由 `ui-*-switch-source` 类卡换数据源（**只换数据源、不改视图结构**）。
 #![cfg(feature = "ui")]
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
+
+// ===================== 纯数据层（无 GPUI 依赖） =====================
 
 /// 视图标题（逐字取自界面文案全表）。
 pub const TITLE: &str = "我的文件";
@@ -23,12 +26,111 @@ pub const TITLE: &str = "我的文件";
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
 
+/// 已下发且为空的空态文案（`myFiles.empty.noFiles`）。
+pub const EMPTY: &str = "暂无文件";
+
+/// 表格列头：名称 / 更新人 / 最近编辑（`myFiles.browser.header*`）。
+pub const HEADER_NAME: &str = "名称";
+pub const HEADER_OWNER: &str = "更新人";
+pub const HEADER_TIME: &str = "最近编辑";
+
+/// 工具栏操作行文案（`myFiles.actions.*`；顺序即渲染顺序）。
+pub const ACTION_OPEN_FOLDER: &str = "打开文件夹";
+pub const ACTION_DOWNLOAD: &str = "下载";
+pub const ACTION_RENAME: &str = "重命名";
+pub const ACTION_MOVE_TO: &str = "移动到";
+pub const ACTION_MORE: &str = "更多操作";
+pub const TOOLBAR_ACTIONS: [&str; 5] = [
+    ACTION_OPEN_FOLDER,
+    ACTION_DOWNLOAD,
+    ACTION_RENAME,
+    ACTION_MOVE_TO,
+    ACTION_MORE,
+];
+
+/// 一行文件条目（纯数据；由运行时下发，本模块不伪造）。
+pub struct FileEntry {
+    pub name: String,
+    pub updated_by: String,
+    pub updated_time: String,
+}
+
+/// 可枚举的视图状态。
+pub enum MyFilesState {
+    /// 数据未下发（fail-closed 默认态）。
+    NotDelivered,
+    /// 已下发且为空 ⇒ 空态（不是空列表）。
+    Empty,
+    /// 已下发且有条目。
+    Entries(Vec<FileEntry>),
+}
+
+/// 我的文件视图的纯数据描述。
+pub struct MyFilesView {
+    state: MyFilesState,
+}
+
+impl MyFilesView {
+    /// fail-closed 构造：无数据源时如实显示「未下发」。
+    #[must_use]
+    pub fn not_delivered() -> Self {
+        Self {
+            state: MyFilesState::NotDelivered,
+        }
+    }
+
+    /// 由下发条目构造：空输入 ⇒ `Empty` 空态，非空 ⇒ `Entries`。
+    #[must_use]
+    pub fn build(entries: Vec<FileEntry>) -> Self {
+        Self {
+            state: if entries.is_empty() {
+                MyFilesState::Empty
+            } else {
+                MyFilesState::Entries(entries)
+            },
+        }
+    }
+
+    pub fn state(&self) -> &MyFilesState {
+        &self.state
+    }
+
+    /// 状态体文案：未下发 / 空态；有条目时为 `None`（由行渲染接管）。
+    pub fn body_notice(&self) -> Option<&'static str> {
+        match self.state {
+            MyFilesState::NotDelivered => Some(NOT_DELIVERED),
+            MyFilesState::Empty => Some(EMPTY),
+            MyFilesState::Entries(_) => None,
+        }
+    }
+
+    /// 条目行（名称 / 更新人 / 最近编辑）；仅 `Entries` 态非空。
+    pub fn rows(&self) -> Vec<[&str; 3]> {
+        let MyFilesState::Entries(entries) = &self.state else {
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .map(|e| {
+                [
+                    e.name.as_str(),
+                    e.updated_by.as_str(),
+                    e.updated_time.as_str(),
+                ]
+            })
+            .collect()
+    }
+}
+
+// ===================== GPUI 层 =====================
+
 /// 主区渲染。
 ///
 /// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
 /// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    let view = MyFilesView::not_delivered();
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
@@ -52,28 +154,66 @@ pub fn main_area(theme: &Theme) -> Div {
                 .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(view.body_notice().unwrap_or(NOT_DELIVERED)),
         )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
-    use gpui_kit::component::Theme;
+    use super::{
+        FileEntry, MyFilesState, MyFilesView, EMPTY, HEADER_NAME, HEADER_OWNER, HEADER_TIME,
+        NOT_DELIVERED, TITLE, TOOLBAR_ACTIONS,
+    };
 
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert_eq!(TITLE, "我的文件");
+    fn entry(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.to_owned(),
+            updated_by: format!("{name}-owner"),
+            updated_time: format!("{name}-t"),
+        }
     }
 
+    /// ② 空输入 ⇒ 空态（不是空列表，也不是未下发）。
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn empty_input_yields_empty_state_not_entries() {
+        let view = MyFilesView::build(vec![]);
+        assert!(matches!(view.state(), MyFilesState::Empty));
+        assert_eq!(view.body_notice(), Some(EMPTY));
+        assert!(view.rows().is_empty());
+    }
+
+    /// ① 纯函数层分组 / 计数正确。
+    #[test]
+    fn entries_state_counts_and_orders_rows() {
+        let view = MyFilesView::build(vec![entry("a.md"), entry("b.png"), entry("c.zip")]);
+        assert!(matches!(view.state(), MyFilesState::Entries(_)));
+        assert_eq!(view.rows().len(), 3);
+        assert_eq!(view.rows()[0], ["a.md", "a.md-owner", "a.md-t"]);
+        assert_eq!(view.body_notice(), None);
+    }
+
+    /// ③ 文案逐字一致（对 ≥3 个 key 断言）。
+    #[test]
+    fn copy_is_verbatim_from_myfiles_namespace() {
+        assert_eq!(
+            (HEADER_NAME, HEADER_OWNER, HEADER_TIME),
+            ("名称", "更新人", "最近编辑")
+        );
+        assert_eq!(EMPTY, "暂无文件");
         assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(TITLE, "我的文件");
+        assert_eq!(
+            TOOLBAR_ACTIONS,
+            ["打开文件夹", "下载", "重命名", "移动到", "更多操作"]
+        );
     }
 
+    /// fail-closed 默认构造：无数据源 ⇒ 如实「未下发」。
     #[test]
-    fn main_area_builds_without_panic() {
-        let theme = Theme::default();
-        let _ = main_area(&theme);
+    fn not_delivered_is_the_fail_closed_default() {
+        let view = MyFilesView::not_delivered();
+        assert!(matches!(view.state(), MyFilesState::NotDelivered));
+        assert_eq!(view.body_notice(), Some(NOT_DELIVERED));
+        assert!(view.rows().is_empty());
     }
 }
