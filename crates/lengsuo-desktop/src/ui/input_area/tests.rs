@@ -46,6 +46,22 @@ fn multiline_draft_is_preserved_and_sent_with_mode() {
     assert_eq!(area.send_button().label, "发送");
 }
 
+/// `begin_in_flight` 是等待态的单独入口：不走 submit 链（宿主恢复会话 /
+/// 测试摆状态），但语义与 submit 之后一致。
+#[test]
+fn begin_in_flight_switches_button_to_stop_without_touching_draft() {
+    let mut area = InputAreaState::new();
+    area.set_draft("排队中的消息");
+    assert!(area.begin_in_flight(), "应进入等待态");
+    assert!(area.is_in_flight());
+    assert_eq!(area.send_button().kind, SendButtonKind::Stop);
+    assert_eq!(area.submit(), None, "等待期间不得再产出输入");
+    assert_eq!(area.draft(), "排队中的消息", "begin_in_flight 不得动草稿");
+    assert!(!area.begin_in_flight(), "已在等待态不算变化");
+    area.finish_send();
+    assert_eq!(area.send_button().kind, SendButtonKind::Send);
+}
+
 #[test]
 fn set_mode_id_rejects_unknown_without_changing_mode() {
     let mut area = InputAreaState::new();

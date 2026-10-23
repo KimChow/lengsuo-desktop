@@ -179,6 +179,49 @@ impl InputAreaGpui {
         changed
     }
 
+    /// 设置模式下拉展开状态（A11）。
+    ///
+    /// 为什么公开：`mode_menu_open` 此前只能靠真机点击触发器翻转，
+    /// 无窗口渲染断言进不了展开分支；公开 setter 才能把视图摆到该状态。
+    /// 互斥收起 `@` 快选是**点击路径**的行为（见 `mode_menu::render`），
+    /// 这里只摆状态，不重复那套判定。
+    pub fn set_mode_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.mode_menu_open == open {
+            return;
+        }
+        self.mode_menu_open = open;
+        cx.notify();
+    }
+
+    /// 设置 `@` 快选层展开状态（A12）。
+    ///
+    /// 为什么公开：`mention_open` 此前只能靠真机在编辑器里键入 `@` 触发
+    /// （`Change` → `sync_draft` 自动同步），渲染断言摆不进去；公开 setter
+    /// 补上这个入口。真实链路仍以草稿内容为准，宿主一般无需手动设置。
+    pub fn set_mention_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.mention_open == open {
+            return;
+        }
+        self.mention_open = open;
+        cx.notify();
+    }
+
+    /// 进入「等待确认」：发送按钮切到「停止」形态（A5）。
+    ///
+    /// 薄委托：语义全在描述层的 [`InputAreaState::begin_in_flight`]（与
+    /// `submit` 产出输入后的置位是同一件事），这里只补 `notify`，
+    /// 与 [`Self::finish_send`] 成对。
+    ///
+    /// 为什么公开：等待态分支此前只能靠「真机提交一条消息」进入，
+    /// 无窗口渲染断言摆不进去；宿主恢复未完成的会话也从这里进。
+    pub fn begin_in_flight(&mut self, cx: &mut Context<Self>) -> bool {
+        let changed = self.state.begin_in_flight();
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
     /// 运行时已受理：解除「等待确认」，发送按钮恢复可用。
     pub fn finish_send(&mut self, cx: &mut Context<Self>) {
         self.state.finish_send();
@@ -211,6 +254,27 @@ impl InputAreaGpui {
         cx: &mut Context<Self>,
     ) {
         self.state.set_candidates(paths);
+        cx.notify();
+    }
+
+    /// 设置草稿（打字等价入口）：描述层草稿、`@` 快选开关、编辑器内容一起更新。
+    ///
+    /// 为什么公开：草稿此前只能靠真实键盘输入（`Change` → `sync_draft`）进入，
+    /// 无窗口渲染断言发不了输入事件，而 `@` 快选分支要求草稿里真的有
+    /// `@查询词` 才画得出内容；宿主程序化恢复草稿也从这里走。
+    ///
+    /// 与打字同一条链：描述层 [`InputAreaState::set_draft`] 之后同步快选开关
+    /// （`sync_mention_state`），再把编辑器对齐（`write_back_draft`）——否则
+    /// 下一次 `Change` 会把编辑器里的旧内容写回、冲掉程序化草稿。
+    pub fn set_draft(
+        &mut self,
+        text: impl Into<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.state.set_draft(text);
+        self.sync_mention_state();
+        self.write_back_draft(window, cx);
         cx.notify();
     }
 
