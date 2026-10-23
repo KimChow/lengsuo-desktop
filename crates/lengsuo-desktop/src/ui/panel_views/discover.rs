@@ -177,37 +177,127 @@ impl DiscoverView {
 
 // ---------------- GPUI 层 ----------------
 
-/// 主区渲染。
+/// 主区渲染（当前无数据源 ⇒ 固定渲染「未下发」分支）。
 ///
 /// 返回**具体 `Div`**：`main_area` 的 match 各分支类型必须一致
 /// （不用 `impl IntoElement`，不透明类型无法与 `Div` 统一）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(&not_delivered(), theme)
+}
+
+/// 把纯数据层接到元素树（各分支同为 `Div`；颜色一律取主题 token）。
+fn render(view: &DiscoverView, theme: &Theme) -> Div {
+    let body = if view.is_not_delivered() {
+        centered_line(NOT_DELIVERED, true, theme)
+    } else if let Some((line, hint)) = view.empty_lines() {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .child(centered_line(line, false, theme))
+            .child(centered_line(hint, true, theme))
+    } else {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .gap_2()
+            .p_4()
+            .children(view.rows().iter().map(|e| entry_row(e, theme)))
+    };
+
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(header(theme))
+        .child(category_row(view.category(), theme))
+        .child(body)
+}
+
+/// 标题行：主标题 + 副标题。
+fn header(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_sm().font_bold().text_color(theme.foreground).child(TITLE))
+        .child(div().text_xs().text_color(theme.muted_foreground).child(SUBTITLE))
+}
+
+/// 分组行：三个分类 tab，当前分类用 accent 强调、其余走弱化前景。
+fn category_row(current: Category, theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .pb_2()
+        .flex()
+        .gap_2()
+        .children(Category::ALL.iter().map(|c| {
+            let selected = *c == current;
+            div()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .rounded_md()
+                .border_1()
+                .border_color(if selected { theme.accent } else { theme.border })
+                .text_color(if selected { theme.accent } else { theme.muted_foreground })
+                .child(c.label())
+        }))
+}
+
+/// 清单行：一张灵感卡片（标题 + 收藏标记 + 主操作）。
+fn entry_row(entry: &DiscoverEntry, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
         .child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
                 .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(entry.title.as_str())),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(entry.favorite_label()),
+                ),
         )
+        .child(div().text_xs().text_color(theme.accent).child(ADD_TO_TASK))
+}
+
+/// 居中单行文案（「未下发」/ 空态共用；`muted` 选择弱化色）。
+fn centered_line(line: &'static str, muted: bool, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_1()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(if muted { theme.muted_foreground } else { theme.foreground })
+        .child(line)
 }
 
 #[cfg(test)]
