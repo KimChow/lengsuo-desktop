@@ -54,8 +54,9 @@ mod tool_fold_tests;
 
 pub use block_ctx::BlockCtx;
 
+use crate::state::datasource::{DemoSource, LoadState, Provenance, ViewDataSource};
 use crate::state::file_intent::{FileIntent, FileIntentSource, FileIntentState};
-use crate::state::session_stream::SessionStreamState;
+use crate::state::session_stream::{apply_delta, SessionStreamState};
 use crate::ui::approval_card::ApprovalAction;
 use crate::ui::session_render::{self, Block};
 
@@ -213,22 +214,71 @@ pub struct SessionStreamGpui {
     state: SessionStreamState,
     /// 局部界面态（不写回 `state`）。
     ui: SessionUiState,
+    /// 数据来源标注（契约未就绪 ⇒ [`Provenance::Demo`]，界面须如实显示）。
+    source: Provenance,
+    /// C1 会话流读取的三态（fail-closed：`Failed` 必须显示错误，不退化成空列表）。
+    load: LoadState<()>,
 }
 
 impl SessionStreamGpui {
-    /// 用一份会话状态构造视图。
+    /// 用一份会话状态构造视图（宿主直塞状态）。
+    ///
+    /// 来源按 [`Provenance::Demo`] 如实标注（⛔ 不标 `Runtime`——真实来源必须走
+    /// [`Self::from_source`]，不许伪造）。
     #[must_use]
     pub fn new(state: SessionStreamState) -> Self {
         Self {
             state,
             ui: SessionUiState::default(),
+            source: Provenance::Demo,
+            load: LoadState::Ready(()),
         }
     }
 
-    /// 演示用视图：手工构造的会话流（含**五类真实工具调用**），**不接真实数据源**。
+    /// 从「视图 ← 运行时」数据源构造视图（消费侧契约出口；三态如实表达）：
+    ///
+    /// - `Ready` ⇒ 从空状态按 C1 增量批次（[`apply_delta`]）水合；
+    /// - `Loading` ⇒ 渲染加载态文案（不显示「暂无消息」冒充空会话）；
+    /// - `Failed` ⇒ **fail-closed**：渲染错误文案，并保持演示会话
+    ///   （契约未就绪 ⇒ 保持 demo + 如实标注，⛔ 不伪造运行时数据、不退化成空列表）。
+    #[must_use]
+    pub fn from_source(src: &impl ViewDataSource) -> Self {
+        let mut state = SessionStreamState::new();
+        let load = match src.conversation() {
+            LoadState::Ready(snapshot) => {
+                apply_delta(&mut state, &snapshot);
+                LoadState::Ready(())
+            }
+            LoadState::Loading => LoadState::Loading,
+            LoadState::Failed(reason) => {
+                state = crate::state::session_demo::demo_session();
+                LoadState::Failed(reason)
+            }
+        };
+        Self {
+            state,
+            ui: SessionUiState::default(),
+            source: src.provenance(),
+            load,
+        }
+    }
+
+    /// 演示用视图：[`Self::from_source`] 的薄封装（演示态数据源 ⇒ 保持演示会话 + 如实标注）。
     #[must_use]
     pub fn demo() -> Self {
-        Self::new(crate::state::session_demo::demo_session())
+        Self::from_source(&DemoSource)
+    }
+
+    /// 数据来源标注（契约未就绪 ⇒ `Demo`；界面须如实显示）。
+    #[must_use]
+    pub fn provenance(&self) -> Provenance {
+        self.source
+    }
+
+    /// C1 会话流读取的三态（`Failed` 的原因供界面显示）。
+    #[must_use]
+    pub fn load_state(&self) -> &LoadState<()> {
+        &self.load
     }
 
     /// 只读地取会话状态。
@@ -318,6 +368,39 @@ pub(super) fn with_click(
         .into_any_element()
 }
 
+/// 三态在会话流顶部的提示文案（`Ready` ⇒ 无提示）。
+///
+/// - `Loading` ⇒ 「加载中…」（界面文案逐字取自文案全表，不新编）；
+/// - `Failed` ⇒ 原样给出失败原因（来自数据源；fail-closed：⛔ 不吞错误、
+///   ⛔ 不退化成空列表）。
+#[must_use]
+pub fn load_banner_text(load: &LoadState<()>) -> Option<String> {
+    match load {
+        LoadState::Loading => Some("加载中…".to_string()),
+        LoadState::Failed(reason) => Some(reason.clone()),
+        LoadState::Ready(()) => None,
+    }
+}
+
+/// 三态提示条（样式；颜色一律取自主题 token，不硬编码）。
+fn source_banner(text: String, theme: &Theme, failed: bool) -> Div {
+    div()
+        .w_full()
+        .px_3()
+        .py_2()
+        .text_sm()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.muted)
+        .text_color(if failed {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(text)
+}
+
 /// 渲染一个会话块（静态版：只出样式，不带点击回调）。
 ///
 /// 交互版见 [`render_block_with`]。
@@ -362,13 +445,20 @@ impl Render for SessionStreamGpui {
             .bg(theme.background)
             .text_color(theme.foreground);
 
-        if blocks.is_empty() {
+        // 三态如实表达：Loading / Failed 在流顶部给出可见提示
+        //（fail-closed：不吞错误，也不用「暂无消息」冒充加载中 / 失败态）。
+        let banner_text = load_banner_text(&self.load);
+        if blocks.is_empty() && banner_text.is_none() {
             return root.items_center().justify_center().child(
                 div()
                     .text_sm()
                     .text_color(theme.muted_foreground)
                     .child("暂无消息"),
             );
+        }
+        if let Some(text) = banner_text {
+            let failed = self.load.failure().is_some();
+            root = root.child(source_banner(text, &theme, failed));
         }
 
         let mut tool_ordinal = 0usize;
