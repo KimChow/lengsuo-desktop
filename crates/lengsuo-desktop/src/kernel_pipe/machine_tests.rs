@@ -27,8 +27,9 @@
 
 use super::keys::{self, MachineInputs};
 use super::machine::{
-    fold_cpuid, parse_storage_descriptor, parse_storage_descriptor_size, select_first_serial,
-    vendor_from_cpuid,
+    fold_cpuid, parse_storage_descriptor, parse_storage_descriptor_size, second_pass_len,
+    select_first_serial, vendor_from_cpuid, DESCRIPTOR_BUFFER_LEN, MAX_DESCRIPTOR_LEN,
+    PHYSICAL_DRIVE_PATH,
 };
 
 /// 一台**假机器**的取值规则向量：四个字段 + 两个派生摘要。
@@ -355,4 +356,91 @@ fn descriptor_size_is_read_back() {
 #[test]
 fn descriptor_size_rejects_a_truncated_header() {
     assert_eq!(parse_storage_descriptor_size(&[0u8; 7]), None);
+}
+
+// ---------------------------------------------------------------------------
+// hddid：Windows 只开 0 号盘 + 两趟查询的判据（纯函数，Linux 上也跑得到）
+// ---------------------------------------------------------------------------
+
+/// ⭐ **唯一**打开的盘必须是 `\\.\PhysicalDrive0`（与内核侧同一块盘）。
+///
+/// ⛔ 扫 `PhysicalDrive0..N` 再排序会选到**另一块**盘 ⇒ 语义冲突 M-G。
+#[test]
+fn physical_drive_path_is_drive_zero_and_nothing_else() {
+    // 锁死转义：原始串字面量与这个普通串必须**逐字节**相同。
+    assert_eq!(PHYSICAL_DRIVE_PATH, "\\\\.\\PhysicalDrive0");
+    // 锁死宽字符编码（`CreateFileW` 收到的就是这串 UTF-16 + NUL）。
+    let wide: Vec<u16> = PHYSICAL_DRIVE_PATH.encode_utf16().collect();
+    assert_eq!(
+        wide,
+        vec![
+            0x005C, 0x005C, 0x002E, 0x005C, // `\\.\`
+            0x0050, 0x0068, 0x0079, 0x0073, 0x0069, 0x0063, 0x0061, 0x006C, // `Physical`
+            0x0044, 0x0072, 0x0069, 0x0076, 0x0065, // `Drive`
+            0x0030, // `0`
+        ]
+    );
+    assert!(!PHYSICAL_DRIVE_PATH.contains("PhysicalDrive1"));
+}
+
+/// ⭐ 首趟缓冲足够大 ⇒ **不**读第二趟。
+#[test]
+fn second_pass_is_skipped_when_the_first_buffer_is_big_enough() {
+    // 驱动没报大小 / 报 0（缓冲里没有可用描述符）。
+    assert_eq!(second_pass_len(DESCRIPTOR_BUFFER_LEN, None), None);
+    assert_eq!(second_pass_len(DESCRIPTOR_BUFFER_LEN, Some(0)), None);
+    // 本机实测的真实大小（396 < 1024）。
+    assert_eq!(second_pass_len(DESCRIPTOR_BUFFER_LEN, Some(396)), None);
+    // 恰好等于首趟缓冲 ⇒ 首趟里就是完整描述符。
+    assert_eq!(
+        second_pass_len(DESCRIPTOR_BUFFER_LEN, Some(DESCRIPTOR_BUFFER_LEN as u32)),
+        None
+    );
+}
+
+/// 报回的大小比首趟缓冲大 ⇒ 按**报告的大小**读第二趟。
+#[test]
+fn second_pass_reads_the_reported_size_when_it_is_bigger() {
+    assert_eq!(
+        second_pass_len(DESCRIPTOR_BUFFER_LEN, Some(4096)),
+        Some(4096)
+    );
+    assert_eq!(
+        second_pass_len(
+            DESCRIPTOR_BUFFER_LEN,
+            Some(DESCRIPTOR_BUFFER_LEN as u32 + 1)
+        ),
+        Some(DESCRIPTOR_BUFFER_LEN + 1)
+    );
+}
+
+/// ⛔ 驱动报回的 `Size` 是**未校验的外部输入**：荒谬的大小不许照抄分配（会 OOM abort）。
+#[test]
+fn second_pass_refuses_an_absurd_reported_size() {
+    // 上限本身合法。
+    assert_eq!(
+        second_pass_len(DESCRIPTOR_BUFFER_LEN, Some(MAX_DESCRIPTOR_LEN as u32)),
+        Some(MAX_DESCRIPTOR_LEN)
+    );
+    // 超上限一字节就放弃（⇒ 空串，fail-closed）。
+    assert_eq!(
+        second_pass_len(DESCRIPTOR_BUFFER_LEN, Some(MAX_DESCRIPTOR_LEN as u32 + 1)),
+        None
+    );
+    // 0xFFFF_FFFF ⇒ 照抄会申请 4 GiB。
+    assert_eq!(second_pass_len(DESCRIPTOR_BUFFER_LEN, Some(u32::MAX)), None);
+}
+
+/// 两趟的组合：序列号落在首趟缓冲**之外** ⇒ 首趟解出来是空串，第二趟才取到。
+#[test]
+fn a_serial_beyond_the_first_buffer_needs_the_second_pass() {
+    // 假驱动：报 2048 字节，序列号在偏移 1500（首趟 1024 字节里够不着）。
+    let reported = 2048u32;
+    let mut first = vec![0u8; DESCRIPTOR_BUFFER_LEN];
+    first[4..8].copy_from_slice(&reported.to_le_bytes());
+    assert_eq!(parse_storage_descriptor(&first), "");
+
+    let size = second_pass_len(first.len(), parse_storage_descriptor_size(&first));
+    let second = fake_descriptor(size.expect("第二趟必须被要求"), 1500, b"SERIAL-BEYOND-1024");
+    assert_eq!(parse_storage_descriptor(&second), "SERIAL-BEYOND-1024");
 }

@@ -22,7 +22,15 @@
 //!   - `fp_values_report`：指纹值的**回传**（聚合采样 ⇒ 送服务端；默认关闭）
 //! - `ui`：GPUI 视图（`feature = "ui"`）
 
-#![forbid(unsafe_code)]
+// ⛔ 是 `deny` **不是** `forbid`：`forbid` 不能被内层 `allow` 覆盖，`deny` 可以。
+// 2026-10-24 主理人裁定（任务书 m1-windows-hddid-serial §0）：Windows 上取**存储
+// 设备序列号**必须 `DeviceIoControl`（`unsafe`），而内核侧本来就是这么做的
+// （`WindowsStorageSerial()`）⇒ 两侧取到**同一个值**。
+// ⇒ 例外**只**开到 `kernel_pipe::machine` 里那一小段 Windows FFI（模块
+// `machine::win_storage`，带显式 `#[allow(unsafe_code)]` 与说明）。
+// 本 crate 其余**任何**地方写 `unsafe` 仍然是编译错误 —— 取不到值就该走空串 +
+// 握手 fail-closed，而不是在这里放行。
+#![deny(unsafe_code)]
 
 pub mod kernel_pipe;
 pub mod state;
