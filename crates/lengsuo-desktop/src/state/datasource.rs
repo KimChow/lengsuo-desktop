@@ -220,7 +220,11 @@ impl ViewDataSource for DemoSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoadState, Provenance};
+    use super::{
+        ApprovalDecision, ApprovalDecisionKind, ApprovalRequest, ConversationDeltaOp,
+        ConversationItem, ConversationMessageKind, ConversationSnapshot, DemoSource, LoadState,
+        Provenance, StopAck, TerminalChunk, ToolCardSnapshot, ToolResultKind, ViewDataSource,
+    };
 
     #[test]
     fn failure_carries_its_reason() {
@@ -240,5 +244,141 @@ mod tests {
     fn demo_is_not_runtime() {
         assert!(Provenance::Demo.is_demo());
         assert!(!Provenance::Runtime.is_demo());
+    }
+
+    #[test]
+    fn demo_source_is_labeled_demo() {
+        assert!(DemoSource.provenance().is_demo());
+    }
+
+    /// 契约未就绪 ⇒ 如实 `Failed`（fail-closed，⛔ 不许拿空数据冒充）。
+    fn expect_failed<T>(state: LoadState<T>) -> String {
+        match state {
+            LoadState::Failed(reason) => reason,
+            _ => panic!("契约未就绪必须 fail-closed 返回 Failed，不许拿空数据冒充"),
+        }
+    }
+
+    #[test]
+    fn demo_source_fail_closed_with_reason() {
+        let src = DemoSource;
+        for (cap, reason) in [
+            ("C1", expect_failed(src.conversation())),
+            ("C2", expect_failed(src.tool_cards())),
+            ("C3", expect_failed(src.approvals())),
+            ("C4", expect_failed(src.stop_ack())),
+            ("C5", expect_failed(src.terminal())),
+        ] {
+            assert!(!reason.is_empty(), "{cap} 失败原因不许为空");
+            assert!(reason.contains(cap), "{cap} 原因须标注能力编号：{reason}");
+            assert!(
+                reason.contains("未接通"),
+                "{cap} 原因须如实说明未接通：{reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn c1_conversation_snapshot_fields() {
+        let snap = ConversationSnapshot {
+            event: "delta".to_string(),
+            op: ConversationDeltaOp::Append,
+            batch: vec![ConversationItem {
+                kind: ConversationMessageKind::AssistantText,
+                payload: serde_json::json!({"text": "你好"}),
+            }],
+        };
+        assert_eq!(snap.event, "delta");
+        assert_eq!(snap.op, ConversationDeltaOp::Append);
+        assert_eq!(snap.batch[0].kind, ConversationMessageKind::AssistantText);
+        assert_eq!(snap.batch[0].payload["text"], "你好");
+        // §2 C1 六类消息枚举均可表达
+        let six = [
+            ConversationMessageKind::User,
+            ConversationMessageKind::AssistantText,
+            ConversationMessageKind::ToolUse,
+            ConversationMessageKind::ToolResult,
+            ConversationMessageKind::Files,
+            ConversationMessageKind::Approval,
+        ];
+        assert_eq!(six.len(), 6);
+        // patch 操作同样可表达
+        let patched = ConversationSnapshot {
+            op: ConversationDeltaOp::Patch,
+            ..snap
+        };
+        assert_eq!(patched.op, ConversationDeltaOp::Patch);
+    }
+
+    #[test]
+    fn c2_tool_card_snapshot_fields() {
+        let card = ToolCardSnapshot {
+            name: "read_file".to_string(),
+            args: serde_json::json!({"path": "/tmp/x"}),
+            kind: ToolResultKind::Diff,
+            payload: serde_json::json!({"diff": "+ 新增"}),
+        };
+        assert_eq!(card.name, "read_file");
+        assert_eq!(card.kind, ToolResultKind::Diff);
+        assert_eq!(card.args["path"], "/tmp/x");
+        assert_eq!(card.payload["diff"], "+ 新增");
+        // §2 C2 三种结果种类均可表达
+        assert_ne!(ToolResultKind::Text, ToolResultKind::Files);
+        assert_ne!(ToolResultKind::Files, ToolResultKind::Diff);
+    }
+
+    #[test]
+    fn c3_approval_types() {
+        let req = ApprovalRequest {
+            id: "apr-1".to_string(),
+            action: "run_command".to_string(),
+            detail: "rm -rf /tmp/demo".to_string(),
+        };
+        let decision = ApprovalDecision {
+            id: req.id.clone(),
+            decision: ApprovalDecisionKind::Always,
+        };
+        assert_eq!(req.action, "run_command");
+        assert_eq!(req.detail, "rm -rf /tmp/demo");
+        assert_eq!(decision.id, "apr-1");
+        assert_eq!(decision.decision, ApprovalDecisionKind::Always);
+        // §2 C3 三种决定均可表达
+        assert_ne!(ApprovalDecisionKind::Allow, ApprovalDecisionKind::Deny);
+        assert_ne!(ApprovalDecisionKind::Deny, ApprovalDecisionKind::Always);
+    }
+
+    #[test]
+    fn c4_stop_ack_fields() {
+        let ack = StopAck {
+            session_id: "sess-7".to_string(),
+            seq: 42,
+            stopped: true,
+        };
+        assert_eq!(ack.session_id, "sess-7");
+        assert_eq!(ack.seq, 42);
+        assert!(ack.stopped);
+    }
+
+    #[test]
+    fn c5_terminal_chunk_fields() {
+        let chunk = TerminalChunk {
+            id: "pty-1".to_string(),
+            cwd: "/home/u".to_string(),
+            shell: "bash".to_string(),
+            output: vec!["$ node -v".to_string(), "v20.0.0".to_string()],
+            interrupted: false,
+        };
+        assert_eq!(chunk.id, "pty-1");
+        assert_eq!(chunk.cwd, "/home/u");
+        assert_eq!(chunk.shell, "bash");
+        assert_eq!(chunk.output.len(), 2);
+        assert!(!chunk.interrupted);
+    }
+
+    #[test]
+    fn trait_object_usable() {
+        let src: &dyn ViewDataSource = &DemoSource;
+        assert!(src.provenance().is_demo());
+        assert!(src.conversation().failure().is_some());
     }
 }
