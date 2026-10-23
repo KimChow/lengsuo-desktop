@@ -425,7 +425,8 @@ mod tests {
     use super::{
         auto_update_description, install_count_text, main_area, SkillCard, SkillsMarketState,
         SkillsMarketView, ADD_BUTTON, AUTO_UPDATE_DESCRIPTION, AUTO_UPDATE_LABEL, EMPTY_TITLE,
-        NOT_DELIVERED, SEARCH_PLACEHOLDER, TAB_ENTERPRISE, TITLE,
+        NOT_DELIVERED, SEARCH_PLACEHOLDER, TAB_ENTERPRISE, TAB_INSTALLED, TAB_KNOT, TAB_PLUGINS,
+        TAB_RECOMMEND, TAB_SKILLHUB, TITLE, TOGGLE_TIP_DISABLE, TOGGLE_TIP_ENABLE,
     };
     use gpui_kit::component::Theme;
 
@@ -447,15 +448,29 @@ mod tests {
     #[test]
     fn build_groups_entries_and_counts() {
         let cards = vec![
-            SkillCard::new("a", "简介 a", 1, true),
-            SkillCard::new("b", "简介 b", 2, false),
-            SkillCard::new("c", "简介 c", 3, true),
+            SkillCard::new("skill-a", "desc-a", 128, true),
+            SkillCard::new("skill-b", "desc-b", 64, false),
+            SkillCard::new("skill-c", "desc-c", 32, true),
         ];
         let view = SkillsMarketView::build(cards);
         assert_eq!(view.title, TITLE);
         assert_eq!(view.entry_count(), 3);
-        assert!(matches!(view.state, SkillsMarketState::Entries(_)));
-        assert!(SkillsMarketView::tabs().len() >= 3);
+        assert_eq!(
+            SkillsMarketView::tabs(),
+            vec![
+                TAB_INSTALLED,
+                TAB_RECOMMEND,
+                TAB_SKILLHUB,
+                TAB_KNOT,
+                TAB_PLUGINS,
+                TAB_ENTERPRISE,
+            ]
+        );
+        let SkillsMarketState::Entries(rendered) = &view.state else {
+            unreachable!("build 已保证非空输入为 Entries 态");
+        };
+        assert_eq!(rendered[0].name, "skill-a");
+        assert_eq!(rendered[2].install_count_text(), "安装次数 32");
     }
 
     #[test]
@@ -478,6 +493,21 @@ mod tests {
         let rendered = auto_update_description("Code");
         assert!(rendered.contains("你在 Code 中编辑过"));
         assert!(!rendered.contains("{name}"));
+    }
+
+    #[test]
+    fn toggle_tip_follows_switch_state() {
+        let on = SkillCard::new("skill-a", "desc-a", 1, true);
+        let off = SkillCard::new("skill-b", "desc-b", 1, false);
+        assert_eq!(on.toggle_tip(), TOGGLE_TIP_ENABLE);
+        assert_eq!(off.toggle_tip(), TOGGLE_TIP_DISABLE);
+    }
+
+    #[test]
+    fn active_tab_label_falls_back_when_out_of_range() {
+        let mut view = SkillsMarketView::not_delivered();
+        view.active_tab = SkillsMarketView::TABS.len() + 3;
+        assert_eq!(view.active_tab_label(), TAB_INSTALLED);
     }
 
     #[test]
