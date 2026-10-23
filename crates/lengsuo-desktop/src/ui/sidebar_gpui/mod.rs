@@ -19,11 +19,19 @@
 //! 描述层，本文件只做「描述字段 → 样式与标记」的映射。
 //!
 //! 目录式子模块（Rust 2018 起 `ui/mod.rs` 里的 `pub mod sidebar_gpui;` 自动指向本目录）：
-//! - [`render`]：会话部分的渲染分支。
+//! - [`render`]：会话部分的渲染分支 + 共享小件（徽标 / 演示来源横幅）。
 //! - [`nav`]：频道入口 + 智能体管理入口的渲染（A15）。
+//! - [`channels`] / [`agents`]：两个入口点进去的视图体（A15 界面部分 / C9 只做视图）。
 
 use crate::ui::sidebar::{SessionRow, SidebarState};
 
+// 渲染层按选中入口分流 body 时需要 `NavKind`（只在 feature = "ui" 下使用）。
+#[cfg(feature = "ui")]
+use crate::ui::sidebar::nav::NavKind;
+
+// 频道 / 智能体视图体：纯函数层不门控（随 `cargo test` 跑），渲染层在文件内门控。
+pub mod agents;
+pub mod channels;
 #[cfg(feature = "ui")]
 mod collapse;
 #[cfg(feature = "ui")]
@@ -50,6 +58,9 @@ pub const PINNED_MARK: &str = "置顶";
 pub const ARCHIVED_MARK: &str = "归档";
 /// 未读标记文案。
 pub const UNREAD_MARK: &str = "未读";
+
+/// 演示来源横幅文案：频道 / 智能体视图体顶部的固定标注（C9 未就绪 ⇒ 如实标注）。
+pub const DEMO_SOURCE_BANNER: &str = "演示数据（运行时契约未就绪）";
 
 /// 行标记的种类（描述层布尔字段 → 界面标记）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,21 +289,44 @@ impl Render for SidebarViewGpui {
         // 顶部两个导航入口：频道 + 智能体管理（A15）。
         let nav = nav::render_nav(&view.nav, &entity, theme);
 
-        let body = if let Some(text) = view.empty_text {
-            render::render_empty(text, theme).into_any_element()
-        } else {
-            div()
-                .id("sidebar-body")
-                .flex()
-                .flex_col()
-                .flex_1()
-                .overflow_y_scroll()
-                .children(
-                    view.sections
-                        .iter()
-                        .map(|section| render::render_section(section, &entity, theme)),
-                )
-                .into_any_element()
+        // A15：选中频道 / 智能体入口时，body 换成对应视图体（演示数据 + 如实标注）；
+        // 其他入口 / 未选中时保持会话列表（本卡只补这两个视图体）。
+        let selected_nav = view
+            .nav
+            .iter()
+            .find(|entry| entry.selected)
+            .map(|entry| (entry.kind, entry.title));
+        let body = match selected_nav {
+            Some((NavKind::Channels, title)) => channels::render(
+                title,
+                &channels::demo_messages(),
+                channels::provenance(),
+                theme,
+            ),
+            Some((NavKind::Agents, title)) => agents::render(
+                title,
+                &agents::demo_agents(),
+                agents::provenance(),
+                theme,
+            ),
+            _ => {
+                if let Some(text) = view.empty_text {
+                    render::render_empty(text, theme).into_any_element()
+                } else {
+                    div()
+                        .id("sidebar-body")
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .overflow_y_scroll()
+                        .children(
+                            view.sections
+                                .iter()
+                                .map(|section| render::render_section(section, &entity, theme)),
+                        )
+                        .into_any_element()
+                }
+            }
         };
 
         div()

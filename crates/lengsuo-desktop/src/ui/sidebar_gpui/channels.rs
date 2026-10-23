@@ -65,3 +65,83 @@ pub fn message_row_text(message: &ChannelMessage) -> String {
 pub fn provenance() -> Provenance {
     Provenance::Demo
 }
+
+// === 接线层：GPUI 元素树（feature = "ui"） ===
+
+#[cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
+#[cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+#[cfg(feature = "ui")]
+use gpui_kit::*;
+
+#[cfg(feature = "ui")]
+use super::render::render_demo_banner;
+
+/// 频道视图体：演示来源横幅 + 标题 + 消息列表（`div()` 自搭，零新组件）。
+///
+/// 标题逐字取自描述层的入口标题；消息行 =「发送者 + 时间 / 摘要」两行。
+/// ⛔ 只读列表：没有发送入口、没有点击行为（C9 收发语义未就绪）。
+#[cfg(feature = "ui")]
+pub(super) fn render(
+    title: &str,
+    messages: &[ChannelMessage],
+    provenance: Provenance,
+    theme: &Theme,
+) -> AnyElement {
+    let mut body = div()
+        .id("sidebar-channels-body")
+        .flex()
+        .flex_col()
+        .flex_1()
+        .overflow_y_scroll();
+    // 如实标注：演示数据才展示横幅（当前恒为 Demo；C9 就绪前没有别的来源）。
+    if provenance == Provenance::Demo {
+        body = body.child(render_demo_banner(theme));
+    }
+    body = body.child(
+        div()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .text_xs()
+            .font_bold()
+            .text_color(theme.muted_foreground)
+            .child(title.to_owned()),
+    );
+    body.children(messages.iter().map(|message| {
+        div()
+            .flex()
+            .flex_col()
+            .px_2()
+            .py_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_bold()
+                            .text_color(theme.sidebar_foreground)
+                            .child(message.sender),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(message.time),
+                    ),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .truncate()
+                    .child(message.summary),
+            )
+    }))
+    .into_any_element()
+}

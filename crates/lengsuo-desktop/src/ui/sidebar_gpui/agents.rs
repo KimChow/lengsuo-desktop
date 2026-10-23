@@ -60,3 +60,91 @@ pub fn agent_status_label(online: bool) -> &'static str {
 pub fn provenance() -> Provenance {
     Provenance::Demo
 }
+
+// === 接线层：GPUI 元素树（feature = "ui"） ===
+
+#[cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
+#[cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+#[cfg(feature = "ui")]
+use gpui_kit::*;
+
+#[cfg(feature = "ui")]
+use super::render::render_demo_banner;
+
+/// 智能体视图体：演示来源横幅 + 标题 + 智能体列表（`div()` 自搭，零新组件）。
+///
+/// 行 =「名称 + 角色 / 在线状态胶囊」；状态文案只来自 [`agent_status_label`]。
+/// ⛔ 只读列表：没有创建 / 删除入口（C9 CRUD 语义未就绪）。
+#[cfg(feature = "ui")]
+pub(super) fn render(
+    title: &str,
+    agents: &[AgentEntry],
+    provenance: Provenance,
+    theme: &Theme,
+) -> AnyElement {
+    let mut body = div()
+        .id("sidebar-agents-body")
+        .flex()
+        .flex_col()
+        .flex_1()
+        .overflow_y_scroll();
+    // 如实标注：演示数据才展示横幅（当前恒为 Demo；C9 就绪前没有别的来源）。
+    if provenance == Provenance::Demo {
+        body = body.child(render_demo_banner(theme));
+    }
+    body = body.child(
+        div()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .text_xs()
+            .font_bold()
+            .text_color(theme.muted_foreground)
+            .child(title.to_owned()),
+    );
+    body.children(agents.iter().map(|agent| {
+        // 在线是行动信号 ⇒ 强调色描边；空闲弱一档（同会话区「置顶 / 归档」胶囊）。
+        let status_color = if agent.online {
+            theme.accent
+        } else {
+            theme.muted_foreground
+        };
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.sidebar_foreground)
+                            .child(agent.name),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(agent.role),
+                    ),
+            )
+            .child(
+                div()
+                    .rounded_full()
+                    .px_1()
+                    .text_xs()
+                    .text_color(status_color)
+                    .border_1()
+                    .border_color(status_color)
+                    .child(agent_status_label(agent.online)),
+            )
+    }))
+    .into_any_element()
+}
