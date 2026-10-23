@@ -363,3 +363,129 @@ impl OrgViewState {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::datasource::{LoadState, Provenance};
+    use crate::state::org::ListStatus;
+    use crate::state::org_perm::{Capability, CapabilityFlags};
+    use crate::ui::org_view::ActionState;
+    use serde_json::json;
+
+    use super::{OrgSnapshot, OrgTreeItem, OrgViewState};
+
+    const FAIL_REASON: &str = "C7 组织域数据未接通（演示态）";
+
+    /// ① 注入快照 ⇒ 部门树节点数 == 快照（嵌套子树不丢节点）。
+    #[test]
+    fn ready_snapshot_fills_lists_with_same_counts() {
+        let snapshot = OrgSnapshot {
+            org_tree: vec![
+                OrgTreeItem {
+                    id: "d1".into(),
+                    parent_id: None,
+                    name: Some("研发一部".into()),
+                },
+                OrgTreeItem {
+                    id: "d2".into(),
+                    parent_id: Some("d1".into()),
+                    name: Some("华南组".into()),
+                },
+                OrgTreeItem {
+                    id: "d3".into(),
+                    parent_id: Some("d2".into()),
+                    name: None,
+                },
+            ],
+            ..OrgSnapshot::demo()
+        };
+        let mut state = OrgViewState::from_snapshot(LoadState::Ready(snapshot));
+        assert_eq!(
+            state.department_rows().len(),
+            3,
+            "部门树节点数必须等于快照节点数"
+        );
+        assert_eq!(state.member_rows().len(), 2);
+        assert_eq!(state.role_rows().len(), 2);
+        assert_eq!(state.departments_mut().status(), ListStatus::Ready);
+    }
+
+    /// ③ Failed ⇒ 三张列表带原因失败（错误文案可显示），不 panic、不伪装成空列表。
+    #[test]
+    fn failed_snapshot_keeps_error_not_empty_list() {
+        let mut state = OrgViewState::from_snapshot(LoadState::Failed(FAIL_REASON.to_owned()));
+        assert_eq!(state.departments_mut().last_error(), Some(FAIL_REASON));
+        assert_eq!(state.members_mut().last_error(), Some(FAIL_REASON));
+        assert_eq!(state.roles_mut().last_error(), Some(FAIL_REASON));
+        assert_eq!(state.departments_mut().status(), ListStatus::Failed);
+        assert!(
+            !state.departments_mut().should_show_empty_state(),
+            "失败态不得退化成空列表"
+        );
+        assert!(state.department_rows().is_empty(), "失败态不得伪造数据");
+    }
+
+    /// 三态之 Loading：保持「尚未拉取」，不显示空态。
+    #[test]
+    fn loading_snapshot_stays_loading() {
+        let mut state = OrgViewState::from_snapshot(LoadState::Loading);
+        assert_eq!(state.departments_mut().status(), ListStatus::Loading);
+        assert_eq!(state.members_mut().status(), ListStatus::Loading);
+        assert_eq!(state.roles_mut().status(), ListStatus::Loading);
+    }
+
+    /// ② 能力位可见性按快照渲染：快照下发的能力 ⇒ Enabled；未下发 ⇒ Disabled。
+    #[test]
+    fn capability_visibility_follows_snapshot() {
+        let allowed = OrgSnapshot {
+            capabilities: CapabilityFlags::from_payload(&json!({"can_invite_member": true})),
+            ..OrgSnapshot::demo()
+        };
+        let state = OrgViewState::from_snapshot(LoadState::Ready(allowed));
+        assert!(matches!(
+            state.action(Capability::InviteMember),
+            ActionState::Enabled
+        ));
+        assert!(
+            matches!(
+                state.action(Capability::ManageDepartment),
+                ActionState::Disabled { .. }
+            ),
+            "快照未下发的能力必须禁用"
+        );
+
+        let empty = OrgViewState::from_snapshot(LoadState::Ready(OrgSnapshot::demo()));
+        assert!(matches!(
+            empty.action(Capability::InviteMember),
+            ActionState::Disabled { .. }
+        ));
+        // 角色行按钮同样由快照能力位支配；ai_assistant 行只读。
+        assert!(empty
+            .role_rows()
+            .iter()
+            .all(|r| matches!(r.edit, ActionState::Disabled { .. })));
+        assert!(empty.role_rows()[1].read_only);
+    }
+
+    /// demo 出口是 from_snapshot 的薄封装：两者产出完全一致。
+    #[test]
+    fn demo_outlet_is_a_thin_wrapper_of_from_snapshot() {
+        assert_eq!(
+            OrgViewState::demo(),
+            OrgViewState::from_snapshot(LoadState::Ready(OrgSnapshot::demo()))
+        );
+    }
+
+    /// 来源标注：契约未就绪 ⇒ 三种注入结果一律 Demo，不许标 Runtime。
+    #[test]
+    fn provenance_stays_demo_until_contract_lands() {
+        let states = [
+            OrgViewState::from_snapshot(LoadState::Loading),
+            OrgViewState::from_snapshot(LoadState::Failed(FAIL_REASON.to_owned())),
+            OrgViewState::demo(),
+        ];
+        for state in &states {
+            assert_eq!(state.provenance(), Provenance::Demo);
+        }
+    }
+}

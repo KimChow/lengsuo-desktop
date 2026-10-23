@@ -256,4 +256,34 @@ mod tests {
         assert_eq!(calls.borrow().len(), 1);
         assert_eq!(calls.borrow()[0], OrgAction::InviteMember);
     }
+
+    #[test]
+    fn demo_outlet_routes_through_snapshot_injection() {
+        use super::{OrgActionDispatcher, OrgViewGpui};
+        use std::rc::Rc;
+
+        let dispatch: OrgActionDispatcher = Rc::new(|_| {});
+        let view = OrgViewGpui::demo(dispatch);
+        let state = view.state();
+        assert_eq!(
+            state.department_rows().len(),
+            2,
+            "演示出口必须带内容（A18 主界面可达链路不空）"
+        );
+        assert_eq!(state.member_rows().len(), 2);
+        assert_eq!(state.role_rows().len(), 2);
+        assert!(state.provenance().is_demo(), "演示出口必须如实标 Demo");
+        assert_eq!(view.section(), OrgSection::Departments);
+    }
+
+    #[test]
+    fn injected_snapshot_state_reaches_view_unchanged() {
+        use super::OrgViewGpui;
+        use crate::ui::org_view::OrgViewState;
+
+        // 上层（如运行时接线卡）经注入入口把快照状态交给视图：只换来源，不改结构。
+        let view = OrgViewGpui::new(OrgViewState::demo());
+        assert!(!view.state().department_rows().is_empty());
+        assert!(view.state().provenance().is_demo());
+    }
 }
