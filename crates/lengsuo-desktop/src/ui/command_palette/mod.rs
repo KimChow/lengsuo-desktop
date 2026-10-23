@@ -175,7 +175,7 @@ mod tests;
 mod sources_tests {
     use crate::state::palette_state::search_state::{SearchItem, SearchSource};
     use crate::state::palette_state::PaletteState;
-    use crate::ui::command_palette::render;
+    use crate::ui::command_palette::{handle_key, render, PaletteAction, PaletteKey};
 
     /// 造一条最小条目（hint 缺省为空）。
     fn item(source: SearchSource, id: &str, title: &str) -> SearchItem {
@@ -215,5 +215,64 @@ mod sources_tests {
             .expect("命令组必须在场");
         let ids: Vec<&str> = cmd.items.iter().map(|it| it.id.as_str()).collect();
         assert_eq!(ids, vec!["cmd-open", "cmd-save"], "组内顺序按 id 保持稳定");
+    }
+
+    /// ② 同标题不同 id：选中与派发**按 id** 区分——选第 2 个不选中第 1 个，
+    /// 跨组同名条目也按 id 步进（不按标题、不按下标）。
+    #[test]
+    fn same_title_different_ids_select_and_dispatch_by_id() {
+        let items = vec![
+            item(SearchSource::Command, "dup-cmd-1", "重名条目"),
+            item(SearchSource::Command, "dup-cmd-2", "重名条目"),
+            item(SearchSource::Session, "dup-sess", "重名条目"),
+        ];
+        let mut state = PaletteState::with_items(items);
+        state.open();
+        // 打开即选中首项；若实现延后选中，先步进到位（有界，防死循环）。
+        for _ in 0..4 {
+            if state.selected_id().is_some() {
+                break;
+            }
+            state.select_next();
+        }
+        assert_eq!(state.selected_id(), Some("dup-cmd-1"), "初始选中应为第一项");
+
+        state.select_next();
+        assert_eq!(
+            state.selected_id(),
+            Some("dup-cmd-2"),
+            "同组同标题的第 2 项必须能单独选中"
+        );
+        assert_ne!(
+            state.selected_id(),
+            Some("dup-cmd-1"),
+            "选第 2 个不得选中第 1 个"
+        );
+
+        // 渲染描述同样按 id：两个同标题条目都在场，选中 id 精确指向第二个。
+        let view = render(&state).expect("打开时必须渲染浮层");
+        let cmd = view
+            .groups
+            .iter()
+            .find(|g| g.source == SearchSource::Command)
+            .expect("命令组必须在场");
+        assert_eq!(cmd.items.len(), 2);
+        assert_eq!(
+            cmd.items[0].title, cmd.items[1].title,
+            "用例前提：两条目标题相同"
+        );
+        assert_eq!(view.selected_id.as_deref(), Some("dup-cmd-2"));
+
+        // 跨组同名：向下按 id 进入会话组，退回第 2 项后回车派发。
+        state.select_next();
+        assert_eq!(state.selected_id(), Some("dup-sess"), "跨组步进也按 id 定位");
+        state.select_previous();
+        assert_eq!(state.selected_id(), Some("dup-cmd-2"));
+        let action = handle_key(&mut state, PaletteKey::Enter);
+        assert_eq!(
+            action,
+            PaletteAction::Execute("dup-cmd-2".to_owned()),
+            "派发必须按 id 返回第 2 项，而非标题或第 1 项"
+        );
     }
 }
