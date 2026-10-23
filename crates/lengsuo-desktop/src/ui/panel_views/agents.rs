@@ -167,7 +167,10 @@ impl AgentsManagerView {
             .map(|status| {
                 (
                     status,
-                    entries.iter().filter(|e| e.status == status).collect::<Vec<_>>(),
+                    entries
+                        .iter()
+                        .filter(|e| e.status == status)
+                        .collect::<Vec<_>>(),
                 )
             })
             .filter(|(_, group)| !group.is_empty())
@@ -308,9 +311,7 @@ fn entry_row(theme: &Theme, status: AgentStatus, index: usize, entry: &AgentEntr
         name = name.font_bold();
     }
     div()
-        .debug_selector(move || {
-            format!("agents-manager-row-{}-{index}", status.debug_key())
-        })
+        .debug_selector(move || format!("agents-manager-row-{}-{index}", status.debug_key()))
         .min_h(px(48.0)) // 触摸目标 ≥48dp
         .px_4()
         .py_2()
@@ -347,13 +348,13 @@ fn entry_row(theme: &Theme, status: AgentStatus, index: usize, entry: &AgentEntr
                         .flex()
                         .items_center()
                         .gap_1()
-                        .child(div().w_2().h_2().rounded_full().bg(if status
-                            == AgentStatus::Available
-                        {
-                            theme.accent
-                        } else {
-                            theme.muted_foreground
-                        }))
+                        .child(div().w_2().h_2().rounded_full().bg(
+                            if status == AgentStatus::Available {
+                                theme.accent
+                            } else {
+                                theme.muted_foreground
+                            },
+                        ))
                         .child(
                             div()
                                 .text_xs()
@@ -384,8 +385,8 @@ fn sample_entries() -> Vec<AgentEntry> {
 mod tests {
     use super::{
         sample_entries, AgentEntry, AgentStatus, AgentsManagerView as View, AgentsState,
-        ACTION_PAUSE, ACTION_RESUME, EMPTY, NOT_DELIVERED, STATUS_AVAILABLE, STATUS_IDLE,
-        SUBTITLE, TITLE,
+        ACTION_PAUSE, ACTION_RESUME, EMPTY, NOT_DELIVERED, STATUS_AVAILABLE, STATUS_IDLE, SUBTITLE,
+        TITLE,
     };
 
     #[test]
@@ -409,9 +410,12 @@ mod tests {
 
     #[test]
     fn groups_skip_empty_and_keep_selected_flag() {
-        let view = View::build(vec![
-            AgentEntry::new("主编", "内容结构与质量把控", AgentStatus::Idle).selected(),
-        ]);
+        let view = View::build(vec![AgentEntry::new(
+            "主编",
+            "内容结构与质量把控",
+            AgentStatus::Idle,
+        )
+        .selected()]);
         let groups = view.groups();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0, AgentStatus::Idle);
@@ -449,5 +453,97 @@ mod tests {
         assert_eq!(AgentStatus::Idle.label(), STATUS_IDLE);
         assert_eq!(AgentStatus::Available.action_label(), ACTION_PAUSE);
         assert_eq!(AgentStatus::Idle.action_label(), ACTION_RESUME);
+    }
+}
+
+/// 无窗口渲染断言：真跑一遍 layout + prepaint + paint（同 `render_assert_tests` 范式）。
+///
+/// ⛔ 显式导入、不 `use super::*`：避免 GPUI 的 `test` 属性宏遮蔽标准库 `#[test]`。
+#[cfg(all(test, feature = "ui"))]
+mod render_tests {
+    use super::{main_area, render, sample_entries, AgentsManagerView as View};
+    use gpui_kit::component::Theme;
+    use gpui_kit::{point, px, size, IntoElement as _, TestAppContext};
+
+    /// 无窗口画布大小（够放下三行清单）。
+    const CANVAS_W: f32 = 800.0;
+    const CANVAS_H: f32 = 600.0;
+
+    /// 画一帧并断言：`located` 里的选择器都进渲染帧且布局非零；`absent` 里的不出现。
+    fn assert_located(
+        view: &View,
+        located: &'static [&'static str],
+        absent: &'static [&'static str],
+    ) {
+        let mut ctx = TestAppContext::single();
+        // 与接线层一致：预置全局 Theme，避免绘制路径读全局主题时 panic。
+        ctx.update(|cx| cx.set_global(Theme::default()));
+
+        let element = render(&Theme::default(), view).into_any_element();
+        let visual = ctx.add_empty_window();
+        let (_layout, _prepaint) = visual.draw(
+            point(px(0.0), px(0.0)),
+            size(px(CANVAS_W), px(CANVAS_H)),
+            move |_window, _cx| element,
+        );
+
+        for sel in located {
+            let bounds = visual
+                .debug_bounds(sel)
+                .unwrap_or_else(|| panic!("选择器 {sel} 没进入渲染帧"));
+            assert!(
+                bounds.size.width > px(0.0) && bounds.size.height > px(0.0),
+                "选择器 {sel} 布局为零，元素没真正参与排版"
+            );
+        }
+        for sel in absent {
+            assert!(
+                visual.debug_bounds(sel).is_none(),
+                "选择器 {sel} 不应出现在该态的渲染帧里"
+            );
+        }
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        let _ = main_area(&Theme::default());
+    }
+
+    /// 验收②：元素树能定位到 标题节点 + ≥3 个清单/分组节点（2 组 + 3 行 = 5 个）。
+    #[test]
+    fn entries_tree_locates_title_groups_and_rows() {
+        let view = View::build(sample_entries());
+        assert_located(
+            &view,
+            &[
+                "agents-manager-title",
+                "agents-manager-group-0",
+                "agents-manager-group-1",
+                "agents-manager-row-available-0",
+                "agents-manager-row-available-1",
+                "agents-manager-row-idle-0",
+            ],
+            &[],
+        );
+    }
+
+    #[test]
+    fn empty_state_tree_has_title_but_no_list_nodes() {
+        let view = View::build(Vec::new());
+        assert_located(
+            &view,
+            &["agents-manager-title"],
+            &["agents-manager-group-0", "agents-manager-row-available-0"],
+        );
+    }
+
+    #[test]
+    fn not_delivered_tree_is_fail_closed_no_list_nodes() {
+        let view = View::not_delivered();
+        assert_located(
+            &view,
+            &["agents-manager-title"],
+            &["agents-manager-group-0", "agents-manager-row-idle-0"],
+        );
     }
 }
