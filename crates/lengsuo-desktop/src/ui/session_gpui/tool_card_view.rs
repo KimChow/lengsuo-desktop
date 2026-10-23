@@ -90,7 +90,7 @@ pub(super) fn render_tool_card(
             .child(view.args.clone())
     };
 
-    let container = div()
+    let mut container = div()
         .flex()
         .flex_col()
         .w_full()
@@ -98,8 +98,12 @@ pub(super) fn render_tool_card(
         .border_1()
         .border_color(theme.border)
         .bg(theme.background)
-        .child(header)
-        .child(body);
+        .child(header);
+    // 空参数不渲染空摘要行（无参调用时卡片只剩标题行）。
+    let body_text = if folded { &view.summary } else { &view.args };
+    if !body_text.is_empty() {
+        container = container.child(body);
+    }
 
     // 折叠态只在**有消息 id** 时可点（静态预览没有状态可记）。
     let Some(detail) = detail else {
@@ -110,4 +114,78 @@ pub(super) fn render_tool_card(
     with_click(container, element_id, ctx.host, move |view| {
         view.toggle_tool_fold(&id);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::tool_fold::{describe, visible_text, ToolCallDetail};
+    use super::super::SessionUiState;
+    use crate::ui::tool_card::ToolCard;
+
+    fn detail_of(tool: &str, args: &str) -> ToolCallDetail {
+        ToolCallDetail {
+            id: format!("card-{tool}"),
+            tool: Some(tool.to_owned()),
+            args: args.to_owned(),
+        }
+    }
+
+    #[test]
+    fn five_categories_render_icon_human_title_and_summary() {
+        // A2/A16/A10：五类各 1 条——图标非空 + 人话标题非空 + 摘要非空 + 不露英文名。
+        // 摘要语义：读=路径、命令=命令行、搜索=关键词（短参数原样进标题与摘要行）。
+        let cases = [
+            ("Read", "src/main.rs", "读取"),
+            ("Write", "docs/plan.md", "创建"),
+            ("Edit", "src/lib.rs", "修改"),
+            ("Bash", "cargo test", "执行命令"),
+            ("Grep", "fn main", "搜索"),
+        ];
+        for (tool, args, label) in cases {
+            let card = ToolCard::from_tool(Some(tool), args);
+            let view = describe(&card, Some(&detail_of(tool, args)), true);
+            assert!(!view.icon.is_empty(), "{tool} 图标非空");
+            assert_eq!(view.title, format!("{label} {args}"), "{tool} 人话标题");
+            assert_eq!(view.summary, args, "{tool} 摘要应为参数原文");
+            assert!(
+                !view.title.contains(tool),
+                "标题不得露出工具英文名：{}",
+                view.title
+            );
+            assert!(view.folded, "{tool} 默认折叠");
+        }
+    }
+
+    #[test]
+    fn unknown_tool_full_render_path_hides_english_name() {
+        let card = ToolCard::from_tool(Some("SecretInternalTool"), "payload");
+        let view = describe(
+            &card,
+            Some(&detail_of("SecretInternalTool", "payload")),
+            true,
+        );
+        assert!(
+            !visible_text(&view).contains("SecretInternalTool"),
+            "整卡可见文字不得露出工具英文名：{}",
+            visible_text(&view)
+        );
+    }
+
+    #[test]
+    fn static_preview_without_detail_uses_card_title() {
+        let card = ToolCard::from_tool(Some("Read"), "src/main.rs");
+        let view = describe(&card, None, card.folded);
+        assert!(!view.icon.is_empty());
+        assert_eq!(view.title, "读取 src/main.rs");
+        assert_eq!(view.summary, "src/main.rs");
+    }
+
+    #[test]
+    fn fold_state_is_remembered_per_message_id() {
+        let mut ui = SessionUiState::default();
+        assert!(ui.is_tool_folded("m-1"), "默认折叠");
+        ui.toggle_tool_fold("m-1");
+        assert!(!ui.is_tool_folded("m-1"), "点击展开");
+        assert!(ui.is_tool_folded("m-2"), "别的卡片不受影响");
+    }
 }
