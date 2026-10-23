@@ -104,7 +104,10 @@ fn catalog(id: ChannelId) -> (&'static str, &'static str) {
             "微信客服号",
             "与微信助理功能一致，微信扫码即可绑定，远程遥控 WorkBuddy 干活。",
         ),
-        ChannelId::WechatMp => ("微信小程序集成", "接入微信小程序，用户可通过小程序与 AI 对话。"),
+        ChannelId::WechatMp => (
+            "微信小程序集成",
+            "接入微信小程序，用户可通过小程序与 AI 对话。",
+        ),
         ChannelId::Dingtalk => (
             "钉钉机器人集成",
             "接入钉钉机器人，成员可在群聊中直接与 WorkBuddy 对话，高效处理指令。",
@@ -118,5 +121,43 @@ fn catalog(id: ChannelId) -> (&'static str, &'static str) {
         ChannelId::Telegram => ("Telegram 集成", "注册 Telegram Bot 以接收和回复消息。"),
         ChannelId::Qq => ("QQ 机器人", "QQ 聊天窗口直接下达指令，随时查看执行进度。"),
         ChannelId::Yuanbao => ("元宝机器人集成", "连接元宝机器人以接收和回复消息。"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// fail-closed：未下发（含下发为空）⇒ NOT_DELIVERED 语义，⛔ 不退化成空列表。
+    #[test]
+    fn empty_input_is_not_delivered() {
+        assert!(matches!(body(&[]), Body::NotDelivered));
+    }
+
+    /// 有内容 ⇒ 行数与首行文案（文案逐字取自 `settings.claw` 命名空间）。
+    #[test]
+    fn rows_carry_catalog_copy() {
+        let Body::Rows(rows) = body(&[
+            (ChannelId::WeCom, ChannelState::Connected),
+            (ChannelId::Yuanbao, ChannelState::Failed),
+        ]) else {
+            panic!("有内容时必须是 Rows");
+        };
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label, "企业微信集成");
+        assert_eq!(
+            rows[0].desc,
+            "支持企业微信一键连通，快速接收和处理来自企业微信的消息。"
+        );
+        assert_eq!(rows[0].value, "已连接");
+        assert_eq!(rows[1].label, "元宝机器人集成");
+        assert_eq!(rows[1].value, "失败");
+    }
+
+    /// 状态穷举映射到全表文案。
+    #[test]
+    fn state_copy_matches_table() {
+        assert_eq!(ChannelState::Registered.as_copy(), "已注册");
+        assert_eq!(ChannelState::ViewOnly.as_copy(), "仅查看");
     }
 }

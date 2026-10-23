@@ -89,3 +89,30 @@ fn row_element(theme: &Theme, row: panel_view::Row) -> Div {
                 .child(row.desc),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 占位/内容两条渲染分支构树不 panic（未下发分支即生产当前分支）。
+    // 全局导入 `gpui_kit::*` 会把 gpui 的 `#[test]` 宏引入作用域盖住内建属性，
+    // 这里用全路径点名内建 `test`（与 gpui 自身宏展开同款写法）。
+    #[::core::prelude::v1::test]
+    fn both_branches_build_without_panic() {
+        let theme = Theme::default();
+        let _ = panel(&theme, panel_view::body(&[]));
+        let _ = panel(
+            &theme,
+            panel_view::body(&[
+                (
+                    panel_view::ChannelId::WeCom,
+                    panel_view::ChannelState::Connected,
+                ),
+                (
+                    panel_view::ChannelId::Dingtalk,
+                    panel_view::ChannelState::ViewOnly,
+                ),
+            ]),
+        );
+    }
+}
