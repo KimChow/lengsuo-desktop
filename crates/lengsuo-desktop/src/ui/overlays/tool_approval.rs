@@ -374,3 +374,147 @@ fn action_button(theme: &Theme, action: ApprovalAction) -> Div {
     }
     .child(action.label())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        copy_text, main_area, render, ApprovalAction, Capability, ToolApproval, ToolApprovalState,
+        COPY_TABLE, NOT_DELIVERED, PANEL_TITLE, TEXT_ALLOW, TEXT_ALWAYS_ALLOW,
+        TEXT_ALWAYS_ALLOW_THIS_LAUNCH, TEXT_CONFIRM, TEXT_CONFIRM_TITLE_COMPUTER_USE,
+        TEXT_CONFIRM_TITLE_IMAGE_GEN, TEXT_CONFIRM_TITLE_IMAGE_PROCESSING,
+        TEXT_CONFIRM_TITLE_VIDEO_GEN, TEXT_CREDIT_HINT_COMPUTER_USE, TEXT_CREDIT_HINT_IMAGE_GEN,
+        TEXT_CREDIT_HINT_IMAGE_PROCESSING, TEXT_CREDIT_HINT_VIDEO_GEN, TEXT_EMPTY, TEXT_LOADING,
+    };
+    use gpui_kit::component::Theme;
+
+    #[test]
+    fn copy_table_is_verbatim_twelve_entries() {
+        let expected: [(&str, &str); 12] = [
+            ("tool.approval.allow", "允许"),
+            ("tool.approval.alwaysAllow", "本次会话始终允许"),
+            ("tool.approval.alwaysAllowThisLaunch", "本次启动内始终允许"),
+            ("tool.approval.confirm", "确认"),
+            ("tool.approval.confirmTitle.computerUse", "确认开始使用电脑操控能力？"),
+            ("tool.approval.confirmTitle.imageGen", "确认开始生成图片？"),
+            ("tool.approval.confirmTitle.imageProcessing", "确认开始处理图片？"),
+            ("tool.approval.confirmTitle.videoGen", "确认开始生成视频？"),
+            ("tool.approval.creditHint.computerUse", "使用该能力将消耗额外积分，请谨慎操作"),
+            (
+                "tool.approval.creditHint.imageGen",
+                "当前模型生成图片将消耗额外积分，每张图片约 5-10积分，请谨慎操作",
+            ),
+            (
+                "tool.approval.creditHint.imageProcessing",
+                "图片处理预计将消耗 5-10 积分，实际消耗以最终结算为准，请谨慎操作。允许后，当前会话内再次使用图片处理将不再提醒。",
+            ),
+            (
+                "tool.approval.creditHint.videoGen",
+                "生成视频将消耗额外积分，每 5 秒约 50-100 积分，请谨慎操作",
+            ),
+        ];
+        assert_eq!(COPY_TABLE, expected);
+    }
+
+    #[test]
+    fn copy_table_keys_unique_and_lookup_by_full_key() {
+        for &(key, _) in COPY_TABLE.iter() {
+            assert_eq!(COPY_TABLE.iter().filter(|(k, _)| *k == key).count(), 1);
+        }
+        for &(key, text) in COPY_TABLE.iter() {
+            assert_eq!(copy_text(key), Some(text));
+        }
+        assert_eq!(copy_text("tool.approval.unknownKey"), None);
+        assert_eq!(copy_text(""), None);
+    }
+
+    #[test]
+    fn capability_titles_and_hints_are_verbatim() {
+        for capability in Capability::ALL {
+            assert_eq!(
+                copy_text(capability.confirm_title_key()),
+                Some(capability.confirm_title())
+            );
+            assert_eq!(
+                copy_text(capability.credit_hint_key()),
+                Some(capability.credit_hint())
+            );
+        }
+        assert_eq!(
+            Capability::ComputerUse.confirm_title(),
+            TEXT_CONFIRM_TITLE_COMPUTER_USE
+        );
+        assert_eq!(
+            Capability::ImageGen.confirm_title(),
+            TEXT_CONFIRM_TITLE_IMAGE_GEN
+        );
+        assert_eq!(
+            Capability::ImageProcessing.confirm_title(),
+            TEXT_CONFIRM_TITLE_IMAGE_PROCESSING
+        );
+        assert_eq!(
+            Capability::VideoGen.confirm_title(),
+            TEXT_CONFIRM_TITLE_VIDEO_GEN
+        );
+        assert_eq!(
+            Capability::ComputerUse.credit_hint(),
+            TEXT_CREDIT_HINT_COMPUTER_USE
+        );
+        assert_eq!(
+            Capability::ImageGen.credit_hint(),
+            TEXT_CREDIT_HINT_IMAGE_GEN
+        );
+        assert_eq!(
+            Capability::ImageProcessing.credit_hint(),
+            TEXT_CREDIT_HINT_IMAGE_PROCESSING
+        );
+        assert_eq!(
+            Capability::VideoGen.credit_hint(),
+            TEXT_CREDIT_HINT_VIDEO_GEN
+        );
+    }
+
+    #[test]
+    fn action_labels_are_verbatim() {
+        for action in ApprovalAction::ALL {
+            assert_eq!(copy_text(action.key()), Some(action.label()));
+        }
+        assert_eq!(ApprovalAction::Allow.label(), TEXT_ALLOW);
+        assert_eq!(ApprovalAction::AlwaysAllow.label(), TEXT_ALWAYS_ALLOW);
+        assert_eq!(
+            ApprovalAction::AlwaysAllowThisLaunch.label(),
+            TEXT_ALWAYS_ALLOW_THIS_LAUNCH
+        );
+        assert_eq!(ApprovalAction::Confirm.label(), TEXT_CONFIRM);
+    }
+
+    #[test]
+    fn default_state_is_loading_not_empty() {
+        assert_eq!(ToolApproval::default().state, ToolApprovalState::Loading);
+        assert_eq!(ToolApproval::loading().state, ToolApprovalState::Loading);
+        assert!(ToolApproval::loading().request.is_none());
+        assert!(!ToolApproval::loading().is_empty_state());
+    }
+
+    #[test]
+    fn empty_state_requires_normal_without_request() {
+        assert!(ToolApproval::empty().is_empty_state());
+        assert!(!ToolApproval::failed().is_empty_state());
+        assert!(!ToolApproval::capability(Capability::ImageGen).is_empty_state());
+    }
+
+    #[test]
+    fn renders_do_not_panic_for_every_state_and_capability() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+        let _ = render(&theme, &ToolApproval::loading());
+        let _ = render(&theme, &ToolApproval::failed());
+        let _ = render(&theme, &ToolApproval::empty());
+        for capability in Capability::ALL {
+            let _ = render(&theme, &ToolApproval::capability(capability));
+        }
+        assert!(!PANEL_TITLE.is_empty());
+        assert!(!TEXT_LOADING.is_empty());
+        assert!(!TEXT_EMPTY.is_empty());
+        assert!(!NOT_DELIVERED.is_empty());
+    }
+}
