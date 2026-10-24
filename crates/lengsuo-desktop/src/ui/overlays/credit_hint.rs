@@ -250,19 +250,147 @@ fn hint_body(theme: &Theme, hint: &CreditHint) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, render, CloudServiceTag, CreditApp, CreditHint, CreditHintState, NOT_DELIVERED,
+        TEXT_BANNER, TEXT_EMPTY, TEXT_LOADING, TEXT_MANY, TEXT_ONE, TEXT_TWO, TEXT_UPGRADE, TITLE,
+    };
     use gpui_kit::component::Theme;
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+
+    fn app(name: &str, tag: CloudServiceTag) -> CreditApp {
+        CreditApp {
+            name: name.to_string(),
+            tag,
+        }
     }
+
+    fn normal(apps: Vec<CreditApp>) -> CreditHint {
+        CreditHint {
+            state: CreditHintState::Normal,
+            apps,
+        }
+    }
+
+    /// 指定状态、无应用的模型（加载/失败态共用）。
+    fn bare(state: CreditHintState) -> CreditHint {
+        CreditHint {
+            state,
+            apps: Vec::new(),
+        }
+    }
+
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn default_state_is_not_delivered_fail_closed() {
+        assert_eq!(CreditHint::default().state, CreditHintState::NotDelivered);
+        assert_eq!(
+            CreditHint::not_delivered().state,
+            CreditHintState::NotDelivered
+        );
+        assert!(!CreditHint::not_delivered().is_empty_state());
+    }
+
+    #[test]
+    fn message_template_branches_by_app_count() {
+        assert_eq!(CreditHint::message_template_for(0), None);
+        assert_eq!(CreditHint::message_template_for(1), Some(TEXT_ONE));
+        assert_eq!(CreditHint::message_template_for(2), Some(TEXT_TWO));
+        assert_eq!(CreditHint::message_template_for(3), Some(TEXT_MANY));
+        assert_eq!(CreditHint::message_template_for(9), Some(TEXT_MANY));
+    }
+
+    #[test]
+    fn rendered_message_replaces_placeholders_by_count() {
+        assert_eq!(
+            normal(vec![app("应用一", CloudServiceTag::CreditsExhausted)]).rendered_message(),
+            "「应用一」应用云服务额度不足"
+        );
+        assert_eq!(
+            normal(vec![
+                app("应用一", CloudServiceTag::CreditsExhausted),
+                app("应用二", CloudServiceTag::CreditsExhausted),
+            ])
+            .rendered_message(),
+            "「应用一」「应用二」应用云服务额度不足"
+        );
+        assert_eq!(
+            normal(vec![
+                app("应用一", CloudServiceTag::Expiring),
+                app("应用二", CloudServiceTag::Provisioning),
+                app("应用三", CloudServiceTag::Destroyed),
+            ])
+            .rendered_message(),
+            "「应用一」「应用二」等应用云服务额度不足"
+        );
+    }
+
+    #[test]
+    fn missing_placeholder_falls_back_to_not_delivered() {
+        assert_eq!(
+            CreditHint::fill_template(TEXT_TWO, Some("应用一"), None),
+            "「应用一」「未下发」应用云服务额度不足"
+        );
+        assert_eq!(
+            CreditHint::fill_template(TEXT_ONE, None, Some("应用二")),
+            "「未下发」应用云服务额度不足"
+        );
+        assert_eq!(normal(Vec::new()).rendered_message(), NOT_DELIVERED);
+    }
+
+    #[test]
+    fn empty_input_is_empty_state_not_empty_list() {
+        let hint = normal(Vec::new());
+        assert!(hint.is_empty_state());
+        assert_eq!(CreditHint::message_template_for(hint.apps.len()), None);
+        assert!(hint.distinct_tags().is_empty());
+    }
+
+    #[test]
+    fn branch_texts_are_verbatim() {
+        assert_eq!(TEXT_ONE, "「{app1}」应用云服务额度不足");
+        assert_eq!(TEXT_TWO, "「{app1}」「{app2}」应用云服务额度不足");
+        assert_eq!(TEXT_MANY, "「{app1}」「{app2}」等应用云服务额度不足");
+        assert_eq!(TEXT_UPGRADE, "去升级");
+        assert_eq!(
+            TEXT_BANNER,
+            "云服务额度不足，可升级套餐或删除闲置的云服务应用后重新开启"
+        );
+        assert_eq!(TITLE, "云服务额度");
         assert_eq!(NOT_DELIVERED, "未下发");
     }
+
     #[test]
-    fn main_area_builds_without_panic() {
+    fn tag_labels_cover_all_four_keys_verbatim() {
+        assert_eq!(CloudServiceTag::Expiring.label(), "额度即将耗尽");
+        assert_eq!(CloudServiceTag::Provisioning.label(), "开通中");
+        assert_eq!(CloudServiceTag::CreditsExhausted.label(), "暂停");
+        assert_eq!(CloudServiceTag::Destroyed.label(), "已销毁");
+    }
+
+    #[test]
+    fn distinct_tags_dedupe_in_first_seen_order() {
+        let hint = normal(vec![
+            app("应用一", CloudServiceTag::Expiring),
+            app("应用二", CloudServiceTag::CreditsExhausted),
+            app("应用三", CloudServiceTag::Expiring),
+        ]);
+        assert_eq!(
+            hint.distinct_tags(),
+            vec![CloudServiceTag::Expiring, CloudServiceTag::CreditsExhausted]
+        );
+    }
+
+    #[test]
+    fn renders_do_not_panic_for_every_state() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+        let _ = render(&theme, &bare(CreditHintState::Loading));
+        let _ = render(&theme, &bare(CreditHintState::Failed));
+        let _ = render(&theme, &CreditHint::not_delivered());
+        let _ = render(&theme, &normal(Vec::new()));
+        let _ = render(
+            &theme,
+            &normal(vec![app("应用一", CloudServiceTag::Expiring)]),
+        );
+        assert!(!TEXT_LOADING.is_empty());
+        assert!(!TEXT_EMPTY.is_empty());
     }
 }
