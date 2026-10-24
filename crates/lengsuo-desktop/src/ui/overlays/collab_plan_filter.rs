@@ -49,20 +49,29 @@ pub const TEXTS: &[(&str, &str)] = &[
     ("collab.plan.filter.search.placeholder", "搜索..."),
     ("collab.plan.filter.source.all", "全部来源"),
     ("collab.plan.filter.source.cnb", "CNB 导入"),
-    ("collab.plan.filter.source.cnbEnterprise", "CNB（内网版）导入"),
+    (
+        "collab.plan.filter.source.cnbEnterprise",
+        "CNB（内网版）导入",
+    ),
     ("collab.plan.filter.source.fallback", "全部来源"),
     ("collab.plan.filter.source.github", "GitHub 导入"),
     ("collab.plan.filter.source.handoff", "转交"),
     ("collab.plan.filter.source.manual", "手动创建"),
     ("collab.plan.filter.source.tapd", "TAPD 导入"),
-    ("collab.plan.filter.source.tapdEnterprise", "TAPD（内网版）导入"),
+    (
+        "collab.plan.filter.source.tapdEnterprise",
+        "TAPD（内网版）导入",
+    ),
     ("collab.plan.filter.status.all", "全部归属"),
     ("collab.plan.filter.status.allDim", "全部状态"),
     ("collab.plan.filter.status.fallback", "全部状态"),
     ("collab.plan.filter.status.my_assigned", "指派给我"),
     ("collab.plan.filter.status.my_created", "我创建的"),
     ("collab.plan.filter.summary.count", "{first} 等 {more}+"),
-    ("collab.plan.filter.temp.appliedToEveryone", "已对所有人生效"),
+    (
+        "collab.plan.filter.temp.appliedToEveryone",
+        "已对所有人生效",
+    ),
     ("collab.plan.filter.temp.applyFailed", "操作失败，请重试"),
     ("collab.plan.filter.temp.applyToEveryone", "对所有人生效"),
     ("collab.plan.filter.temp.more", "更多"),
@@ -181,7 +190,9 @@ impl Operator {
     pub fn value_placeholder(self) -> Option<&'static str> {
         match self {
             Self::IsEmpty | Self::IsNotEmpty => None,
-            Self::Contains | Self::NotContains => Some(zh("collab.plan.filter.value.textPlaceholder")),
+            Self::Contains | Self::NotContains => {
+                Some(zh("collab.plan.filter.value.textPlaceholder"))
+            }
             _ => Some(zh("collab.plan.filter.value.placeholder")),
         }
     }
@@ -363,29 +374,24 @@ fn ready_node(m: &FilterModel, theme: &Theme) -> AnyElement {
                 .child(SharedString::from(todo_count_text(n))),
         );
     }
-    let mut col = div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(head)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(m.conjunction.prefix()),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(m.conjunction.label()),
-                ),
-        );
+    let mut col = div().flex().flex_col().gap_2().child(head).child(
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(m.conjunction.prefix()),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(m.conjunction.label()),
+            ),
+    );
     if m.conditions.is_empty() {
         col = col.child(
             div()
@@ -451,12 +457,7 @@ fn condition_row(c: &Condition, theme: &Theme) -> AnyElement {
         );
     if c.op.needs_value() {
         let value = c.value.unwrap_or_else(|| zh("collab.plan.filter.unset"));
-        row = row.child(
-            div()
-                .text_sm()
-                .text_color(theme.foreground)
-                .child(value),
-        );
+        row = row.child(div().text_sm().text_color(theme.foreground).child(value));
     }
     row.child(
         div()
@@ -480,13 +481,16 @@ mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        content_node_count, resolve, shows_empty_hint, Dimension, FilterModel, NS_PREFIX, State,
-        TEXTS, TITLE,
+        content_node_count, main_area, render_state, resolve, shows_empty_hint, summary_count_text,
+        todo_count_text, zh, Condition, Conjunction, Dimension, FilterModel, Operator, State,
+        NOT_DELIVERED, NS_PREFIX, TEXTS, TITLE,
     };
+    use gpui_kit::component::Theme;
 
     #[test]
     fn title_is_verbatim() {
         assert_eq!(TITLE, "计划筛选");
+        assert_eq!(NOT_DELIVERED, "未下发");
     }
 
     #[test]
@@ -500,16 +504,110 @@ mod tests {
     #[test]
     fn texts_cover_namespace() {
         let n = TEXTS.len();
-        assert!(n >= 40 && n <= 64, "键数 {n} 应 ≥40");
+        assert!((40..=64).contains(&n), "键数 {n} 应 ≥40");
         for (k, v) in TEXTS {
             assert!(k.starts_with(NS_PREFIX), "越界键 {k}");
             assert!(!v.is_empty(), "空文案 {k}");
         }
-        for d in Dimension::ALL {
-            assert!(!d.label().is_empty());
-            assert!(!d.all_label().is_empty());
-            assert!(!d.value_options().is_empty());
+    }
+
+    /// 文案逐字一致（对 ≥3 个 key 断言；含全角括号/省略号/占位符原样保留）。
+    #[test]
+    fn texts_verbatim_spot_checks() {
+        assert_eq!(zh("collab.plan.filter.addCondition"), "添加筛选条件");
+        assert_eq!(zh("collab.plan.filter.conj.any"), "任一条件");
+        assert_eq!(zh("collab.plan.filter.op.not_contains"), "不包含");
+        assert_eq!(
+            zh("collab.plan.filter.source.cnbEnterprise"),
+            "CNB（内网版）导入"
+        );
+        assert_eq!(zh("collab.plan.filter.search.placeholder"), "搜索...");
+        assert_eq!(zh("collab.plan.filter.todoCount"), "{count} 个待办");
+    }
+
+    #[test]
+    fn labels_verbatim() {
+        for (d, name) in Dimension::ALL
+            .iter()
+            .zip(["处理人", "范围", "来源", "状态"])
+        {
+            assert_eq!(d.label(), name);
         }
-        assert_eq!(FilterModel::default().todo_count, None);
+        assert_eq!(Dimension::Owner.all_label(), "全部处理人");
+        assert_eq!(Dimension::Scope.all_label(), "全部归属");
+        assert_eq!(Dimension::Source.all_label(), "全部来源");
+        assert_eq!(Dimension::Status.all_label(), "全部状态");
+        assert_eq!(Operator::Is.label(), "是");
+        assert_eq!(Operator::IsNotEmpty.label(), "不为空");
+        assert_eq!(Conjunction::All.label(), "全部条件");
+        assert_eq!(Conjunction::Any.label(), "任一条件");
+        assert_eq!(Conjunction::Any.prefix(), "满足以下");
+        assert_eq!(Conjunction::All.aria(), "条件连接方式");
+    }
+
+    #[test]
+    fn templates_and_value_slots() {
+        assert_eq!(todo_count_text(3), "3 个待办");
+        assert_eq!(summary_count_text("处理人", 2), "处理人 等 2+");
+        assert_eq!(Operator::Contains.value_placeholder(), Some("请输入"));
+        assert_eq!(Operator::Is.value_placeholder(), Some("请选择"));
+        assert_eq!(Operator::IsEmpty.value_placeholder(), None);
+        assert!(!Operator::IsEmpty.needs_value());
+        assert_eq!(Dimension::Source.value_options().len(), 8);
+    }
+
+    /// 空输入（已下发、零条件）⇒ 显式空态节点，⛔ 不是空列表。
+    #[test]
+    fn ready_empty_is_empty_state_not_blank() {
+        let st = resolve(Some(true));
+        assert_eq!(st, State::Ready(FilterModel::default()));
+        assert!(shows_empty_hint(&st));
+        assert_eq!(content_node_count(&st), 5); // 4 + 1 个空态节点
+        let State::Ready(m) = &st else { unreachable!() };
+        assert!(m.is_empty());
+        assert_eq!(m.unset_count(), 0);
+    }
+
+    /// 状态分支全覆盖（每分支一条）+ 计数正确。
+    #[test]
+    fn state_branch_counts() {
+        let two = FilterModel {
+            conjunction: Conjunction::Any,
+            conditions: vec![
+                Condition {
+                    field: Dimension::Owner,
+                    op: Operator::Is,
+                    value: None,
+                },
+                Condition {
+                    field: Dimension::Source,
+                    op: Operator::NotContains,
+                    value: Some("转交"),
+                },
+            ],
+            todo_count: Some(7),
+        };
+        assert_eq!(content_node_count(&State::NotDelivered), 1);
+        assert_eq!(content_node_count(&State::LoadFailed), 1);
+        assert_eq!(content_node_count(&State::Ready(FilterModel::default())), 5);
+        assert_eq!(content_node_count(&State::Ready(two.clone())), 6);
+        assert_eq!(two.unset_count(), 1);
+        assert_eq!(todo_count_text(two.todo_count.unwrap()), "7 个待办");
+    }
+
+    /// main_area 只构造元素树、不 panic；Ready/LoadFailed 分支整树同样构造。
+    #[test]
+    fn main_area_smoke() {
+        let _ = main_area(&Theme::default());
+        let model = FilterModel {
+            conditions: vec![Condition {
+                field: Dimension::Status,
+                op: Operator::IsNotEmpty,
+                value: None,
+            }],
+            ..FilterModel::default()
+        };
+        let _ = render_state(&State::Ready(model), &Theme::default());
+        let _ = render_state(&State::LoadFailed, &Theme::default());
     }
 }
