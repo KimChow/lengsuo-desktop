@@ -133,9 +133,7 @@ fn activity_banner(
                     .text_color(theme.sidebar_accent_foreground)
                     .cursor_pointer()
                     .child(ACTIVITY_ACTION)
-                    .on_click(move |_event, _window, _app| {
-                        cta(BottomCardIntent::OpenActivity)
-                    }),
+                    .on_click(move |_event, _window, _app| cta(BottomCardIntent::OpenActivity)),
             ),
         )
 }
@@ -184,9 +182,7 @@ fn user_row(
                 .text_color(theme.muted_foreground)
                 .cursor_pointer()
                 .child(NOTICE_LABEL)
-                .on_click(move |_event, _window, _app| {
-                    notice(BottomCardIntent::OpenNotice)
-                }),
+                .on_click(move |_event, _window, _app| notice(BottomCardIntent::OpenNotice)),
         )
         // 小图标钮 2：图标资产未下发 ⇒ 空占位方块，只上报意图。
         .child(
@@ -197,40 +193,108 @@ fn user_row(
                 .border_1()
                 .border_color(theme.sidebar_border)
                 .cursor_pointer()
-                .on_click(move |_event, _window, _app| {
-                    settings(BottomCardIntent::OpenSettings)
-                }),
+                .on_click(move |_event, _window, _app| settings(BottomCardIntent::OpenSettings)),
         )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bottom_cards, BottomData, ACTIVITY_ACTION, ACTIVITY_LABEL};
+    //! D8 底部卡保真断言：① 文案逐字 ② fail-closed 两态 ③ 意图枚举闭集
+    //! ④ 整卡/横幅/用户行渲染非零。
+    //!
+    //! 显式导入、不写 `use super::*`（父模块 `use gpui_kit::*` 的 `test`
+    //! 属性宏会遮蔽 `#[test]` ⇒ recursion limit，同 render_assert_tests 约定）。
+
     use gpui_kit::component::Theme;
+    use gpui_kit::{AppContext as _, IntoElement as _};
 
-    #[test]
-    fn labels_verbatim() {
-        assert_eq!(ACTIVITY_LABEL, "活动");
-        assert_eq!(ACTIVITY_ACTION, "立即前往");
-    }
+    use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
+    use crate::ui::sidebar_gpui::render::HostedElement;
 
-    #[test]
-    fn fail_closed_not_empty() {
-        let theme = Theme::default();
-        let d = BottomData {
-            activity_title: None,
-            user_name: None,
-        };
-        let _ = bottom_cards(&theme, &d, |_| ());
-    }
+    use super::{
+        activity_banner, bottom_cards, or_not_delivered, user_row, BottomCardIntent, BottomData,
+        ACTIVITY_ACTION, ACTIVITY_LABEL, MODEL_SWITCHED, NOTICE_LABEL, NOT_DELIVERED,
+    };
 
-    #[test]
-    fn build_with_data() {
-        let theme = Theme::default();
-        let d = BottomData {
+    fn sample_data() -> BottomData {
+        BottomData {
             activity_title: Some("1024 造物挑战".into()),
             user_name: Some("kim".into()),
+        }
+    }
+
+    /// ① 文案逐字（`welcome.activity.*` 命名空间，不增删一字）。
+    #[test]
+    fn labels_are_verbatim() {
+        assert_eq!(ACTIVITY_LABEL, "活动");
+        assert_eq!(ACTIVITY_ACTION, "立即前往");
+        assert_eq!(MODEL_SWITCHED, "已为你切换到活动指定模型");
+        assert_eq!(NOTICE_LABEL, "通知");
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    /// ② fail-closed：标题 / 用户名缺失 ⇒ 如实「未下发」，不伪造内容。
+    #[test]
+    fn missing_data_falls_back_to_not_delivered() {
+        assert_eq!(or_not_delivered(None), "未下发");
+        assert_eq!(or_not_delivered(Some("1024 造物挑战")), "1024 造物挑战");
+    }
+
+    /// ③ 意图枚举闭集：无通配 match ⇒ 加变体必须连带改这里；三变体互异。
+    #[test]
+    fn intent_enum_is_closed_over_three_buttons() {
+        fn intent_name(intent: BottomCardIntent) -> &'static str {
+            match intent {
+                BottomCardIntent::OpenActivity => "activity",
+                BottomCardIntent::OpenNotice => "notice",
+                BottomCardIntent::OpenSettings => "settings",
+            }
+        }
+        assert_eq!(intent_name(BottomCardIntent::OpenActivity), "activity");
+        assert_ne!(BottomCardIntent::OpenNotice, BottomCardIntent::OpenSettings);
+    }
+
+    /// ④ 整卡两态（有数据 / 全未下发）都渲染非零。
+    #[test]
+    fn full_card_renders_nonzero_in_both_states() {
+        let theme = Theme::default();
+        let draw = |data: &BottomData| {
+            draw_probe(|ctx| {
+                let card = bottom_cards(&theme, data, |_| ()).into_any_element();
+                ctx.new(|_| HostedElement(card)).into_any_element()
+            })
         };
-        let _ = bottom_cards(&theme, &d, |_| ());
+        assert_rendered(draw(&sample_data()), "底部卡（有数据）");
+        assert_rendered(
+            draw(&BottomData {
+                activity_title: None,
+                user_name: None,
+            }),
+            "底部卡（未下发态）",
+        );
+    }
+
+    /// ④ 活动横幅卡单独渲染非零（图占位 + 标题 + 提示 + CTA 都在树里）。
+    #[test]
+    fn activity_banner_renders_nonzero() {
+        let theme = Theme::default();
+        let data = sample_data();
+        let bounds = draw_probe(|ctx| {
+            let banner = activity_banner(&theme, &data, &|_| ()).into_any_element();
+            ctx.new(|_| HostedElement(banner)).into_any_element()
+        });
+        assert_rendered(bounds, "活动横幅卡");
+    }
+
+    /// ④ 用户头像行单独渲染非零（圆头像占位 + 名字 + 两枚小钮都在树里）。
+    #[test]
+    fn user_row_renders_nonzero() {
+        let theme = Theme::default();
+        let data = sample_data();
+        let bounds = draw_probe(|ctx| {
+            let row = user_row(&theme, &data, &|_| ()).into_any_element();
+            ctx.new(|_| HostedElement(row)).into_any_element()
+        });
+        assert_rendered(bounds, "用户头像行");
     }
 }
