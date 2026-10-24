@@ -25,3 +25,16 @@ pub mod todo_list;
 pub mod update_flow;
 pub mod voice_states;
 pub mod worktree_branch;
+// === 波次 7：浮层第二批（一卡一文件；声明由主理人一次性落盘） ===
+pub mod artifact_slot;
+pub mod cloud_welcome;
+pub mod context_menu;
+pub mod conversation_list;
+pub mod detail_panel;
+pub mod file_version;
+pub mod media_preview;
+pub mod queue_progress;
+pub mod search_filter;
+pub mod share_task;
+pub mod task_hover_card;
+pub mod workspace_trust;
