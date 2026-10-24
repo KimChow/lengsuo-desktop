@@ -2,7 +2,8 @@
 //!
 //! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `mediaPreview + preview`。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 数据源在运行时侧：本模块渲染完整浮层骨架，中心区 fail-closed 落「未下发」，
+//! 等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
@@ -231,34 +232,107 @@ impl MediaPreview {
         next
     }
 }
+// —— GPUI 层 ——
+
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+/// 当前无数据源：固定走 fail-closed「未下发」分支。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render_layer(theme, &MediaPreview::not_delivered())
+}
+
+/// 按纯数据模型渲染整层（标题行 + 缩放行 + 工具行 + 中心区）。
+fn render_layer(theme: &Theme, preview: &MediaPreview) -> Div {
+    let layer = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
-        .child(
+        .child(title_row(theme))
+        .child(zoom_row(theme, preview));
+    // 未下发时隐藏工具行（⛔ 不给无数据动作留入口）
+    let layer = if preview.tool_actions().is_empty() {
+        layer
+    } else {
+        layer.child(tool_row(theme, preview))
+    };
+    layer.child(center_area(theme, preview))
+}
+
+/// 标题行：标题 + 右侧关闭 glyph。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+        .child("×")
+}
+
+/// 缩放行：缩小 glyph + 百分比（本地状态）+ 放大 glyph。
+fn zoom_row(theme: &Theme, preview: &MediaPreview) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child("−")
+        .child(format!("{}%", preview.zoom_percent))
+        .child("+")
+}
+
+/// 工具行：动作按钮文案 + 最近一次反馈。
+fn tool_row(theme: &Theme, preview: &MediaPreview) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .text_color(theme.foreground);
+    for action in preview.tool_actions() {
+        row = row.child(action.label());
+    }
+    if let Some(feedback) = preview.feedback {
+        row = row.child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
+                .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .child(feedback.text()),
+        );
+    }
+    row
+}
+
+/// 中心区：`None` = 正常态媒体挂载位（不伪造）；`Some` = 失败/未下发占位文案。
+fn center_area(theme: &Theme, preview: &MediaPreview) -> Div {
+    let Some(line) = preview.center_line() else {
+        return div().flex_1().flex().items_center().justify_center();
+    };
+    let mut area = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(line);
+    if let Some(desc) = preview.center_desc() {
+        area = area.child(div().text_xs().child(desc));
+    }
+    area
 }
 #[cfg(test)]
 mod tests {
