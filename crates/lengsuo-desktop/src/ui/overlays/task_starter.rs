@@ -394,19 +394,160 @@ fn status_area(model: &TaskStarterModel, theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, render_overlay, workspace_path_hint, StarterState, TaskStarterModel,
+        CREATE_WORKSPACE_DESC, CREATE_WORKSPACE_PLACEHOLDER, FOOTER_START_IN, HINT_NO_CONNECTOR,
+        HINT_NO_REPOS, NOT_DELIVERED, NO_WORKSPACE_ROW, SECTION_REPO, SECTION_WORKSPACE, TITLE,
+        TOAST_CREATE_FAILED,
+    };
     use gpui_kit::component::Theme;
+
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
-    }
-    #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn default_is_fail_closed_not_delivered() {
+        let model = TaskStarterModel::default();
+        assert_eq!(model.state, StarterState::NotDelivered);
+        assert_eq!(model.state.status_text(), Some(NOT_DELIVERED));
         assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(model.visible_row_count(), 0);
+        assert_eq!(model.toast_text(), None);
+        assert_eq!(TaskStarterModel::not_delivered(), model);
     }
+
+    #[test]
+    fn empty_input_yields_empty_state_not_empty_list() {
+        let model = TaskStarterModel::from_delivered(true, &[], &[]);
+        assert_eq!(model.state, StarterState::NoRepos);
+        assert_eq!(model.state.status_text(), Some(HINT_NO_REPOS));
+        assert_eq!(model.visible_row_count(), 0);
+        // 授权位优先：未授权时即便清单非空也停在授权提示
+        let unauthorized =
+            TaskStarterModel::from_delivered(false, &["r".to_owned()], &["w".to_owned()]);
+        assert_eq!(unauthorized.state, StarterState::NoConnector);
+        assert_eq!(unauthorized.visible_row_count(), 0);
+        // 仓库非空、工作空间为空 ⇒ 工作空间空态
+        let no_ws = TaskStarterModel::from_delivered(true, &["r".to_owned()], &[]);
+        assert_eq!(no_ws.state, StarterState::NoWorkspaceFound);
+    }
+
+    #[test]
+    fn state_texts_are_verbatim_from_namespace() {
+        assert_eq!(
+            StarterState::NoConnector.status_text(),
+            Some(HINT_NO_CONNECTOR)
+        );
+        assert_eq!(
+            HINT_NO_CONNECTOR,
+            "尚未授权代码库权限，如需从您的代码库创建工作空间，请先进行授权"
+        );
+        assert_eq!(
+            StarterState::LoadingRepos.status_text(),
+            Some("加载仓库中...")
+        );
+        assert_eq!(
+            StarterState::LoadingBranches.status_text(),
+            Some("加载分支中...")
+        );
+        assert_eq!(StarterState::NoBranches.status_text(), Some("未找到分支"));
+        assert_eq!(
+            StarterState::NoWorkspaceFound.status_text(),
+            Some("未找到工作空间")
+        );
+        assert_eq!(StarterState::NoData.status_text(), Some("暂无数据"));
+        assert_eq!(
+            StarterState::CreateFailed.status_text(),
+            Some(TOAST_CREATE_FAILED)
+        );
+        assert_eq!(TOAST_CREATE_FAILED, "新建工作空间失败，请重试");
+        assert_eq!(StarterState::Ready.status_text(), None);
+    }
+
+    #[test]
+    fn section_and_form_copy_is_verbatim() {
+        assert_eq!(
+            (SECTION_REPO.label, SECTION_REPO.search),
+            ("选择仓库", "搜索仓库")
+        );
+        assert_eq!(
+            (SECTION_WORKSPACE.label, SECTION_WORKSPACE.search),
+            ("选择工作空间", "搜索工作空间")
+        );
+        assert_eq!(
+            workspace_path_hint(),
+            "可前往「系统设置」设置默认工作空间存储路径"
+        );
+        assert_eq!(
+            CREATE_WORKSPACE_DESC,
+            "为工作空间命名，本地将自动创建同名文件夹，命名后不可随意更改"
+        );
+        assert_eq!(CREATE_WORKSPACE_PLACEHOLDER, "输入工作空间名称");
+        assert_eq!(NO_WORKSPACE_ROW, "不使用工作空间");
+        assert_eq!(FOOTER_START_IN, "任务启动于：");
+        assert_eq!(TITLE, "任务发起");
+    }
+
+    #[test]
+    fn counts_match_delivered_rows() {
+        let ready = TaskStarterModel::from_delivered(
+            true,
+            &["repo-a".to_owned(), "repo-b".to_owned()],
+            &["ws-1".to_owned()],
+        );
+        assert_eq!(ready.state, StarterState::Ready);
+        assert_eq!(ready.visible_row_count(), 3);
+        assert_eq!(TaskStarterModel::not_delivered().visible_row_count(), 0);
+    }
+
+    #[test]
+    fn toast_and_primary_actions_are_verbatim() {
+        let mut model = TaskStarterModel::not_delivered();
+        assert_eq!(model.toast_text(), None);
+        model.state = StarterState::CreateFailed;
+        assert_eq!(model.toast_text(), Some("新建工作空间失败，请重试"));
+        assert_eq!(
+            StarterState::NoConnector.primary_action(),
+            Some("添加仓库授权")
+        );
+        assert_eq!(StarterState::NoRepos.primary_action(), Some("添加仓库"));
+        assert_eq!(
+            StarterState::NoWorkspaceFound.primary_action(),
+            Some("新建工作空间")
+        );
+        assert_eq!(
+            StarterState::CreateFailed.primary_action(),
+            Some("新建工作空间")
+        );
+        assert_eq!(StarterState::NotDelivered.primary_action(), None);
+        assert_eq!(StarterState::Ready.primary_action(), None);
+    }
+
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn every_state_renders_without_panic() {
+        let theme = Theme::default();
+        let states = [
+            StarterState::NotDelivered,
+            StarterState::NoConnector,
+            StarterState::LoadingRepos,
+            StarterState::NoRepos,
+            StarterState::LoadingBranches,
+            StarterState::NoBranches,
+            StarterState::NoWorkspaceFound,
+            StarterState::NoData,
+            StarterState::Ready,
+            StarterState::CreateFailed,
+        ];
+        let mut model = TaskStarterModel::not_delivered();
+        for state in states {
+            model.state = state;
+            let _ = render_overlay(&model, &theme);
+        }
+        // 就绪态携带真实清单行（动态文案走 SharedString）也必须渲染成功
+        model = TaskStarterModel::from_delivered(true, &["r1".to_owned()], &["w1".to_owned()]);
+        let _ = render_overlay(&model, &theme);
     }
 }
