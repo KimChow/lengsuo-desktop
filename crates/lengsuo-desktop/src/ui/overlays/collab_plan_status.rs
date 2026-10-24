@@ -5,6 +5,8 @@
 //! 全表勘明 27 有效键（docs/ui-parity-spec.md），本表已逐字落 12 键；
 //! 其余 15 键的全表源不在本 worktree，缺词经 [`text`] 返回 `None` 显形，⛔ 禁止自编。
 #![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 面板标题（逐字取自文案全表，承接占位 stub 契约）。
 pub const PANEL_TITLE: &str = "协作计划·状态";
@@ -132,4 +134,103 @@ pub fn resolve(delivered: Option<Vec<CollabPlanStatusItem>>) -> CollabPlanStatus
         Some(items) if items.is_empty() => CollabPlanStatusState::Empty,
         Some(items) => CollabPlanStatusState::Normal(items),
     }
+}
+
+// ===== GPUI 层 =====
+/// 主区/浮层呈现入口（签名同 `collab_plan_detail::main_area`；无数据源 ⇒ 默认 `Loading`）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render(theme, &CollabPlanStatusState::default())
+}
+
+/// 按状态渲染整棵树（只构造元素，不触实体/上下文；测试逐分支调用防 panic）。
+pub fn render(theme: &Theme, state: &CollabPlanStatusState) -> AnyElement {
+    let frame = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(header_row(theme));
+    match state {
+        CollabPlanStatusState::Normal(items) => frame
+            .children(items.iter().map(|it| item_card(theme, it)))
+            .into_any_element(),
+        CollabPlanStatusState::Empty | CollabPlanStatusState::Loading => frame
+            .child(hint_row(theme, state.status_text()))
+            .into_any_element(),
+        CollabPlanStatusState::Failed => frame
+            // 失败必须可见：foreground 全对比 + 描边行，不退化成空列表
+            .child(
+                div()
+                    .px_4()
+                    .py_2()
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_color(theme.foreground)
+                    .child(SharedString::from(state.status_text())),
+            )
+            .into_any_element(),
+    }
+}
+
+/// 标题行：面板标题 + 全部状态徽标图例（`label.*` 逐字）。
+fn header_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(PANEL_TITLE)),
+        )
+        .children(PlanStatus::ALL.iter().map(|s| badge(theme, s.label())))
+        .into_any_element()
+}
+
+/// 状态徽标（描边小标签，文案逐字来自 `label.*`）。
+fn badge(theme: &Theme, label: &str) -> AnyElement {
+    div()
+        .px_2()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
+        .child(SharedString::from(label))
+        .into_any_element()
+}
+
+/// 非正常分支提示行（muted；文案见 [`CollabPlanStatusState::status_text`]）。
+fn hint_row(theme: &Theme, hint: &str) -> AnyElement {
+    div()
+        .px_4()
+        .py_2()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(hint))
+        .into_any_element()
+}
+
+/// 单条事项卡：标题 + 徽标（`label.*`）+ 说明（`desc.*`），全部逐字。
+fn item_card(theme: &Theme, it: &CollabPlanStatusItem) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(it.title.as_str())),
+                )
+                .child(badge(theme, it.status.label())),
+        )
+        .child(SharedString::from(it.status.desc()))
+        .into_any_element()
 }
