@@ -182,34 +182,215 @@ impl TaskStarterModel {
     }
 }
 
+// ============================================================
+// GPUI 层（视图 = 纯数据层的纯函数；颜色一律 theme token）
+// ============================================================
+
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 无数据源 ⇒ [`TaskStarterModel::not_delivered`]，数据区如实显示「未下发」。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render_overlay(&TaskStarterModel::not_delivered(), theme)
+}
+
+/// 整层渲染：标题行（徽标+标题）、选择区、数据区、页脚。
+fn render_overlay(model: &TaskStarterModel, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .px_4()
+                .py_2()
+                .child(section_block(&SECTION_REPO, theme))
+                .child(workspace_form(model, theme))
+                .child(status_area(model, theme)),
+        )
         .child(
             div()
                 .px_4()
                 .py_2()
                 .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(FOOTER_START_IN),
+        )
+}
+
+/// 标题行：徽标 + 标题。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(
+            div()
+                .size_2()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.border),
+        )
+        .child(
+            div()
+                .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
+}
+
+/// 选择区块：区标签 + 搜索占位芯片。
+fn section_block(copy: &SectionCopy, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
         .child(
             div()
-                .flex_1()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(copy.label),
+        )
+        .child(chip(copy.search, theme))
+}
+
+/// 芯片（搜索占位/输入占位）：边框 + 弱化文案。
+fn chip(text: &'static str, theme: &Theme) -> Div {
+    div()
+        .px_3()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 弱化说明行。
+fn muted_line(text: impl Into<SharedString>, theme: &Theme) -> Div {
+    div()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text.into())
+}
+
+/// 清单行（仅就绪态且已下发的真实条目；⛔ 不伪造）。
+fn repo_row(name: &str, theme: &Theme) -> Div {
+    div()
+        .py_1()
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(SharedString::from(name))
+}
+
+/// 主操作按钮（静态样式；交互接线等跨线契约）。
+fn action_button(label: &'static str, theme: &Theme) -> Div {
+    div()
+        .px_3()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.accent)
+        .child(label)
+}
+
+/// 工作空间选择区：标签、搜索占位、固定行、新建表单、路径提示、失败 toast。
+fn workspace_form(model: &TaskStarterModel, theme: &Theme) -> Div {
+    let mut form = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(SECTION_WORKSPACE.label),
+        )
+        .child(chip(SECTION_WORKSPACE.search, theme))
+        .child(repo_row(NO_WORKSPACE_ROW, theme))
+        .child(muted_line(CREATE_WORKSPACE_DESC, theme))
+        .child(chip(CREATE_WORKSPACE_PLACEHOLDER, theme))
+        .child(
+            div()
                 .flex()
                 .items_center()
-                .justify_center()
+                .gap_1()
                 .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .child(muted_line(PATH_HINT_PREFIX, theme))
+                .child(
+                    div()
+                        .text_color(theme.accent)
+                        .child(PATH_HINT_SETTINGS_LINK),
+                )
+                .child(muted_line(PATH_HINT_SUFFIX, theme)),
+        );
+    if let Some(toast) = model.toast_text() {
+        form = form.child(
+            div()
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.border)
+                .text_sm()
+                .text_color(theme.accent)
+                .child(toast),
+        );
+    }
+    form
+}
+
+/// 数据区：就绪且非空才画清单行；空态优先于空列表；未下发 ⇒ fail-closed。
+fn status_area(model: &TaskStarterModel, theme: &Theme) -> Div {
+    let mut area = div().flex().flex_col().gap_1();
+    match model.state {
+        StarterState::Ready if model.visible_row_count() > 0 => {
+            for name in model.repos.iter().chain(model.workspaces.iter()) {
+                area = area.child(repo_row(name, theme));
+            }
+        }
+        StarterState::Ready => {
+            area = area.child(muted_line(
+                StarterState::NoData.status_text().unwrap_or_default(),
+                theme,
+            ));
+        }
+        StarterState::NotDelivered => {
+            area = area.child(
+                div()
+                    .flex()
+                    .h_16()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(NOT_DELIVERED),
+            );
+        }
+        other => {
+            if let Some(text) = other.status_text() {
+                area = area.child(muted_line(text, theme));
+            }
+            if let Some(label) = other.primary_action() {
+                area = area.child(action_button(label, theme));
+            }
+        }
+    }
+    area
 }
 #[cfg(test)]
 mod tests {
