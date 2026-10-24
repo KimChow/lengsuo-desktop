@@ -128,33 +128,167 @@ impl ArtifactSlotState {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`ArtifactSlotState::initial`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render(theme, &ArtifactSlotState::initial())
+}
+
+/// 按状态渲染整层：标题行 +（产物计数头 + 文件变更 + 预览行 + 查看所有 + 来源面板）；
+/// 未下发 / 空态只渲染居中提示（⛔ 不渲染成空列表）。
+fn render(theme: &Theme, state: &ArtifactSlotState) -> Div {
+    let mut col = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme));
+    if let Some(text) = state.body_text() {
+        return col.child(centered_text(theme, text));
+    }
+    let ArtifactSlotState::Ready(data) = state else {
+        unreachable!("body_text 为 None 时必然是 Ready");
+    };
+    col = col
+        .child(section_row(theme, data.title_text()))
+        .child(section_row(theme, data.files_title_text()));
+    for name in &data.file_changes {
+        col = col.child(entry_row(theme, name.clone()));
+    }
+    if data.preview_url.is_some() {
+        col = col.child(preview_row(theme));
+    }
+    col = col.child(
+        div()
+            .px_4()
+            .py_2()
+            .child(text_button(theme, data.view_all_text(), true)),
+    );
+    if !data.sources.is_empty() {
+        col = col.child(sources_area(theme, data));
+    }
+    col
+}
+
+/// 标题行（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 未下发 / 空态的居中提示。
+fn centered_text(theme: &Theme, text: String) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 小节头行（计数模板文案即无障碍标签）。
+fn section_row(theme: &Theme, text: String) -> Div {
+    div()
+        .px_4()
+        .py_1()
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(text)
+}
+
+/// 条目行（文件变更 / 来源共用；文案即无障碍标签）。
+fn entry_row(theme: &Theme, name: String) -> Div {
+    div()
+        .px_4()
+        .py_1()
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(name)
+}
+
+/// 网页预览行：主操作「打开网页预览 →」+ 次操作「在浏览器中预览」。
+fn preview_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(text_button(theme, OPEN_PREVIEW.to_string(), true))
+        .child(text_button(theme, OPEN_IN_BROWSER.to_string(), false))
+}
+
+/// 来源面板：标题 + 关闭按钮 +「来源 / {count}个来源」计数行 + 说明行 + 来源行。
+fn sources_area(theme: &Theme, data: &ArtifactSlotData) -> Div {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .px_4()
+                .py_2()
+                .border_t_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(data.sources_title_text()),
+                )
+                .child(div().flex_1())
+                .child(text_button(theme, SOURCES_CLOSE.to_string(), false)),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_4()
+                .py_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SOURCES_LABEL)
+                .child(data.sources_count_text()),
+        )
         .child(
             div()
                 .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
+                .py_1()
+                .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .child(data.sources_tooltip_text()),
+        );
+    for name in &data.sources {
+        col = col.child(entry_row(theme, name.clone()));
+    }
+    col
+}
+
+/// 文本按钮（文案即无障碍标签）；primary 用强调描边。
+fn text_button(theme: &Theme, label: String, primary: bool) -> Div {
+    div()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if primary { theme.accent } else { theme.border })
+        .text_sm()
+        .text_color(if primary {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(label)
 }
 #[cfg(test)]
 mod tests {
