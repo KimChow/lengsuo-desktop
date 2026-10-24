@@ -247,33 +247,206 @@ impl Phase {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 数据源在运行时侧未下发 ⇒ fail-closed 渲染 [`Phase::NotDelivered`]（如实「未下发」）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render_phase(&Phase::NotDelivered, theme)
+}
+
+/// 按状态机分支渲染整层（标题行 + 分支主体）。
+fn render_phase(phase: &Phase, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(render_header(theme))
+        .child(render_body(phase, theme))
+}
+
+/// 标题行：弹窗标题徽标（dialog.title）+ 视图标题。
+fn render_header(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .items_center()
+        .gap_2()
         .child(
             div()
-                .px_4()
-                .py_2()
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.border)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(DIALOG_TITLE),
+        )
+        .child(
+            div()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
-        .child(
+}
+
+fn render_body(phase: &Phase, theme: &Theme) -> Div {
+    match phase {
+        Phase::Ready(content) => render_content(content, theme),
+        Phase::NotDelivered => centered_line(NOT_DELIVERED, theme),
+        _ => render_state_page(phase, theme),
+    }
+}
+
+/// 居中单行状态（fail-closed：如实「未下发」，⛔ 不渲染空列表）。
+fn centered_line(text: &'static str, theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 带内边距的弱化说明行（如「暂无产物」）。
+fn padded_muted_line(text: &'static str, theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_1()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 状态分支（Generating/Loading/Succeeded/Failed）：居中主文案 + 失败原因。
+fn render_state_page(phase: &Phase, theme: &Theme) -> Div {
+    let mut page = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .px_4();
+    if let Some(headline) = phase.headline() {
+        page = page.child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
+                .text_base()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(headline),
+        );
+    }
+    if let Some(desc) = phase.description() {
+        page = page.child(
+            div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .child(desc),
+        );
+    }
+    page
+}
+
+/// 就绪分支：产物清单 + 消息数量 + 链接与复制反馈。
+fn render_content(content: &ShareContent, theme: &Theme) -> Div {
+    if content.is_empty() {
+        // 空输入 ⇒ 空态，⛔ 不是空列表。
+        return centered_line(NO_CONTENT, theme);
+    }
+    let mut body = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .py_2()
+        .child(
+            div()
+                .px_4()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(content.artifact_header()),
+        );
+    if content.artifacts.is_empty() {
+        body = body.child(padded_muted_line(NO_ARTIFACTS, theme));
+    } else {
+        for name in &content.artifacts {
+            body = body.child(
+                div()
+                    .px_4()
+                    .py_1()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(name.clone()),
+            );
+        }
+    }
+    for (label, value) in content.count_rows() {
+        body = body.child(
+            div()
+                .px_4()
+                .flex()
+                .justify_between()
+                .gap_4()
+                .text_sm()
+                .child(div().text_color(theme.muted_foreground).child(label))
+                .child(div().text_color(theme.foreground).child(value)),
+        );
+    }
+    if content.can_copy() {
+        body = body
+            .child(
+                div()
+                    .px_4()
+                    .py_1()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(content.link.clone().unwrap_or_default()),
+            )
+            .child(render_copy_area(content, theme));
+    }
+    body
+}
+
+/// 复制链接按钮 + 复制反馈行（无反馈则只有按钮）。
+fn render_copy_area(content: &ShareContent, theme: &Theme) -> Div {
+    let mut area = div()
+        .px_4()
+        .py_2()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .self_start()
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .bg(theme.accent)
+                .text_color(theme.accent_foreground)
+                .text_sm()
+                .child(COPY_LINK_BTN),
+        );
+    if let Some(feedback) = content.copy_feedback.text() {
+        let color = match content.copy_feedback {
+            CopyFeedback::Failed => theme.danger,
+            _ => theme.accent,
+        };
+        area = area.child(
+            div()
+                .text_xs()
+                .text_color(color)
+                .child(feedback),
+        );
+    }
+    area
 }
 #[cfg(test)]
 mod tests {
