@@ -1,160 +1,106 @@
 //! 数据源表单（波次 8，卡 `ui-automation-ds-form`）。
-//!
 //! 分层约定（同 `panel_views` / `delete`）：纯数据层 + GPUI 层（[`main_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `automation.datasource.form`。
-//! 数据源在运行时侧：连接器目录未接入前保持「未下发」的诚实默认态。
 #![cfg(feature = "ui")]
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
 // ── 纯数据层（无 GPUI 依赖） ─────────────────────────────────────────
 
-/// 界面文案全表：命名空间 `automation.datasource.form` 全 68 键（`key`、中文），逐字取自文案全表。
+/// 界面文案全表：命名空间 `automation.datasource.form` 全 68 键（短名、中文），
+/// 逐字取自文案全表；完整键 = `NS_PREFIX` + "." + 短名。
 pub const TEXTS: [(&str, &str); 68] = [
-    ("automation.datasource.form.addRule", "+ 添加规则"),
-    ("automation.datasource.form.assigneeEmpty", "assignee 为空"),
-    ("automation.datasource.form.connector", "连接器"),
+    ("addRule", "+ 添加规则"),
+    ("assigneeEmpty", "assignee 为空"),
+    ("connector", "连接器"),
+    ("connectorEmpty", "请选择一个已授权的连接器"),
+    ("connectorHint", "选择一个连接器作为数据同步来源。"),
+    ("connectorUnauthorizedHint", "需先在连接器配置中完成授权"),
+    ("create", "创建"),
+    ("disable", "禁用"),
+    ("enable", "启用"),
+    ("filterEmptyHint", "不填则同步全部 Issue"),
+    ("filterInputLabel", "过滤条件（可选）"),
+    ("filterText", "同步说明"),
     (
-        "automation.datasource.form.connectorEmpty",
-        "请选择一个已授权的连接器",
-    ),
-    (
-        "automation.datasource.form.connectorHint",
-        "选择一个连接器作为数据同步来源。",
-    ),
-    (
-        "automation.datasource.form.connectorUnauthorizedHint",
-        "需先在连接器配置中完成授权",
-    ),
-    ("automation.datasource.form.create", "创建"),
-    ("automation.datasource.form.disable", "禁用"),
-    ("automation.datasource.form.enable", "启用"),
-    (
-        "automation.datasource.form.filterEmptyHint",
-        "不填则同步全部 Issue",
-    ),
-    (
-        "automation.datasource.form.filterInputLabel",
-        "过滤条件（可选）",
-    ),
-    ("automation.datasource.form.filterText", "同步说明"),
-    (
-        "automation.datasource.form.filterTextHint",
+        "filterTextHint",
         "用一句话描述你希望同步哪些内容，系统会据此生成过滤规则。",
     ),
     (
-        "automation.datasource.form.filterTextPlaceholder",
+        "filterTextPlaceholder",
         "只同步符合条件的数据 · 不填则默认同步最多500条待办数据",
     ),
+    ("generateAndPreview", "✨ 生成并预览"),
+    ("generateEmptyHint", "无法从描述中提取有效的过滤条件"),
+    ("generateRules", "生成规则"),
+    ("generateRulesWithSparkle", "✨ 生成规则"),
+    ("generating", "生成中..."),
+    ("interval.3h", "3 小时"),
+    ("intervalEvery", "每"),
+    ("intervalPullOnce", "拉取一次"),
+    ("intervalUnitHours", "小时"),
+    ("intervalUnitMinutes", "分钟"),
+    ("matchAll", "全部满足"),
+    ("matchAny", "满足任一"),
+    ("matchLabel", "规则关系"),
+    ("notSelected", "未选择"),
+    ("operatorContains", "包含"),
+    ("operatorIs", "为"),
+    ("previewing", "预览中..."),
+    ("pullInterval", "拉取间隔"),
+    ("redescribe", "重新描述"),
+    ("regenerate", "重新生成"),
+    ("removeRule", "删除规则"),
+    ("repo", "选择目标"),
+    ("repoHint", "当前阶段先使用 mock 仓库列表。"),
+    ("repoPlaceholder", "选择要同步的仓库"),
+    ("ruleCount", "规则数"),
+    ("ruleCountValue", "{count} 条"),
+    ("ruleField", "字段"),
+    ("ruleFieldPlaceholder", "如：labels"),
+    ("ruleOperator", "条件"),
+    ("ruleOperatorPlaceholder", "如：contains"),
+    ("rules", "过滤规则"),
+    ("rulesEmpty", "还没有过滤规则，可先填写同步说明并生成。"),
+    ("ruleValue", "值"),
+    ("ruleValuePlaceholder", "如：ai-ready"),
+    ("save", "保存"),
+    ("saveAndEnable", "保存并启用"),
+    ("saving", "保存中..."),
+    ("selected", "已选择"),
+    ("selectedConnector", "连接器"),
+    ("selectedRepo", "目标仓库"),
+    ("testButton", "测试同步"),
+    ("testComingSoon", "规则测试功能即将上线"),
+    ("testEmpty", "未匹配到任何数据"),
+    ("testFailed", "测试失败"),
+    ("testHint", "生成一份 mock 预览，确认同步结果是否符合预期。"),
+    ("testing", "测试中..."),
     (
-        "automation.datasource.form.generateAndPreview",
-        "✨ 生成并预览",
-    ),
-    (
-        "automation.datasource.form.generateEmptyHint",
-        "无法从描述中提取有效的过滤条件",
-    ),
-    ("automation.datasource.form.generateRules", "生成规则"),
-    (
-        "automation.datasource.form.generateRulesWithSparkle",
-        "✨ 生成规则",
-    ),
-    ("automation.datasource.form.generating", "生成中..."),
-    ("automation.datasource.form.interval.3h", "3 小时"),
-    ("automation.datasource.form.intervalEvery", "每"),
-    ("automation.datasource.form.intervalPullOnce", "拉取一次"),
-    ("automation.datasource.form.intervalUnitHours", "小时"),
-    ("automation.datasource.form.intervalUnitMinutes", "分钟"),
-    ("automation.datasource.form.matchAll", "全部满足"),
-    ("automation.datasource.form.matchAny", "满足任一"),
-    ("automation.datasource.form.matchLabel", "规则关系"),
-    ("automation.datasource.form.notSelected", "未选择"),
-    ("automation.datasource.form.operatorContains", "包含"),
-    ("automation.datasource.form.operatorIs", "为"),
-    ("automation.datasource.form.previewing", "预览中..."),
-    ("automation.datasource.form.pullInterval", "拉取间隔"),
-    ("automation.datasource.form.redescribe", "重新描述"),
-    ("automation.datasource.form.regenerate", "重新生成"),
-    ("automation.datasource.form.removeRule", "删除规则"),
-    ("automation.datasource.form.repo", "选择目标"),
-    (
-        "automation.datasource.form.repoHint",
-        "当前阶段先使用 mock 仓库列表。",
-    ),
-    (
-        "automation.datasource.form.repoPlaceholder",
-        "选择要同步的仓库",
-    ),
-    ("automation.datasource.form.ruleCount", "规则数"),
-    ("automation.datasource.form.ruleCountValue", "{count} 条"),
-    ("automation.datasource.form.ruleField", "字段"),
-    (
-        "automation.datasource.form.ruleFieldPlaceholder",
-        "如：labels",
-    ),
-    ("automation.datasource.form.ruleOperator", "条件"),
-    (
-        "automation.datasource.form.ruleOperatorPlaceholder",
-        "如：contains",
-    ),
-    ("automation.datasource.form.rules", "过滤规则"),
-    (
-        "automation.datasource.form.rulesEmpty",
-        "还没有过滤规则，可先填写同步说明并生成。",
-    ),
-    ("automation.datasource.form.ruleValue", "值"),
-    (
-        "automation.datasource.form.ruleValuePlaceholder",
-        "如：ai-ready",
-    ),
-    ("automation.datasource.form.save", "保存"),
-    ("automation.datasource.form.saveAndEnable", "保存并启用"),
-    ("automation.datasource.form.saving", "保存中..."),
-    ("automation.datasource.form.selected", "已选择"),
-    ("automation.datasource.form.selectedConnector", "连接器"),
-    ("automation.datasource.form.selectedRepo", "目标仓库"),
-    ("automation.datasource.form.testButton", "测试同步"),
-    (
-        "automation.datasource.form.testComingSoon",
-        "规则测试功能即将上线",
-    ),
-    ("automation.datasource.form.testEmpty", "未匹配到任何数据"),
-    ("automation.datasource.form.testFailed", "测试失败"),
-    (
-        "automation.datasource.form.testHint",
-        "生成一份 mock 预览，确认同步结果是否符合预期。",
-    ),
-    ("automation.datasource.form.testing", "测试中..."),
-    (
-        "automation.datasource.form.testResultSummary",
+        "testResultSummary",
         "Mock 预览：预计同步 12 条条目，其中 8 条为新条目，4 条为更新。",
     ),
-    (
-        "automation.datasource.form.testResultTitle",
-        "最近一次 mock 测试结果",
-    ),
-    ("automation.datasource.form.testRules", "▶ 测试"),
-    (
-        "automation.datasource.form.testRulesResultTitle",
-        "此处展示最多 5 条样例数据",
-    ),
-    ("automation.datasource.form.testRulesRunning", "测试中..."),
-    ("automation.datasource.form.testSection", "测试同步"),
-    ("automation.datasource.form.titleCreate", "添加外部数据源"),
-    ("automation.datasource.form.titleEdit", "编辑外部数据源"),
+    ("testResultTitle", "最近一次 mock 测试结果"),
+    ("testRules", "▶ 测试"),
+    ("testRulesResultTitle", "此处展示最多 5 条样例数据"),
+    ("testRulesRunning", "测试中..."),
+    ("testSection", "测试同步"),
+    ("titleCreate", "添加外部数据源"),
+    ("titleEdit", "编辑外部数据源"),
 ];
 
 /// 命名空间前缀。
 pub const NS_PREFIX: &str = "automation.datasource.form";
 
-/// 按全表 key 取文案；未命中 ⇒ `None`（fail-closed，⛔ 不回退到自编文案）。
+/// 按完整键（`前缀.短名`）取文案；未命中 ⇒ `None`（fail-closed，⛔ 不回退到自编文案）。
 pub fn text(key: &str) -> Option<&'static str> {
-    TEXTS.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+    let name = key.strip_prefix(NS_PREFIX)?.strip_prefix('.')?;
+    TEXTS.iter().find(|(k, _)| *k == name).map(|(_, v)| *v)
 }
 
-/// 按全表 key 取文案的兜底版；未命中 ⇒ 「未下发」（fail-closed）。
-fn t(key: &str) -> &'static str {
-    text(key).unwrap_or(NOT_DELIVERED)
+/// 按短名取文案；未命中 ⇒ 「未下发」（fail-closed 兜底）。
+fn ns(name: &str) -> &'static str {
+    text(&format!("{NS_PREFIX}.{name}")).unwrap_or(NOT_DELIVERED)
 }
 
 /// 视图标题（浮层名）。
@@ -162,16 +108,13 @@ pub const TITLE: &str = "数据源表单";
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
 
-/// 表单状态机（每条分支均有全表文案支撑）。
+/// 表单状态机：创建（`titleCreate`）/ 编辑（`titleEdit`）/ 未授权（`connectorUnauthorizedHint`）；
+/// 默认 `NotDelivered`（未拉取过 ≠ 空集，⛔ 不伪造）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum State {
-    /// 创建分支（`titleCreate` 添加外部数据源）。
     Create,
-    /// 编辑分支（`titleEdit` 编辑外部数据源）。
     Edit,
-    /// 所选连接器未授权（`connectorUnauthorizedHint`）。
     Unauthorized,
-    /// 数据未下发（诚实默认态：未拉取过 ≠ 空集，⛔ 不伪造）。
     #[default]
     NotDelivered,
 }
@@ -188,69 +131,31 @@ pub fn resolve(catalog_delivered: Option<bool>, picked: Option<bool>) -> State {
     }
 }
 
-/// 规则操作符（`operatorIs` / `operatorContains`）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Op {
-    /// 为。
-    Is,
-    /// 包含。
-    Contains,
-}
-
-impl Op {
-    /// 展示文案键。
-    pub const fn label_key(&self) -> &'static str {
-        match self {
-            Op::Is => "automation.datasource.form.operatorIs",
-            Op::Contains => "automation.datasource.form.operatorContains",
+/// 两分支枚举表：变体 ⇒ 全表短名，`label()` 返回逐字文案（未命中 fail-closed）。
+macro_rules! label_enum {
+    ($t:ident, $($v:ident => $k:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum $t { $($v),+ }
+        impl $t {
+            /// 展示文案（全表短名解析）。
+            pub fn label(&self) -> &'static str {
+                match self { $(Self::$v => ns($k)),+ }
+            }
         }
-    }
+    };
 }
 
-/// 规则组合关系（`matchAll` / `matchAny`）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RuleMatch {
-    /// 全部满足。
-    All,
-    /// 满足任一。
-    Any,
-}
-
-impl RuleMatch {
-    /// 展示文案键。
-    pub const fn label_key(&self) -> &'static str {
-        match self {
-            RuleMatch::All => "automation.datasource.form.matchAll",
-            RuleMatch::Any => "automation.datasource.form.matchAny",
-        }
-    }
-}
-
-/// 拉取间隔单位（`intervalUnitMinutes` / `intervalUnitHours`）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IntervalUnit {
-    /// 分钟。
-    Minutes,
-    /// 小时。
-    Hours,
-}
-
-impl IntervalUnit {
-    /// 展示文案键。
-    pub const fn label_key(&self) -> &'static str {
-        match self {
-            IntervalUnit::Minutes => "automation.datasource.form.intervalUnitMinutes",
-            IntervalUnit::Hours => "automation.datasource.form.intervalUnitHours",
-        }
-    }
-}
+// 规则操作符（`operatorIs` / `operatorContains`）。
+label_enum!(Op, Is => "operatorIs", Contains => "operatorContains");
+// 规则组合关系（`matchAll` / `matchAny`）。
+label_enum!(RuleMatch, All => "matchAll", Any => "matchAny");
+// 拉取间隔单位（`intervalUnitMinutes` / `intervalUnitHours`）。
+label_enum!(IntervalUnit, Minutes => "intervalUnitMinutes", Hours => "intervalUnitHours");
 
 /// 拉取策略：每 N 单位（`intervalEvery`+数值+单位）或仅一次（`intervalPullOnce`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PullPolicy {
-    /// 每 `value` 个 `unit` 拉取。
     Every { value: u32, unit: IntervalUnit },
-    /// 拉取一次。
     Once,
 }
 
@@ -258,68 +163,72 @@ impl PullPolicy {
     /// 展示文案（如「每 3 小时」/「拉取一次」）。
     pub fn label(&self) -> String {
         match self {
-            PullPolicy::Once => t("automation.datasource.form.intervalPullOnce").to_string(),
-            PullPolicy::Every { value, unit } => format!(
-                "{} {} {}",
-                t("automation.datasource.form.intervalEvery"),
-                value,
-                t(unit.label_key())
-            ),
+            PullPolicy::Once => ns("intervalPullOnce").to_string(),
+            PullPolicy::Every { value, unit } => {
+                format!("{} {} {}", ns("intervalEvery"), value, unit.label())
+            }
         }
     }
 }
 
-/// 规则生成/预览阶段（生成区文案随阶段切换）。
+/// 规则生成/预览阶段：`generating` / `previewing` / `generateEmptyHint`。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GenStage {
-    /// 空闲（无阶段提示）。
     #[default]
     Idle,
-    /// 生成中（`generating`）。
     Generating,
-    /// 预览中（`previewing`）。
     Previewing,
-    /// 描述提不出有效条件（`generateEmptyHint`）。
     NoExtract,
 }
 
 impl GenStage {
-    /// 阶段提示键；空闲 ⇒ `None`（fail-closed）。
-    pub fn stage_key(&self) -> Option<&'static str> {
+    /// 阶段提示；空闲 ⇒ `None`（fail-closed）。
+    pub fn stage_label(&self) -> Option<&'static str> {
         match self {
             GenStage::Idle => None,
-            GenStage::Generating => Some("automation.datasource.form.generating"),
-            GenStage::Previewing => Some("automation.datasource.form.previewing"),
-            GenStage::NoExtract => Some("automation.datasource.form.generateEmptyHint"),
+            GenStage::Generating => Some(ns("generating")),
+            GenStage::Previewing => Some(ns("previewing")),
+            GenStage::NoExtract => Some(ns("generateEmptyHint")),
         }
     }
 }
 
-/// 测试同步阶段（测试区文案随阶段切换）。
+/// 测试同步阶段：`testing` / `testFailed` / `testEmpty` / `testResultTitle`。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TestStage {
-    /// 空闲（无结果）。
     #[default]
     Idle,
-    /// 测试中（`testRulesRunning`）。
     Testing,
-    /// 测试失败（`testFailed`）。
     Failed,
-    /// 未匹配到任何数据（`testEmpty`）。
     Empty,
-    /// 已出结果（`testResultTitle`）。
     Done,
 }
 
 impl TestStage {
-    /// 阶段提示键；空闲 ⇒ `None`。
-    pub fn stage_key(&self) -> Option<&'static str> {
+    /// 测试按钮文案：测试中显示进行中文案，其余回默认动作（`testRules`）。
+    pub fn action_label(&self) -> &'static str {
+        match self {
+            TestStage::Testing => ns("testing"),
+            _ => ns("testRules"),
+        }
+    }
+
+    /// 阶段提示；空闲 ⇒ `None`。
+    pub fn stage_label(&self) -> Option<&'static str> {
         match self {
             TestStage::Idle => None,
-            TestStage::Testing => Some("automation.datasource.form.testRulesRunning"),
-            TestStage::Failed => Some("automation.datasource.form.testFailed"),
-            TestStage::Empty => Some("automation.datasource.form.testEmpty"),
-            TestStage::Done => Some("automation.datasource.form.testResultTitle"),
+            TestStage::Testing => Some(ns("testRulesRunning")),
+            TestStage::Failed => Some(ns("testFailed")),
+            TestStage::Empty => Some(ns("testEmpty")),
+            TestStage::Done => Some(ns("testResultTitle")),
+        }
+    }
+
+    /// 最近一次测试结果文案；仅 `Done` 提供（⛔ 未出结果不展示数值）。
+    pub fn result_labels(&self) -> Vec<&'static str> {
+        match self {
+            TestStage::Done => vec![ns("testResultSummary"), ns("testRulesResultTitle")],
+            _ => Vec::new(),
         }
     }
 }
@@ -327,27 +236,22 @@ impl TestStage {
 /// 过滤规则行：字段 / 操作符 / 值（空段显示全表 `rule*Placeholder` 占位符）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FilterRule {
-    /// 字段名（如 labels）。
     pub field: String,
-    /// 操作符。
     pub op: Op,
-    /// 比较值（如 ai-ready）。
     pub value: String,
 }
 
-/// 已选连接器；未授权 ⇒ 连接器区转 `Unauthorized` 分支（⛔ 不持凭据，只记名称）。
+/// 已选连接器（只记展示名与授权态；⛔ 不持凭据、不判权限）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectorPick {
-    /// 连接器名（展示用）。
     pub name: String,
-    /// 是否已在连接器配置中完成授权。
     pub authorized: bool,
 }
 
-/// 连接器区视图分支（fail-closed：未下发 ≠ 未选择 ≠ 已选，三态分明）。
+/// 连接器区视图分支（fail-closed：未下发 ≠ 未选择 ≠ 已选）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectorView {
-    /// 连接器目录未下发（如实显示「未下发」，⛔ 不渲染空目录）。
+    /// 目录未下发（如实显示「未下发」，⛔ 不渲染空目录）。
     NotDelivered,
     /// 目录已下发但未选择（`connectorEmpty` 空态）。
     Empty,
@@ -357,7 +261,7 @@ pub enum ConnectorView {
     Picked,
 }
 
-/// 规则区视图分支：无规则 ⇒ 空态文案（⛔ 不是空列表）。
+/// 规则区视图分支：空输入 ⇒ 空态文案（⛔ 不是空列表）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RulesView {
     /// 空态（`rulesEmpty`）。
@@ -369,69 +273,47 @@ pub enum RulesView {
 /// 数据源表单载体（纯数据层；视图是它的纯函数）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DsForm {
-    /// 状态机分支。
     pub state: State,
-    /// 已选连接器；`None` ⇒ 连接器区空态。
     pub connector: Option<ConnectorPick>,
-    /// 同步说明（自然语言描述，驱动规则生成）。
     pub filter_text: String,
-    /// 过滤规则集。
     pub rules: Vec<FilterRule>,
-    /// 规则组合关系。
     pub match_mode: RuleMatch,
-    /// 拉取策略（默认每 3 小时）。
     pub interval: PullPolicy,
-    /// 规则生成/预览阶段。
     pub gen: GenStage,
-    /// 测试同步阶段。
     pub test: TestStage,
-    /// 保存中（底部动作转 `saving`）。
     pub saving: bool,
-}
-
-impl Default for DsForm {
-    fn default() -> Self {
-        Self {
-            state: State::NotDelivered,
-            connector: None,
-            filter_text: String::new(),
-            rules: Vec::new(),
-            match_mode: RuleMatch::All,
-            interval: PullPolicy::Every {
-                value: 3,
-                unit: IntervalUnit::Hours,
-            },
-            gen: GenStage::Idle,
-            test: TestStage::Idle,
-            saving: false,
-        }
-    }
 }
 
 impl DsForm {
     /// 未下发的诚实构造（fail-closed 默认；⛔ 不伪造目录/条目/数值）。
+    #[rustfmt::skip]
     pub fn not_delivered() -> Self {
-        Self::default()
+        Self {
+            state: State::NotDelivered, connector: None, filter_text: String::new(),
+            rules: Vec::new(), match_mode: RuleMatch::All,
+            interval: PullPolicy::Every { value: 3, unit: IntervalUnit::Hours },
+            gen: GenStage::Idle, test: TestStage::Idle, saving: false,
+        }
     }
 
     /// 页面标题（创建/编辑分支）；未下发/未授权 ⇒ `None`（fail-closed）。
     pub fn title(&self) -> Option<&'static str> {
         match self.state {
-            State::Create => text("automation.datasource.form.titleCreate"),
-            State::Edit => text("automation.datasource.form.titleEdit"),
+            State::Create => Some(ns("titleCreate")),
+            State::Edit => Some(ns("titleEdit")),
             _ => None,
         }
     }
 
     /// 连接器区视图分支（纯函数）。
     pub fn connector_view(&self) -> ConnectorView {
-        match self.state {
-            State::NotDelivered => ConnectorView::NotDelivered,
-            State::Unauthorized => ConnectorView::Unauthorized,
-            _ => match self.connector {
-                Some(_) => ConnectorView::Picked,
-                None => ConnectorView::Empty,
-            },
+        if self.state == State::NotDelivered {
+            return ConnectorView::NotDelivered;
+        }
+        match &self.connector {
+            None => ConnectorView::Empty,
+            Some(c) if !c.authorized => ConnectorView::Unauthorized,
+            Some(_) => ConnectorView::Picked,
         }
     }
 
@@ -446,13 +328,8 @@ impl DsForm {
 
     /// 规则计数文案（`{count} 条` 模板替换）；无规则 ⇒ `None`。
     pub fn rule_count_text(&self) -> Option<String> {
-        (!self.rules.is_empty()).then(|| {
-            t("automation.datasource.form.ruleCountValue").replacen(
-                "{count}",
-                &self.rules.len().to_string(),
-                1,
-            )
-        })
+        (!self.rules.is_empty())
+            .then(|| ns("ruleCountValue").replacen("{count}", &self.rules.len().to_string(), 1))
     }
 
     /// 拉取间隔展示文案。
@@ -460,67 +337,33 @@ impl DsForm {
         self.interval.label()
     }
 
-    /// 生成区动作键序列：无描述（生成/生成并预览）⇄ 有描述（重新描述/重新生成）。
-    pub fn generate_keys(&self) -> &'static [&'static str] {
+    /// 生成区动作文案：无描述（生成/生成并预览）⇄ 有描述（重新描述/重新生成）。
+    #[rustfmt::skip]
+    pub fn generate_labels(&self) -> Vec<&'static str> {
         if self.filter_text.is_empty() {
-            &[
-                "automation.datasource.form.generateRulesWithSparkle",
-                "automation.datasource.form.generateAndPreview",
-                "automation.datasource.form.generateRules",
-            ]
+            vec![ns("generateRulesWithSparkle"), ns("generateAndPreview"), ns("generateRules")]
         } else {
-            &[
-                "automation.datasource.form.generateRulesWithSparkle",
-                "automation.datasource.form.redescribe",
-                "automation.datasource.form.regenerate",
-            ]
+            vec![ns("generateRulesWithSparkle"), ns("redescribe"), ns("regenerate")]
         }
     }
 
-    /// 测试区按钮文案键：测试中显示进行中文案，其余回默认动作。
-    pub fn test_action_key(&self) -> &'static str {
-        match self.test {
-            TestStage::Testing => "automation.datasource.form.testing",
-            _ => "automation.datasource.form.testRules",
-        }
-    }
-
-    /// 最近一次测试结果文案键；仅 `Done` 分支提供（⛔ 未出结果不展示数值）。
-    pub fn test_result_keys(&self) -> &'static [&'static str] {
-        match self.test {
-            TestStage::Done => &[
-                "automation.datasource.form.testResultSummary",
-                "automation.datasource.form.testRulesResultTitle",
-            ],
-            _ => &[],
-        }
-    }
-
-    /// 底部动作键序列：保存中 ⇒ `saving`；创建态（保存并启用/保存/创建）；
+    /// 底部动作文案：保存中 ⇒ `saving`；创建态（保存并启用/保存/创建）；
     /// 编辑态（保存 + 启用/禁用切换对）；未下发 ⇒ 空（fail-closed）。
-    pub fn footer_keys(&self) -> &'static [&'static str] {
+    pub fn footer_labels(&self) -> Vec<&'static str> {
         if self.saving {
-            return &["automation.datasource.form.saving"];
+            return vec![ns("saving")];
         }
         match self.state {
-            State::Create => &[
-                "automation.datasource.form.saveAndEnable",
-                "automation.datasource.form.save",
-                "automation.datasource.form.create",
-            ],
-            State::Edit => &[
-                "automation.datasource.form.save",
-                "automation.datasource.form.enable",
-                "automation.datasource.form.disable",
-            ],
-            _ => &[],
+            State::Create => vec![ns("saveAndEnable"), ns("save"), ns("create")],
+            State::Edit => vec![ns("save"), ns("enable"), ns("disable")],
+            _ => Vec::new(),
         }
     }
 }
 
 // ── GPUI 层 ─────────────────────────────────────────────────────────
 
-/// 动作 chip（颜色一律 theme token，⛔ 不硬编码色值；触摸目标 ≥48dp 由 px/py 保证）。
+/// 动作 chip（颜色一律 theme token，⛔ 不硬编码色值）。
 fn chip(theme: &Theme, label: impl Into<SharedString>) -> Div {
     div()
         .px_3()
@@ -532,14 +375,24 @@ fn chip(theme: &Theme, label: impl Into<SharedString>) -> Div {
         .child(label.into())
 }
 
-/// 键序列 → chip 行。
-fn chips(theme: &Theme, keys: &[&str]) -> Div {
+/// 文案序列 → chip 行。
+fn chips(theme: &Theme, labels: &[&'static str]) -> Div {
     div()
         .flex()
         .items_center()
         .flex_wrap()
         .gap_2()
-        .children(keys.iter().map(|k| chip(theme, t(k))))
+        .children(labels.iter().map(|l| chip(theme, *l)))
+}
+
+/// 静态说明行（muted 文案）。
+fn hint(theme: &Theme, line: impl Into<SharedString>) -> Div {
+    div().text_color(theme.muted_foreground).child(line.into())
+}
+
+/// 纵向堆叠容器（子节点列表）。
+fn stack(children: impl IntoIterator<Item = Div>) -> Div {
+    div().flex().flex_col().gap_1().children(children)
 }
 
 /// 表单分区卡：标题行 + 主体（结构对齐 `delete` 卡的 branch_card）。
@@ -557,159 +410,103 @@ fn section(theme: &Theme, heading: impl Into<SharedString>, body: Div) -> Div {
         .child(body)
 }
 
-/// 静态说明行（muted 文案）。
-fn hint(theme: &Theme, line: impl Into<SharedString>) -> Div {
-    div().text_color(theme.muted_foreground).child(line.into())
-}
-
-/// 连接器区：标题 `connector`，按 [`ConnectorView`] 四分支渲染（含未下发 fail-closed）。
+/// 连接器区：标题 `connector`；按 [`ConnectorView`] 四分支（含未下发 fail-closed）。
 fn connector_section(theme: &Theme, form: &DsForm) -> Div {
-    let picked = form
-        .connector
-        .as_ref()
-        .map(|c| c.name.clone())
-        .unwrap_or_else(|| NOT_DELIVERED.to_string());
     let body = match form.connector_view() {
         ConnectorView::NotDelivered => hint(theme, NOT_DELIVERED),
-        ConnectorView::Empty => div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(hint(theme, t("automation.datasource.form.connectorEmpty")))
-            .child(hint(theme, t("automation.datasource.form.connectorHint"))),
-        ConnectorView::Unauthorized => hint(
-            theme,
-            t("automation.datasource.form.connectorUnauthorizedHint"),
-        ),
-        ConnectorView::Picked => hint(
-            theme,
-            SharedString::from(format!(
-                "{} {}：{}",
-                t("automation.datasource.form.selected"),
-                t("automation.datasource.form.selectedConnector"),
-                picked
-            )),
-        ),
+        ConnectorView::Unauthorized => hint(theme, ns("connectorUnauthorizedHint")),
+        ConnectorView::Empty => stack([
+            hint(theme, ns("connectorEmpty")),
+            hint(theme, ns("connectorHint")),
+        ]),
+        ConnectorView::Picked => {
+            let name = &form.connector.as_ref().unwrap().name;
+            let picked = format!("{} {}", ns("selected"), name);
+            hint(theme, format!("{}：{}", ns("selectedConnector"), picked))
+        }
     };
-    section(theme, t("automation.datasource.form.connector"), body)
+    section(theme, ns("connector"), body)
 }
 
 /// 选择目标区：目标仓库未选择时如实显示 `notSelected`（⛔ 不伪造仓库列表）。
 fn repo_section(theme: &Theme) -> Div {
-    let body = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(hint(
-            theme,
-            SharedString::from(format!(
-                "{}：{}",
-                t("automation.datasource.form.selectedRepo"),
-                t("automation.datasource.form.notSelected")
-            )),
-        ))
-        .child(hint(theme, t("automation.datasource.form.repoPlaceholder")))
-        .child(hint(theme, t("automation.datasource.form.repoHint")));
-    section(theme, t("automation.datasource.form.repo"), body)
+    let target = format!("{}：{}", ns("selectedRepo"), ns("notSelected"));
+    let body = stack([
+        hint(theme, target),
+        hint(theme, ns("repoPlaceholder")),
+        hint(theme, ns("repoHint")),
+    ]);
+    section(theme, ns("repo"), body)
 }
 
-/// 同步说明区：说明输入（`filterText`）+ 过滤条件标签 + 空/占位提示。
+/// 同步说明区：说明输入 + 过滤条件标签 + 空/占位提示 + 生成动作行。
 fn filter_section(theme: &Theme, form: &DsForm) -> Div {
-    let body = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(hint(theme, t("automation.datasource.form.filterTextHint")))
-        .child(hint(
-            theme,
-            SharedString::from(format!(
-                "{}：{}",
-                t("automation.datasource.form.filterInputLabel"),
-                if form.filter_text.is_empty() {
-                    t("automation.datasource.form.filterTextPlaceholder")
-                } else {
-                    form.filter_text.as_str()
-                }
-            )),
-        ))
-        .child(hint(theme, t("automation.datasource.form.filterEmptyHint")))
-        .child(chips(theme, form.generate_keys()))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .children(form.gen.stage_key().map(|k| chip(theme, t(k)))),
-        );
-    section(theme, t("automation.datasource.form.filterText"), body)
+    let value = if form.filter_text.is_empty() {
+        ns("filterTextPlaceholder")
+    } else {
+        form.filter_text.as_str()
+    };
+    let body = stack([
+        hint(theme, ns("filterTextHint")),
+        hint(theme, format!("{}：{}", ns("filterInputLabel"), value)),
+        hint(theme, ns("filterEmptyHint")),
+        chips(theme, &form.generate_labels()),
+    ])
+    .children(form.gen.stage_label().map(|l| chip(theme, l)));
+    section(theme, ns("filterText"), body)
+}
+
+/// 空段显示占位符，否则原值。
+fn or_ph<'a>(v: &'a str, ph: &'a str) -> &'a str {
+    if v.is_empty() {
+        ph
+    } else {
+        v
+    }
 }
 
 /// 单条规则行：字段/条件/值三段（空段显示全表占位符）+ 删除动作。
 fn rule_row(theme: &Theme, rule: &FilterRule) -> Div {
-    let seg = |label: &'static str, value: &str, placeholder: &'static str| {
-        SharedString::from(format!(
-            "{} {}",
-            t(label),
-            if value.is_empty() { placeholder } else { value }
-        ))
-    };
+    let line = format!(
+        "{} {} · {} {} · {} {}",
+        ns("ruleField"),
+        or_ph(&rule.field, ns("ruleFieldPlaceholder")),
+        ns("ruleOperator"),
+        or_ph(rule.op.label(), ns("ruleOperatorPlaceholder")),
+        ns("ruleValue"),
+        or_ph(&rule.value, ns("ruleValuePlaceholder"))
+    );
     div()
         .flex()
         .items_center()
         .flex_wrap()
         .gap_2()
-        .child(seg(
-            "automation.datasource.form.ruleField",
-            &rule.field,
-            t("automation.datasource.form.ruleFieldPlaceholder"),
-        ))
-        .child(seg(
-            "automation.datasource.form.ruleOperator",
-            t(rule.op.label_key()),
-            t("automation.datasource.form.ruleOperatorPlaceholder"),
-        ))
-        .child(seg(
-            "automation.datasource.form.ruleValue",
-            &rule.value,
-            t("automation.datasource.form.ruleValuePlaceholder"),
-        ))
-        .child(chip(theme, t("automation.datasource.form.removeRule")))
+        .child(SharedString::from(line))
+        .child(chip(theme, ns("removeRule")))
 }
 
 /// 过滤规则区：空输入 ⇒ `rulesEmpty` 空态（⛔ 不是空列表）；有规则 ⇒ 计数 + 行明细。
 fn rules_section(theme: &Theme, form: &DsForm) -> Div {
+    #[rustfmt::skip]
+    let count = form.rule_count_text().unwrap_or_else(|| ns("notSelected").to_string());
     let heading = format!(
         "{}（{}：{} / {}：{}）",
-        t("automation.datasource.form.rules"),
-        t("automation.datasource.form.matchLabel"),
-        t(form.match_mode.label_key()),
-        t("automation.datasource.form.ruleCount"),
-        form.rule_count_text()
-            .as_deref()
-            .unwrap_or(t("automation.datasource.form.notSelected"))
+        ns("rules"),
+        ns("matchLabel"),
+        form.match_mode.label(),
+        ns("ruleCount"),
+        count
     );
-    let mut body = div()
+    let body = div()
         .flex()
         .flex_col()
         .gap_1()
-        .child(chips(
-            theme,
-            &[
-                "automation.datasource.form.matchAll",
-                "automation.datasource.form.matchAny",
-            ],
-        ))
-        .child(chips(
-            theme,
-            &[
-                "automation.datasource.form.addRule",
-                "automation.datasource.form.assigneeEmpty",
-            ],
-        ));
-    body = match form.rules_view() {
-        RulesView::Empty => body.child(hint(theme, t("automation.datasource.form.rulesEmpty"))),
-        RulesView::Table => body.children(form.rules.iter().map(|r| rule_row(theme, r))),
-    };
+        .child(chips(theme, &[ns("matchAll"), ns("matchAny")]))
+        .child(chips(theme, &[ns("addRule"), ns("assigneeEmpty")]))
+        .child(match form.rules_view() {
+            RulesView::Empty => hint(theme, ns("rulesEmpty")),
+            RulesView::Table => stack(form.rules.iter().map(|r| rule_row(theme, r))),
+        });
     section(theme, heading, body)
 }
 
@@ -720,65 +517,42 @@ fn interval_section(theme: &Theme, form: &DsForm) -> Div {
         .items_center()
         .flex_wrap()
         .gap_2()
-        .child(chip(theme, SharedString::from(form.interval_text())))
-        .child(chip(theme, t("automation.datasource.form.interval.3h")))
-        .child(chip(
-            theme,
-            t("automation.datasource.form.intervalPullOnce"),
-        ));
-    section(theme, t("automation.datasource.form.pullInterval"), body)
+        .child(chip(theme, form.interval_text()))
+        .child(chip(theme, ns("interval.3h")))
+        .child(chip(theme, ns("intervalPullOnce")));
+    section(theme, ns("pullInterval"), body)
 }
 
 /// 测试同步区：提示 + 动作 + 即将上线说明 + 阶段/结果行（未出结果不展示数值）。
 fn test_section(theme: &Theme, form: &DsForm) -> Div {
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(hint(theme, t("automation.datasource.form.testHint")))
-        .child(hint(theme, t("automation.datasource.form.testComingSoon")))
-        .child(chips(
-            theme,
-            &[
-                form.test_action_key(),
-                "automation.datasource.form.testButton",
-            ],
-        ));
-    if let Some(k) = form.test.stage_key() {
-        body = body.child(chip(theme, t(k)));
-    }
-    body = body.children(form.test_result_keys().iter().map(|k| hint(theme, t(k))));
-    section(theme, t("automation.datasource.form.testSection"), body)
-}
-
-/// 底部动作行（未下发 ⇒ 空行，fail-closed）。
-fn action_row(theme: &Theme, form: &DsForm) -> Div {
-    chips(theme, form.footer_keys())
+    let act = form.test.action_label();
+    let body = stack([
+        hint(theme, ns("testHint")),
+        hint(theme, ns("testComingSoon")),
+        chips(theme, &[act, ns("testButton")]),
+    ])
+    .children(form.test.stage_label().map(|l| chip(theme, l)))
+    .children(form.test.result_labels().iter().map(|l| hint(theme, *l)));
+    section(theme, ns("testSection"), body)
 }
 
 /// 主区渲染：标题行 + 六个内容节点 + 空态 + 「未下发」fail-closed 分支。
 pub fn main_area(theme: &Theme) -> AnyElement {
     let form = DsForm::not_delivered();
+    #[rustfmt::skip]
+    let title = SharedString::from(format!("{}（{}）", TITLE, form.title().unwrap_or(NOT_DELIVERED)));
     div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(
-            div()
-                .text_color(theme.foreground)
-                .child(SharedString::from(format!(
-                    "{}（{}）",
-                    TITLE,
-                    form.title().unwrap_or(NOT_DELIVERED)
-                ))),
-        )
+        .child(div().text_color(theme.foreground).child(title))
         .child(connector_section(theme, &form))
         .child(repo_section(theme))
         .child(filter_section(theme, &form))
         .child(rules_section(theme, &form))
         .child(interval_section(theme, &form))
         .child(test_section(theme, &form))
-        .child(action_row(theme, &form))
+        .child(chips(theme, &form.footer_labels()))
         .into_any_element()
 }
 
@@ -786,58 +560,141 @@ pub fn main_area(theme: &Theme) -> AnyElement {
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{resolve, text, State, NOT_DELIVERED, NS_PREFIX, TEXTS, TITLE};
+    use super::{
+        main_area, resolve, text, ConnectorPick, ConnectorView, DsForm, FilterRule, GenStage,
+        IntervalUnit, Op, PullPolicy, RuleMatch, RulesView, State, TestStage, NOT_DELIVERED,
+        NS_PREFIX, TEXTS,
+    };
+    use gpui_kit::component::Theme;
 
-    /// ① 纯函数层状态/计数正确：全表 68 键、全部在命名空间内且不重复。
+    /// ① 纯函数层计数正确：全表 68 键、不重复，短名拼前缀后仍可解析。
     #[test]
     fn table_has_68_unique_keys_in_namespace() {
         assert_eq!(TEXTS.len(), 68);
-        assert!(TEXTS.iter().all(|(k, _)| k.starts_with(NS_PREFIX)));
         let mut keys: Vec<&str> = TEXTS.iter().map(|(k, _)| *k).collect();
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), TEXTS.len());
+        assert!(keys.iter().all(|k| !k.is_empty() && !k.starts_with('.')));
     }
 
-    /// ③ 文案逐字一致（对 ≥3 个 key 断言，含占位符与特殊符号）。
+    /// ③ 文案逐字一致（≥3 个 key，含占位符模板与特殊符号）。
     #[test]
     fn copy_is_verbatim_from_table() {
-        assert_eq!(text("automation.datasource.form.connector"), Some("连接器"));
-        assert_eq!(
-            text("automation.datasource.form.titleCreate"),
-            Some("添加外部数据源")
-        );
-        assert_eq!(
-            text("automation.datasource.form.assigneeEmpty"),
-            Some("assignee 为空")
-        );
-        assert_eq!(
-            text("automation.datasource.form.ruleCountValue"),
-            Some("{count} 条")
-        );
+        let t = |n: &str| text(&format!("{NS_PREFIX}.{n}"));
+        assert_eq!(t("connector"), Some("连接器"));
+        assert_eq!(t("titleCreate"), Some("添加外部数据源"));
+        assert_eq!(t("assigneeEmpty"), Some("assignee 为空"));
+        assert_eq!(t("ruleCountValue"), Some("{count} 条"));
+        assert_eq!(t("interval.3h"), Some("3 小时"));
+        assert_eq!(t("testRules"), Some("▶ 测试"));
     }
 
-    /// ② 空输入 ⇒ `NotDelivered` 空态（fail-closed，不是空列表）。
+    /// ② 空输入 ⇒ 空态（不是空列表）+ `resolve` 全分支（每分支一条断言）。
     #[test]
-    fn empty_input_yields_not_delivered() {
+    fn empty_input_yields_empty_states_not_empty_lists() {
+        let form = DsForm::not_delivered();
+        assert_eq!(form.state, State::NotDelivered);
         assert_eq!(State::default(), State::NotDelivered);
-        assert_eq!(resolve(None, None), State::NotDelivered);
-        assert_eq!(resolve(Some(false), Some(true)), State::NotDelivered);
+        assert_eq!(form.connector_view(), ConnectorView::NotDelivered);
+        assert_eq!(form.rules_view(), RulesView::Empty);
+        assert!(form.rule_count_text().is_none());
+        assert!(form.footer_labels().is_empty());
         assert_eq!(NOT_DELIVERED, "未下发");
-    }
-
-    /// ⑤ 状态分支覆盖：每条分支一条断言。
-    #[test]
-    fn resolve_covers_every_branch() {
+        assert_eq!(resolve(None, None), State::NotDelivered);
+        assert_eq!(resolve(None, Some(true)), State::NotDelivered);
+        assert_eq!(resolve(Some(false), Some(true)), State::NotDelivered);
         assert_eq!(resolve(Some(true), None), State::Create);
         assert_eq!(resolve(Some(true), Some(true)), State::Create);
         assert_eq!(resolve(Some(true), Some(false)), State::Unauthorized);
-        assert_eq!(resolve(None, Some(true)), State::NotDelivered);
     }
 
-    /// 浮层名非空（house style：TITLE 为本卡视图名）。
+    /// ⑤ 连接器区分支覆盖 + 页面标题随创建/编辑切换。
     #[test]
-    fn title_is_nonempty() {
-        assert!(!TITLE.is_empty());
+    fn connector_view_covers_every_branch() {
+        let mut form = DsForm::not_delivered();
+        form.state = State::Create;
+        assert_eq!(form.connector_view(), ConnectorView::Empty);
+        #[rustfmt::skip]
+        let demo = |ok: bool| Some(ConnectorPick { name: "demo".into(), authorized: ok });
+        form.connector = demo(false);
+        assert_eq!(form.connector_view(), ConnectorView::Unauthorized);
+        form.connector = demo(true);
+        assert_eq!(form.connector_view(), ConnectorView::Picked);
+        assert_eq!(form.title(), Some("添加外部数据源"));
+        form.state = State::Edit;
+        assert_eq!(form.title(), Some("编辑外部数据源"));
+    }
+
+    /// ① 计数/间隔模板：`{count} 条` 替换、操作符与关系文案、「每 3 小时」。
+    #[test]
+    fn count_and_interval_templates() {
+        #[rustfmt::skip]
+        let rule = |f: &str, op: Op, v: &str| FilterRule { field: f.into(), op, value: v.into() };
+        let mut form = DsForm::not_delivered();
+        form.state = State::Create;
+        form.rules = vec![
+            rule("labels", Op::Contains, "ai-ready"),
+            rule("assignee", Op::Is, ""),
+        ];
+        assert_eq!(form.rules_view(), RulesView::Table);
+        assert_eq!(form.rule_count_text().as_deref(), Some("2 条"));
+        assert_eq!(Op::Is.label(), "为");
+        assert_eq!(Op::Contains.label(), "包含");
+        assert_eq!(RuleMatch::All.label(), "全部满足");
+        form.match_mode = RuleMatch::Any;
+        assert_eq!(form.match_mode.label(), "满足任一");
+        form.interval = PullPolicy::Once;
+        assert_eq!(form.interval_text(), "拉取一次");
+        #[rustfmt::skip]
+        let every3h = PullPolicy::Every { value: 3, unit: IntervalUnit::Hours };
+        form.interval = every3h;
+        assert_eq!(form.interval_text(), "每 3 小时");
+        assert_eq!(IntervalUnit::Minutes.label(), "分钟");
+    }
+
+    /// ⑤ 生成/测试/保存各阶段分支覆盖 + 动作文案随状态切换（每分支一条断言）。
+    #[test]
+    fn stage_and_action_labels_cover_every_branch() {
+        assert_eq!(GenStage::Idle.stage_label(), None);
+        assert_eq!(TestStage::Idle.stage_label(), None);
+        for (got, want) in [
+            (GenStage::Generating.stage_label(), "生成中..."),
+            (GenStage::Previewing.stage_label(), "预览中..."),
+            (
+                GenStage::NoExtract.stage_label(),
+                "无法从描述中提取有效的过滤条件",
+            ),
+            (TestStage::Testing.stage_label(), "测试中..."),
+            (TestStage::Failed.stage_label(), "测试失败"),
+            (TestStage::Empty.stage_label(), "未匹配到任何数据"),
+            (TestStage::Done.stage_label(), "最近一次 mock 测试结果"),
+        ] {
+            assert_eq!(got, Some(want));
+        }
+        assert_eq!(TestStage::Idle.action_label(), "▶ 测试");
+        assert_eq!(TestStage::Testing.action_label(), "测试中...");
+        assert!(TestStage::Idle.result_labels().is_empty());
+        assert_eq!(TestStage::Done.result_labels().len(), 2);
+        let mut form = DsForm::not_delivered();
+        form.state = State::Create;
+        assert_eq!(form.generate_labels()[0], "✨ 生成规则");
+        assert_eq!(form.generate_labels()[1], "✨ 生成并预览");
+        assert_eq!(form.generate_labels()[2], "生成规则");
+        assert_eq!(form.footer_labels(), vec!["保存并启用", "保存", "创建"]);
+        form.state = State::Edit;
+        assert_eq!(form.footer_labels(), vec!["保存", "启用", "禁用"]);
+        form.saving = true;
+        assert_eq!(form.footer_labels(), vec!["保存中..."]);
+        form.filter_text = "只同步 ai-ready".into();
+        assert_eq!(form.generate_labels()[0], "✨ 生成规则");
+        assert_eq!(form.generate_labels()[1], "重新描述");
+        assert_eq!(form.generate_labels()[2], "重新生成");
+    }
+
+    /// ④ `main_area(&Theme::default())` 不 panic（只构造元素树）。
+    #[test]
+    fn main_area_renders_without_panic() {
+        let _ = main_area(&Theme::default());
     }
 }
