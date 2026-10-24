@@ -2,7 +2,7 @@
 //!
 //! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `search + filter`。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 数据源在运行时侧：数据未下发时如实显示「未下发」，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
@@ -124,6 +124,7 @@ impl SearchFilterModel {
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    let model = SearchFilterModel::not_delivered();
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
@@ -139,16 +140,168 @@ pub fn main_area(theme: &Theme) -> Div {
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
+        .child(search_panel(theme))
+        .child(filter_panel(theme))
+        .child(content_area(theme, &model))
+}
+
+/// 搜索区：占位输入行 + 搜索选项 + 匹配导航 + 搜索范围。
+fn search_panel(theme: &Theme) -> Div {
+    div()
+        .mx_4()
+        .mt_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md()
         .child(
             div()
-                .flex_1()
                 .flex()
                 .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .gap_2()
+                .px_2()
+                .py_1()
+                .border_1()
+                .border_color(theme.border)
+                .rounded_md()
+                // fail-closed：搜索词恒为空 ⇒ 输入框如实只显示占位，不伪造已输入态。
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(PLACEHOLDER),
+                ),
         )
+        .child(option_row(theme, &SEARCH_TOGGLES))
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .children(MATCH_NAV.iter().map(|nav| muted_text(theme, nav))),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .child(muted_text(theme, SCOPE_LABEL))
+                .child(option_row(theme, &SCOPE_OPTIONS)),
+        )
+}
+
+/// 筛选区：面板标题 + 重置按钮 + 时间/状态两组筛选项。
+fn filter_panel(theme: &Theme) -> Div {
+    div()
+        .mx_4()
+        .mt_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(FILTER_TITLE),
+                )
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .border_1()
+                        .border_color(theme.border)
+                        .rounded_md()
+                        .text_color(theme.accent)
+                        .child(CLEAR_ALL),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(muted_text(theme, DATE_FILTER_LABEL))
+                .child(option_row(theme, &DATE_FILTER_OPTIONS)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(muted_text(theme, STATUS_FILTER_LABEL))
+                        .child(muted_text(theme, FILTER_MULTI)),
+                )
+                .child(option_row(theme, &STATUS_FILTER_OPTIONS)),
+        )
+}
+
+/// 内容区：按纯数据层分支 —— 未下发 / 空态 / 条目。
+fn content_area(theme: &Theme, model: &SearchFilterModel) -> Div {
+    let area = div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm();
+    match model.entries_view() {
+        EntriesView::NotDelivered => area.text_color(theme.muted_foreground).child(NOT_DELIVERED),
+        EntriesView::Empty => area.text_color(theme.muted_foreground).child(NO_RESULTS),
+        EntriesView::Items(items) => area
+            .flex_col()
+            .text_color(theme.foreground)
+            .children(items.iter().map(|entry| div().px_4().py_2().child(*entry))),
+    }
+}
+
+/// 可选项胶囊（选项无选中态数据 ⇒ 一律中性样式，不伪造选中）。
+fn chip(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md()
+        .text_color(theme.foreground)
+        .child(text)
+}
+
+/// 弱化说明文字（组标题/导航/提示）。
+fn muted_text(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 胶囊行（自动换行）。
+fn option_row(theme: &Theme, options: &'static [&'static str]) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .gap_1()
+        .children(options.iter().map(|option| chip(theme, option)))
 }
 #[cfg(test)]
 mod tests {
