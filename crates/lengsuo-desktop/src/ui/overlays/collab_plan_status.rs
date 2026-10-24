@@ -234,3 +234,145 @@ fn item_card(theme: &Theme, it: &CollabPlanStatusItem) -> AnyElement {
         .child(SharedString::from(it.status.desc()))
         .into_any_element()
 }
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]`。显式列符号（同 `collab_plan_detail`）。
+    use super::{
+        main_area, render, resolve, text, CollabPlanStatusItem, CollabPlanStatusState, PlanStatus,
+        PANEL_TITLE, TEXTS,
+    };
+    use gpui_kit::component::Theme;
+
+    #[test]
+    fn copy_is_verbatim() {
+        // 任务书逐字摘录 12 条，键值一字不差
+        assert_eq!(
+            text("collab.plan.status.desc.completed"),
+            Some("已完成，可回顾产出与变更记录")
+        );
+        assert_eq!(
+            text("collab.plan.status.desc.fallback"),
+            Some("按状态维护事项并持续推进项目协作。")
+        );
+        assert_eq!(
+            text("collab.plan.status.desc.in_progress"),
+            Some("正在推进中，关注进度与截止时间")
+        );
+        assert_eq!(
+            text("collab.plan.status.desc.paused"),
+            Some("当前存在阻塞，等待恢复处理")
+        );
+        assert_eq!(
+            text("collab.plan.status.desc.pending"),
+            Some("已创建，等待成员认领并开始执行")
+        );
+        assert_eq!(text("collab.plan.status.label.completed"), Some("完成"));
+        assert_eq!(text("collab.plan.status.label.in_progress"), Some("进行中"));
+        assert_eq!(text("collab.plan.status.label.paused"), Some("暂停"));
+        assert_eq!(text("collab.plan.status.label.pending"), Some("待开始"));
+        assert_eq!(
+            text("collab.plan.status.shortLabel.completed"),
+            Some("已完成")
+        );
+        assert_eq!(text("collab.plan.status.shortLabel.paused"), Some("已暂停"));
+        assert_eq!(
+            text("collab.plan.status.shortLabel.pending"),
+            Some("未启动")
+        );
+        assert_eq!(PANEL_TITLE, "协作计划·状态");
+    }
+
+    #[test]
+    fn ns_table_locked() {
+        // 已落 12/27 键：其余 15 键全表源不在本 worktree，缺词空串显形（见模块文档）
+        assert_eq!(TEXTS.len(), 12);
+        let mut seen: Vec<&str> = TEXTS.iter().map(|(k, _)| *k).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), TEXTS.len());
+        assert!(seen.iter().all(|k| k.starts_with("collab.plan.status.")));
+    }
+
+    #[test]
+    fn fail_closed_lookup_and_slug() {
+        assert_eq!(text("collab.plan.status.nope"), None);
+        assert_eq!(PlanStatus::from_slug("canceled"), None);
+        assert_eq!(PlanStatus::from_slug("pending"), Some(PlanStatus::Pending));
+        assert_eq!(
+            PlanStatus::from_slug("in_progress"),
+            Some(PlanStatus::InProgress)
+        );
+        assert_eq!(PlanStatus::from_slug("paused"), Some(PlanStatus::Paused));
+        assert_eq!(
+            PlanStatus::from_slug("completed"),
+            Some(PlanStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn status_copy_complete_except_known_gap() {
+        assert_eq!(PlanStatus::Pending.label(), "待开始");
+        assert_eq!(PlanStatus::InProgress.label(), "进行中");
+        assert_eq!(PlanStatus::Paused.label(), "暂停");
+        assert_eq!(PlanStatus::Completed.label(), "完成");
+        assert_eq!(PlanStatus::Pending.desc(), "已创建，等待成员认领并开始执行");
+        assert_eq!(
+            PlanStatus::InProgress.desc(),
+            "正在推进中，关注进度与截止时间"
+        );
+        assert_eq!(PlanStatus::Paused.desc(), "当前存在阻塞，等待恢复处理");
+        assert_eq!(PlanStatus::Completed.desc(), "已完成，可回顾产出与变更记录");
+        assert_eq!(PlanStatus::Pending.short_label(), "未启动");
+        assert_eq!(PlanStatus::Paused.short_label(), "已暂停");
+        assert_eq!(PlanStatus::Completed.short_label(), "已完成");
+        // 全表缺口：shortLabel.in_progress 缺词 ⇒ 空串显形，补表后此断言应改为逐字值
+        assert_eq!(PlanStatus::InProgress.short_label(), "");
+    }
+
+    #[test]
+    fn state_machine_contract() {
+        // 未拉取过 ≠ 空集：默认态 Loading，None 不落 Empty
+        assert_eq!(
+            CollabPlanStatusState::default(),
+            CollabPlanStatusState::Loading
+        );
+        assert_eq!(resolve(None), CollabPlanStatusState::Loading);
+        assert_eq!(resolve(Some(Vec::new())), CollabPlanStatusState::Empty);
+        let item = CollabPlanStatusItem {
+            title: "联调事项".into(),
+            status: PlanStatus::InProgress,
+        };
+        assert_eq!(
+            resolve(Some(vec![item.clone()])),
+            CollabPlanStatusState::Normal(vec![item])
+        );
+        // 非正常分支提示统一落全表 fallback 文案；Normal 无提示行
+        let fb = "按状态维护事项并持续推进项目协作。";
+        assert_eq!(CollabPlanStatusState::Loading.status_text(), fb);
+        assert_eq!(CollabPlanStatusState::Failed.status_text(), fb);
+        assert_eq!(CollabPlanStatusState::Empty.status_text(), fb);
+        assert_eq!(CollabPlanStatusState::Normal(vec![]).status_text(), "");
+    }
+
+    #[test]
+    fn render_branches_construct() {
+        let theme = Theme::default();
+        let _ = main_area(&theme); // 固定签名入口只构造元素树，不 panic
+        let _ = render(&theme, &CollabPlanStatusState::Loading);
+        let _ = render(&theme, &CollabPlanStatusState::Failed);
+        let _ = render(&theme, &CollabPlanStatusState::Empty);
+        let items = vec![
+            CollabPlanStatusItem {
+                title: "甲".into(),
+                status: PlanStatus::Pending,
+            },
+            CollabPlanStatusItem {
+                title: "乙".into(),
+                status: PlanStatus::Completed,
+            },
+        ];
+        let _ = render(&theme, &CollabPlanStatusState::Normal(items));
+    }
+}
