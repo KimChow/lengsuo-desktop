@@ -220,33 +220,192 @@ impl TodoList {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`TodoOverlayState::initial`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render(theme, &TodoOverlayState::initial())
+}
+
+/// 按状态渲染整层：标题行 + 新任务输入行 + 清单区 + 底栏计数行。
+fn render(theme: &Theme, state: &TodoOverlayState) -> Div {
+    let list = match state {
+        TodoOverlayState::Ready(list) => Some(list),
+        TodoOverlayState::NotDelivered => None,
+    };
+    let mut col = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme))
+        .child(input_row(theme, list))
+        .child(list_area(theme, state));
+    if let Some(bar) = footer_row(theme, state) {
+        col = col.child(bar);
+    }
+    col
+}
+
+/// 标题行（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 新任务输入行：标签 + 标题/描述输入位 + 添加任务（未下发时草稿恒空 ⇒ 只显示占位）。
+fn input_row(theme: &Theme, list: Option<&TodoList>) -> Div {
+    let (draft_title, draft_description) = match list {
+        Some(list) => (list.draft_title.as_str(), list.draft_description.as_str()),
+        None => ("", ""),
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(NEW_TASK),
         )
+        .child(input_box(theme, draft_title, TASK_TITLE))
+        .child(input_box(theme, draft_description, TASK_DESCRIPTION))
+        .child(text_button(theme, ADD_TASK, true))
+}
+
+/// 输入位样式：有值显示值，无值显示占位（占位用弱色）。
+fn input_box(theme: &Theme, value: &str, placeholder: &'static str) -> Div {
+    let (text, color) = if value.is_empty() {
+        (placeholder.to_string(), theme.muted_foreground)
+    } else {
+        (value.to_string(), theme.foreground)
+    };
+    div()
+        .flex_1()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(color)
+        .child(text)
+}
+
+/// 清单区：未下发 / 空态居中提示，有条目时渲染清单行。
+fn list_area(theme: &Theme, state: &TodoOverlayState) -> Div {
+    if let Some(text) = state.body_text() {
+        return div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(text);
+    }
+    let TodoOverlayState::Ready(list) = state else {
+        unreachable!("body_text 为 None 时必然是 Ready");
+    };
+    let mut col = div().flex_1().flex().flex_col();
+    for (idx, item) in list.items.iter().enumerate() {
+        let editing = list.editing.as_ref().filter(|edit| edit.index == idx);
+        col = col.child(task_row(theme, item, editing));
+    }
+    col
+}
+
+/// 清单行：状态徽标 + 标题/描述 + 行内操作；编辑中的行换成草稿位 + 保存/取消。
+fn task_row(theme: &Theme, item: &TodoItem, editing: Option<&Editing>) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(badge(theme, item.status));
+    if let Some(edit) = editing {
+        return row
+            .child(input_box(theme, &edit.title, TASK_TITLE))
+            .child(text_button(theme, SAVE, true))
+            .child(text_button(theme, CANCEL, false));
+    }
+    let mut text_col = div().flex_1().flex().flex_col().child(
+        div()
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(item.title.clone()),
+    );
+    if !item.description.is_empty() {
+        text_col = text_col.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(item.description.clone()),
+        );
+    }
+    row.child(text_col)
+        .child(text_button(theme, EDIT, false))
+        .child(text_button(theme, DELETE, false))
+}
+
+/// 状态徽标（进行中/错误用强调描边，等待/已完成用弱样式）。
+fn badge(theme: &Theme, status: TodoStatus) -> Div {
+    let (border, text) = match status {
+        TodoStatus::InProgress | TodoStatus::Error => (theme.accent, theme.foreground),
+        TodoStatus::Waiting | TodoStatus::Completed => (theme.border, theme.muted_foreground),
+    };
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(border)
+        .text_xs()
+        .text_color(text)
+        .child(status.label())
+}
+
+/// 文本按钮（文案即无障碍标签）；primary 用强调描边。
+fn text_button(theme: &Theme, label: &'static str, primary: bool) -> Div {
+    div()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if primary { theme.accent } else { theme.border })
+        .text_sm()
+        .text_color(if primary {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(label)
+}
+
+/// 底栏计数行：仅有条目时出现（⛔ 未下发/空态不伪造数值）。
+fn footer_row(theme: &Theme, state: &TodoOverlayState) -> Option<Div> {
+    state.footer_count().map(|count| {
+        div()
+            .flex()
+            .items_center()
+            .px_4()
+            .py_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(div().flex_1())
+            .child(count)
+    })
 }
 #[cfg(test)]
 mod tests {
