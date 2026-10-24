@@ -1,10 +1,19 @@
-//! 办公文档预览（`PreviewKind::Office`）的内容渲染。
+//! 办公文档预览（`PreviewKind::Office`）：A14 真解码 + 载荷渲染。
 //!
-//! 分两层落：纯函数层（子类型分派/标签/工具条项，无 GPUI 依赖）→
-//! 接线层（工具条 + 页面/网格占位区）。⛔ 不读文件、不解析文档内容、
-//! 不加解析依赖——预览内容需运行时契约下发，未下发前只诚实显示占位。
+//! 分两层落：纯函数层（子类型分派/标签/工具条/zip+XML 事件流解码，无 GPUI 依赖）→
+//! 接线层（外壳 + 载荷渲染）。解码 ⛔ 绝不伪造内容：拿不到 ⇒ `NotDelivered` / `Failed`。
 //! 颜色一律取自 `theme`，⛔ 不硬编码。
 use gpui_kit::*;
+
+use std::io::{BufReader, Read, Seek};
+
+use quick_xml::events::{BytesStart, BytesText, Event};
+use quick_xml::Reader;
+
+use crate::state::preview_payload::{
+    self as payload, DecodeError, OfficeBlock, OfficeBlockKind, OfficePayload, PreviewPayload,
+    MAX_BYTES, MAX_LINES,
+};
 
 /// 办公文档预览的三个子类型（由扩展名分派）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -193,6 +202,468 @@ fn sheet_grid(theme: &gpui_kit::component::Theme) -> Div {
     grid
 }
 
+// ---------------------------------------------------------------------------
+// A14 解码：zip 容器 + quick-xml 事件流（纯逻辑，无 GPUI 依赖，可单测）
+// ---------------------------------------------------------------------------
+
+/// OOXML 容器种类（按扩展名）；非 docx/pptx/xlsx ⇒ [`None`]（fail-closed，不猜）。
+fn ooxml_kind(path: &str) -> Option<payload::OfficeKind> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match ext.as_str() {
+        "docx" => Some(payload::OfficeKind::Docx),
+        "pptx" => Some(payload::OfficeKind::Pptx),
+        "xlsx" => Some(payload::OfficeKind::Xlsx),
+        _ => None,
+    }
+}
+
+/// 解码预算：累计**抽取**的字节 ≤ [`MAX_BYTES`]（容器本体不整包进内存），超了截断并标注。
+struct Budget {
+    left: usize,
+    truncated: bool,
+}
+
+impl Budget {
+    fn new(source_len: usize) -> Self {
+        Self {
+            left: MAX_BYTES,
+            truncated: source_len > MAX_BYTES,
+        }
+    }
+}
+
+/// 元素/属性的本地名（去掉 `w:` 等命名空间前缀）；非 UTF-8 按空处理。
+fn local_tag(name: &[u8]) -> &str {
+    let s = std::str::from_utf8(name).unwrap_or("");
+    s.rsplit(':').next().unwrap_or(s)
+}
+
+/// 取 start 事件的指定本地名属性值（如 `w:val` 按 `val` 匹配）。
+fn attr_value(e: &BytesStart<'_>, want: &str) -> Option<String> {
+    e.attributes()
+        .flatten()
+        .find(|a| local_tag(a.key.as_ref()) == want)
+        .map(|a| String::from_utf8_lossy(a.value.as_ref()).into_owned())
+}
+
+/// 文本事件内容：正常反转义；非法转义时按原始字节无损降级（不静默丢字）。
+fn text_content(t: &BytesText<'_>) -> String {
+    match t.xml_content(quick_xml::XmlVersion::Implicit1_0) {
+        Ok(s) => s.into_owned(),
+        Err(_) => String::from_utf8_lossy(t.as_ref()).into_owned(),
+    }
+}
+
+/// 压入块：超过 [`MAX_LINES`] 停止累计并如实标注截断。
+fn push_block(blocks: &mut Vec<OfficeBlock>, budget: &mut Budget, block: OfficeBlock) {
+    if blocks.len() >= MAX_LINES {
+        budget.truncated = true;
+    } else {
+        blocks.push(block);
+    }
+}
+
+/// 读单个 zip 条目，累计抽取字节 ≤ [`MAX_BYTES`]（超预算就地截断并标注）。
+/// 条目不存在 ⇒ `Ok(None)`；容器损坏 ⇒ `Err`。
+fn read_entry<R: Read + Seek>(
+    arch: &mut zip::ZipArchive<R>,
+    name: &str,
+    budget: &mut Budget,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut entry = match arch.by_name(name) {
+        Ok(entry) => entry,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(e) => return Err(format!("zip 条目 {name}：{e}")),
+    };
+    let mut out = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = entry
+            .read(&mut buf)
+            .map_err(|e| format!("zip 条目 {name}：{e}"))?;
+        if n == 0 {
+            return Ok(Some(out));
+        }
+        let take = n.min(budget.left);
+        out.extend_from_slice(&buf[..take]);
+        budget.left -= take;
+        if take < n {
+            budget.truncated = true;
+            return Ok(Some(out));
+        }
+    }
+}
+
+/// docx 段落累积器：`<w:p>` 一段，`w:val` 含 heading ⇒ 标题，`<w:numPr>` ⇒ 列表项。
+struct DocxPara {
+    text: String,
+    heading: bool,
+    bullet: bool,
+}
+
+/// `w:val` 样式名含 `heading`（忽略大小写）即视为标题（只判样式名，不猜层级）。
+fn style_heading(e: &BytesStart<'_>, para: &mut Option<DocxPara>) {
+    if let (Some(p), Some(val)) = (para.as_mut(), attr_value(e, "val")) {
+        if val.to_ascii_lowercase().contains("heading") {
+            p.heading = true;
+        }
+    }
+}
+
+/// docx：`word/document.xml` → 块序列（标题/段落/列表项）。
+fn parse_docx_xml(xml: &str, budget: &mut Budget) -> Result<Vec<OfficeBlock>, String> {
+    let mut reader = Reader::from_str(xml);
+    let mut blocks = Vec::new();
+    let mut para: Option<DocxPara> = None;
+    let mut in_text = false;
+    loop {
+        let ev = match reader.read_event() {
+            Ok(ev) => ev,
+            // 自己截断的字节流允许中途 EOF；未截断还报错 ⇒ 结构不合法。
+            Err(_) if budget.truncated => break,
+            Err(e) => return Err(format!("word/document.xml：{e}")),
+        };
+        match ev {
+            Event::Start(e) => match local_tag(e.name().as_ref()) {
+                "p" => para = Some(DocxPara {
+                    text: String::new(),
+                    heading: false,
+                    bullet: false,
+                }),
+                "pStyle" => style_heading(&e, &mut para),
+                "numPr" => {
+                    if let Some(p) = para.as_mut() {
+                        p.bullet = true;
+                    }
+                }
+                "t" => in_text = true,
+                _ => {}
+            },
+            Event::Empty(e) => match local_tag(e.name().as_ref()) {
+                "pStyle" => style_heading(&e, &mut para),
+                "numPr" => {
+                    if let Some(p) = para.as_mut() {
+                        p.bullet = true;
+                    }
+                }
+                _ => {}
+            },
+            Event::Text(t) => {
+                if in_text {
+                    if let Some(p) = para.as_mut() {
+                        p.text.push_str(&text_content(&t));
+                    }
+                }
+            }
+            Event::End(e) => match local_tag(e.name().as_ref()) {
+                "t" => in_text = false,
+                "p" => {
+                    if let Some(p) = para.take() {
+                        if !p.text.trim().is_empty() {
+                            let kind = if p.heading {
+                                OfficeBlockKind::Heading
+                            } else if p.bullet {
+                                OfficeBlockKind::Bullet
+                            } else {
+                                OfficeBlockKind::Paragraph
+                            };
+                            push_block(
+                                &mut blocks,
+                                budget,
+                                OfficeBlock {
+                                    kind,
+                                    text: p.text,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(blocks)
+}
+
+/// 抽取所有 `<…:tag>` 元素的文本，片段间以空格连接（pptx 页文本用）。
+fn extract_tagged_text(xml: &str, tag: &str, budget: &Budget) -> Result<String, String> {
+    let mut reader = Reader::from_str(xml);
+    let mut out = String::new();
+    let mut in_tag = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => in_tag = local_tag(e.name().as_ref()) == tag,
+            Ok(Event::End(e)) => {
+                if local_tag(e.name().as_ref()) == tag {
+                    in_tag = false;
+                }
+            }
+            Ok(Event::Text(t)) => {
+                if in_tag {
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str(&text_content(&t));
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) if budget.truncated => break,
+            Err(e) => return Err(format!("XML 事件流：{e}")),
+            Ok(_) => {}
+        }
+    }
+    Ok(out)
+}
+
+/// pptx：`ppt/slides/slideN.xml` 按 N 排序，每页一块 [`OfficeBlockKind::Slide`]。
+fn parse_pptx_container<R: Read + Seek>(
+    arch: &mut zip::ZipArchive<R>,
+    budget: &mut Budget,
+) -> Result<Vec<OfficeBlock>, String> {
+    let mut slides: Vec<(u32, String)> = arch
+        .file_names()
+        .flatten()
+        .filter_map(|n| {
+            let num = n
+                .strip_prefix("ppt/slides/slide")?
+                .strip_suffix(".xml")?
+                .parse::<u32>()
+                .ok()?;
+            Some((num, n.into_owned()))
+        })
+        .collect();
+    slides.sort_by_key(|(num, _)| *num);
+    let mut blocks = Vec::new();
+    for (_, name) in slides {
+        if budget.left == 0 {
+            break; // 预算耗尽：余下页不再读，截断标志已置。
+        }
+        let Some(xml) = read_entry(arch, &name, budget)? else {
+            continue;
+        };
+        let text = extract_tagged_text(&String::from_utf8_lossy(&xml), "t", budget)?;
+        push_block(
+            &mut blocks,
+            budget,
+            OfficeBlock {
+                kind: OfficeBlockKind::Slide,
+                text,
+            },
+        );
+    }
+    if blocks.is_empty() {
+        return Err("pptx 容器没有幻灯片（ppt/slides/slideN.xml）".to_owned());
+    }
+    Ok(blocks)
+}
+
+/// xlsx：`xl/sharedStrings.xml` → 共享字符串表（`<si>` 一条；富文本 run 直接连写）。
+fn parse_shared_strings(xml: &str, budget: &Budget) -> Result<Vec<String>, String> {
+    let mut reader = Reader::from_str(xml);
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_si = false;
+    let mut in_t = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => match local_tag(e.name().as_ref()) {
+                "si" => {
+                    in_si = true;
+                    cur.clear();
+                }
+                "t" => in_t = true,
+                _ => {}
+            },
+            Ok(Event::End(e)) => match local_tag(e.name().as_ref()) {
+                "si" => {
+                    in_si = false;
+                    out.push(std::mem::take(&mut cur));
+                }
+                "t" => in_t = false,
+                _ => {}
+            },
+            Ok(Event::Text(t)) => {
+                if in_si && in_t {
+                    cur.push_str(&text_content(&t));
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) if budget.truncated => break,
+            Err(e) => return Err(format!("sharedStrings.xml：{e}")),
+            Ok(_) => {}
+        }
+    }
+    Ok(out)
+}
+
+/// xlsx 单元格累积器：`t="s"` 查共享表，`t="inlineStr"` 取 `<is><t>`，其余取 `<v>` 原文。
+struct SheetCell {
+    ty: Option<String>,
+    val: String,
+}
+
+/// xlsx：共享表 + 第一个工作表 → 每个非空单元格一块 [`OfficeBlockKind::Cell`]。
+fn parse_xlsx_container<R: Read + Seek>(
+    arch: &mut zip::ZipArchive<R>,
+    budget: &mut Budget,
+) -> Result<Vec<OfficeBlock>, String> {
+    let shared = match read_entry(arch, "xl/sharedStrings.xml", budget)? {
+        Some(xml) => parse_shared_strings(&String::from_utf8_lossy(&xml), budget)?,
+        None => Vec::new(), // sharedStrings 可缺省（纯数字表）
+    };
+    let has_sheet1 = arch
+        .file_names()
+        .flatten()
+        .any(|n| n == "xl/worksheets/sheet1.xml");
+    let sheet_name = if has_sheet1 {
+        "xl/worksheets/sheet1.xml".to_owned()
+    } else {
+        arch.file_names()
+            .flatten()
+            .find(|n| n.starts_with("xl/worksheets/") && n.ends_with(".xml"))
+            .map(|n| n.into_owned())
+            .ok_or("xlsx 容器缺少工作表（xl/worksheets/sheetN.xml）")?
+    };
+    let xml = read_entry(arch, &sheet_name, budget)?.ok_or("xlsx 工作表读取失败")?;
+    parse_sheet_xml(&String::from_utf8_lossy(&xml), &shared, budget)
+}
+
+/// 工作表事件流 → 单元格块（`<c>` 一个、`<v>`/`<is><t>` 取值）。
+fn parse_sheet_xml(
+    xml: &str,
+    shared: &[String],
+    budget: &mut Budget,
+) -> Result<Vec<OfficeBlock>, String> {
+    let mut reader = Reader::from_str(xml);
+    let mut blocks = Vec::new();
+    let mut cell: Option<SheetCell> = None;
+    let mut in_val = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => match local_tag(e.name().as_ref()) {
+                "c" => {
+                    cell = Some(SheetCell {
+                        ty: attr_value(&e, "t"),
+                        val: String::new(),
+                    })
+                }
+                "v" | "t" => in_val = true,
+                _ => {}
+            },
+            Ok(Event::Text(t)) => {
+                if in_val {
+                    if let Some(c) = cell.as_mut() {
+                        c.val.push_str(&text_content(&t));
+                    }
+                }
+            }
+            Ok(Event::End(e)) => match local_tag(e.name().as_ref()) {
+                "v" | "t" => in_val = false,
+                "c" => {
+                    if let Some(c) = cell.take() {
+                        let text = if c.ty.as_deref() == Some("s") {
+                            c.val
+                                .trim()
+                                .parse::<usize>()
+                                .ok()
+                                .and_then(|i| shared.get(i).cloned())
+                        } else {
+                            (!c.val.trim().is_empty()).then(|| c.val.trim().to_owned())
+                        };
+                        if let Some(text) = text {
+                            push_block(
+                                &mut blocks,
+                                budget,
+                                OfficeBlock {
+                                    kind: OfficeBlockKind::Cell,
+                                    text,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            Err(_) if budget.truncated => break,
+            Err(e) => return Err(format!("worksheet：{e}")),
+            Ok(_) => {}
+        }
+    }
+    Ok(blocks)
+}
+
+/// 容器种类分派到对应解析器；解析失败 ⇒ `Err`（界面照实显示）。
+fn decode_with<R: Read + Seek>(
+    mut arch: zip::ZipArchive<R>,
+    fmt: payload::OfficeKind,
+    budget: &mut Budget,
+) -> PreviewPayload {
+    let parsed = match fmt {
+        payload::OfficeKind::Docx => match read_entry(&mut arch, "word/document.xml", budget) {
+            Ok(Some(xml)) => parse_docx_xml(&String::from_utf8_lossy(&xml), budget),
+            Ok(None) => Err("docx 容器缺少 word/document.xml".to_owned()),
+            Err(e) => Err(e),
+        },
+        payload::OfficeKind::Pptx => parse_pptx_container(&mut arch, budget),
+        payload::OfficeKind::Xlsx => parse_xlsx_container(&mut arch, budget),
+        payload::OfficeKind::Unknown => Err("未知办公文档格式".to_owned()),
+    };
+    match parsed {
+        Ok(blocks) => PreviewPayload::Office(OfficePayload {
+            kind: fmt,
+            blocks,
+            truncated: budget.truncated,
+        }),
+        Err(msg) => PreviewPayload::Failed(DecodeError::Parse(msg)),
+    }
+}
+
+/// A14：解码待预览文件为 [`PreviewPayload::Office`]。
+/// `bytes = Some(..)` 时**只用传入字节**（不碰文件系统）；`None` 时读 `path`
+/// （读不到 ⇒ `Failed(Io)`）。非 OOXML / 解不开 ⇒ `Failed`，⛔ 绝不伪造内容。
+pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
+    let Some(fmt) = ooxml_kind(path) else {
+        return PreviewPayload::Failed(DecodeError::Unsupported(format!(
+            "仅支持 docx/pptx/xlsx OOXML 容器：{path}"
+        )));
+    };
+    match bytes {
+        Some(b) => match zip::ZipArchive::new(std::io::Cursor::new(b)) {
+            Ok(arch) => decode_with(arch, fmt, &mut Budget::new(b.len())),
+            Err(e) => PreviewPayload::Failed(DecodeError::Parse(format!("不是合法的 zip 容器：{e}"))),
+        },
+        None => match std::fs::File::open(path) {
+            Ok(file) => {
+                let mut budget = Budget::new(file.metadata().map(|m| m.len() as usize).unwrap_or(0));
+                match zip::ZipArchive::new(BufReader::new(file)) {
+                    Ok(arch) => decode_with(arch, fmt, &mut budget),
+                    Err(e) => {
+                        PreviewPayload::Failed(DecodeError::Parse(format!("不是合法的 zip 容器：{e}")))
+                    }
+                }
+            }
+            Err(e) => PreviewPayload::Failed(DecodeError::Io(e.to_string())),
+        },
+    }
+}
+
+/// A14：带载荷渲染。当前仍退回既有占位外壳（本卡第二步填实）。
+pub(super) fn render_with_payload(
+    path: &str,
+    payload: &PreviewPayload,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
+    let _ = payload;
+    render(path, theme)
+}
+
 #[cfg(all(test, feature = "ui"))]
 mod tests {
     use super::{kind_label, office_kind, render, toolbar_items, OfficeKind};
@@ -259,35 +730,4 @@ mod tests {
         ];
         assert_eq!(labels, ["文档", "表格", "演示"]);
     }
-}
-
-// ---------------------------------------------------------------------------
-// A14 解码入口（a14-preview-decode-deps 基建落盘；**诚实占位**）
-// ---------------------------------------------------------------------------
-//
-// 契约（A14 卡在此填实，⛔ 不要改签名、⛔ 不要动别的文件）：
-//   · `decode`               —— 把「待预览文件」解码成载荷。字节可由运行时下发（`bytes`）；
-//                              未下发时自行读本地文件。拿不到内容 ⇒ `NotDelivered` / `Failed`，
-//                              ⛔ 绝不伪造内容、⛔ 不吞错。
-//   · `render_with_payload`  —— 把载荷画出来。**默认退回既有占位视图**，因此外壳
-//                              （头信息 / 缩放控件 / 「未下发」提示行）行为与本次基建前一致。
-
-/// A14：解码待预览文件。当前为**诚实占位**（不读文件、不解码）。
-pub(super) fn decode(
-    _path: &str,
-    _bytes: Option<&[u8]>,
-) -> crate::state::preview_payload::PreviewPayload {
-    crate::state::preview_payload::PreviewPayload::NotDelivered {
-        reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
-    }
-}
-
-/// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
-pub(super) fn render_with_payload(
-    path: &str,
-    payload: &crate::state::preview_payload::PreviewPayload,
-    theme: &gpui_kit::component::Theme,
-) -> AnyElement {
-    let _ = payload;
-    render(path, theme)
 }
