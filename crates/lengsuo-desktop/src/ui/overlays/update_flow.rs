@@ -308,8 +308,11 @@ fn action_button(theme: &Theme, label: &'static str, primary: bool) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, ArchNotice, UpdateFlow, UpdateFlowState, NOT_DELIVERED, OPEN_APP_STORE,
-        OPEN_SOFTWARE_STORE, OPEN_WEBSITE, STORE_OPEN_FAILED_HINT, TITLE,
+        main_area, ArchNotice, UpdateFlow, UpdateFlowState, ARCH_AVAILABLE, ARCH_DOWNLOADING_TMPL,
+        ARCH_FAILED, ARCH_READY, AVAILABLE_TMPL, CHANGELOG, DISMISS, FORCE_CONTACT_ADMIN_SUBTITLE,
+        FORCE_EXTERNAL_SUBTITLE_TMPL, FORCE_TITLE, LATER, NEW_VERSION_READY, NOT_DELIVERED,
+        OPEN_APP_STORE, OPEN_SOFTWARE_STORE, OPEN_WEBSITE, RESTART_TO_UPDATE,
+        STORE_OPEN_FAILED_HINT, TITLE,
     };
     use gpui_kit::component::Theme;
     #[test]
@@ -378,5 +381,97 @@ mod tests {
         assert_eq!(flow.subtitle(), None);
         // 空态是「未下发」提示，不是空白或空列表。
         assert_eq!(NOT_DELIVERED, "未下发");
+    }
+    #[test]
+    fn copy_is_verbatim() {
+        assert_eq!(TITLE, "更新提示");
+        assert_eq!(FORCE_TITLE, "当前版本已停止支持");
+        assert_eq!(
+            FORCE_EXTERNAL_SUBTITLE_TMPL,
+            "请升级至 V{version} 后继续使用"
+        );
+        assert_eq!(
+            FORCE_CONTACT_ADMIN_SUBTITLE,
+            "请联系企业管理员升级至最新版本"
+        );
+        assert_eq!(STORE_OPEN_FAILED_HINT, "请手动前往应用商店更新");
+        assert_eq!(NEW_VERSION_READY, "新版本就绪");
+        assert_eq!(
+            AVAILABLE_TMPL,
+            "发现新版本 V{version}，请前往官网下载并安装"
+        );
+        assert_eq!(CHANGELOG, "更新日志");
+        assert_eq!(OPEN_SOFTWARE_STORE, "前往软件商店更新");
+        assert_eq!(OPEN_APP_STORE, "前往应用商店更新");
+        assert_eq!(OPEN_WEBSITE, "前往官网下载更新");
+        assert_eq!(LATER, "稍后");
+        assert_eq!(RESTART_TO_UPDATE, "重启升级");
+        assert_eq!(DISMISS, "知道了");
+        assert_eq!(ARCH_AVAILABLE, "当前软件版本和系统架构不匹配，可能导致卡顿");
+        assert_eq!(ARCH_DOWNLOADING_TMPL, "正在下载正确版本 {percent}%");
+        assert_eq!(ARCH_READY, "正确版本已下载完成");
+        assert_eq!(ARCH_FAILED, "正确版本下载失败，请稍后再试");
+    }
+    #[test]
+    fn badge_and_subtitle_per_state() {
+        let initial = UpdateFlow::initial();
+        assert_eq!(initial.badge_text(), None);
+        let managed = UpdateFlow {
+            state: UpdateFlowState::ForceContactAdmin,
+            arch: None,
+        };
+        assert_eq!(managed.badge_text(), Some(FORCE_TITLE));
+        assert_eq!(
+            managed.subtitle(),
+            Some(FORCE_CONTACT_ADMIN_SUBTITLE.to_string())
+        );
+        let ready = UpdateFlow {
+            state: UpdateFlowState::Ready {
+                version: "1.0.0".to_string(),
+            },
+            arch: None,
+        };
+        assert_eq!(ready.badge_text(), Some(NEW_VERSION_READY));
+        let arch_lines = [
+            ArchNotice::Available,
+            ArchNotice::Downloading { percent: 100 },
+            ArchNotice::Ready,
+            ArchNotice::Failed,
+        ]
+        .map(|notice| notice.line());
+        assert_eq!(arch_lines[0], ARCH_AVAILABLE);
+        assert_eq!(arch_lines[1], "正在下载正确版本 100%");
+        assert_eq!(arch_lines[2], ARCH_READY);
+        assert_eq!(arch_lines[3], ARCH_FAILED);
+    }
+    #[test]
+    fn render_all_states_without_panic() {
+        let theme = Theme::default();
+        let flows = [
+            UpdateFlow::initial(),
+            UpdateFlow {
+                state: UpdateFlowState::ForceExternal {
+                    version: "2.3.1".to_string(),
+                },
+                arch: Some(ArchNotice::Available),
+            },
+            UpdateFlow {
+                state: UpdateFlowState::ForceContactAdmin,
+                arch: None,
+            },
+            UpdateFlow {
+                state: UpdateFlowState::StoreOpenFailed,
+                arch: Some(ArchNotice::Failed),
+            },
+            UpdateFlow {
+                state: UpdateFlowState::Ready {
+                    version: "1.0.0".to_string(),
+                },
+                arch: Some(ArchNotice::Ready),
+            },
+        ];
+        for flow in &flows {
+            let _ = super::render(&theme, flow);
+        }
     }
 }
