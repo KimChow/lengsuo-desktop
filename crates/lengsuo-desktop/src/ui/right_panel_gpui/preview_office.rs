@@ -260,3 +260,34 @@ mod tests {
         assert_eq!(labels, ["文档", "表格", "演示"]);
     }
 }
+
+// ---------------------------------------------------------------------------
+// A14 解码入口（a14-preview-decode-deps 基建落盘；**诚实占位**）
+// ---------------------------------------------------------------------------
+//
+// 契约（A14 卡在此填实，⛔ 不要改签名、⛔ 不要动别的文件）：
+//   · `decode`               —— 把「待预览文件」解码成载荷。字节可由运行时下发（`bytes`）；
+//                              未下发时自行读本地文件。拿不到内容 ⇒ `NotDelivered` / `Failed`，
+//                              ⛔ 绝不伪造内容、⛔ 不吞错。
+//   · `render_with_payload`  —— 把载荷画出来。**默认退回既有占位视图**，因此外壳
+//                              （头信息 / 缩放控件 / 「未下发」提示行）行为与本次基建前一致。
+
+/// A14：解码待预览文件。当前为**诚实占位**（不读文件、不解码）。
+pub(super) fn decode(
+    _path: &str,
+    _bytes: Option<&[u8]>,
+) -> crate::state::preview_payload::PreviewPayload {
+    crate::state::preview_payload::PreviewPayload::NotDelivered {
+        reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+    }
+}
+
+/// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
+pub(super) fn render_with_payload(
+    path: &str,
+    payload: &crate::state::preview_payload::PreviewPayload,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
+    let _ = payload;
+    render(path, theme)
+}

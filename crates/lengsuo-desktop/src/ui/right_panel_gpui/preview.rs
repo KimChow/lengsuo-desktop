@@ -14,7 +14,9 @@ use gpui_kit::*;
 use crate::state::preview_kind::{classify, PreviewKind};
 use crate::ui::right_panel::{PreviewContent, PREVIEW_UNSUPPORTED_TEXT};
 
-use super::{preview_code, preview_image, preview_office, preview_pdf, preview_text};
+use super::{
+    preview_code, preview_diagram, preview_image, preview_office, preview_pdf, preview_text,
+};
 
 /// 徽标底色的透明度：颜色本体取自主题 token，仅透明度是徽标的样式参数。
 const BADGE_WASH_ALPHA: f32 = 0.15;
@@ -80,12 +82,33 @@ pub(super) fn render_preview(
     let kind = classify(path);
     let (name, dir) = header_text(path);
     let body: AnyElement = match kind {
-        PreviewKind::Code => preview_code::render(path, theme),
-        PreviewKind::Text => preview_text::render(path, theme),
-        PreviewKind::Image => preview_image::render(path, theme),
-        PreviewKind::Pdf => preview_pdf::render(path, theme),
-        PreviewKind::Office => preview_office::render(path, theme),
-        PreviewKind::Diagram | PreviewKind::Other => unsupported(theme),
+        // A14：先 decode（字节由运行时下发时传 Some，当前未接入 ⇒ None）再渲染载荷。
+        // ⛔ 解码器拿不到内容时返回 NotDelivered/Failed，界面照实显示，不伪造。
+        PreviewKind::Code => {
+            let p = preview_code::decode(path, None);
+            preview_code::render_with_payload(path, &p, theme)
+        }
+        PreviewKind::Text => {
+            let p = preview_text::decode(path, None);
+            preview_text::render_with_payload(path, &p, theme)
+        }
+        PreviewKind::Image => {
+            let p = preview_image::decode(path, None);
+            preview_image::render_with_payload(path, &p, theme)
+        }
+        PreviewKind::Pdf => {
+            let p = preview_pdf::decode(path, None);
+            preview_pdf::render_with_payload(path, &p, theme)
+        }
+        PreviewKind::Office => {
+            let p = preview_office::decode(path, None);
+            preview_office::render_with_payload(path, &p, theme)
+        }
+        PreviewKind::Diagram => {
+            let p = preview_diagram::decode(path, None);
+            preview_diagram::render_with_payload(path, &p, theme)
+        }
+        PreviewKind::Other => unsupported(theme),
     };
     div()
         .flex()

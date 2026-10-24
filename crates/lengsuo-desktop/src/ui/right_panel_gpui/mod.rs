@@ -21,6 +21,7 @@
 mod approvals;
 mod preview;
 mod preview_code;
+mod preview_diagram;
 mod preview_image;
 mod preview_office;
 mod preview_pdf;

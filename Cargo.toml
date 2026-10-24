@@ -44,6 +44,19 @@ zeroize = "1"
 #       只有 deflate(8) 与 store(0) 两种压缩方法可用（本仓只要这两种）。
 zip = { version = "9.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+# A14 预览器「真解码」依赖（a14-preview-decode-deps 卡引入；2026-10-24 用户授权改本文件）：
+#   图片 —— gpui-pre 已**非可选**依赖 image 0.25（含 png/jpeg/gif/webp/bmp 等），此处把它提升为
+#           **直接依赖**，只为读像素尺寸做元信息行；渲染仍走 GPUI 自带的图像栈（⛔ 不另装图像后端）。
+#   文档 —— OOXML（docx/pptx/xlsx）= zip 容器 + XML ⇒ 用已有的 zip 9 + quick-xml / roxmltree
+#           （二者已在锁文件里，由 resvg 带入 ⇒ 零新增传递依赖、版本与锁一致）。
+#   PDF  —— lopdf：**纯 Rust** 结构/文本解析（页数 / 元数据 / 页文本）。
+#           ⛔ 不做像素级光栅化（那需 pdfium / mupdf 原生库与随包二进制，属另一档）。
+# 版本一律对齐 Cargo.lock（quick-xml 0.41 / roxmltree 0.20 / image 0.25），避免第二套版本。
+quick-xml = { version = "0.41", default-features = false }
+roxmltree = { version = "0.20", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+lopdf = { version = "0.36", default-features = false }
+
 [profile.dev]
 incremental = false
 debug = 0
