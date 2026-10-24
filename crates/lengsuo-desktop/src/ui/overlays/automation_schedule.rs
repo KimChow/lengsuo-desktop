@@ -58,13 +58,28 @@ pub static TEXTS: &[(&str, &str)] = &[
     ("automation.schedule.summary.monthly", "每月 {day} {time}"),
     ("automation.schedule.summary.once", "单次 {dateTime}"),
     ("automation.schedule.summary.weekly", "每周 {days} {time}"),
-    ("automation.schedule.summary.yearly", "每年 {month}月{day}日 {time}"),
+    (
+        "automation.schedule.summary.yearly",
+        "每年 {month}月{day}日 {time}",
+    ),
     ("automation.schedule.timeLabel", "时间"),
-    ("automation.schedule.validation.intervalHours", "按间隔执行需至少每 1 小时"),
-    ("automation.schedule.validation.monthdayRequired", "请至少选择一个日期"),
+    (
+        "automation.schedule.validation.intervalHours",
+        "按间隔执行需至少每 1 小时",
+    ),
+    (
+        "automation.schedule.validation.monthdayRequired",
+        "请至少选择一个日期",
+    ),
     ("automation.schedule.validation.monthRequired", "请选择月份"),
-    ("automation.schedule.validation.onceDateRequired", "请选择单次执行日期"),
-    ("automation.schedule.validation.weekdayRequired", "请至少选择一个星期"),
+    (
+        "automation.schedule.validation.onceDateRequired",
+        "请选择单次执行日期",
+    ),
+    (
+        "automation.schedule.validation.weekdayRequired",
+        "请至少选择一个星期",
+    ),
     ("automation.schedule.weekdaySection", "重复星期"),
     ("automation.schedule.weekdays", "工作日"),
     ("automation.schedule.weekend", "周末"),
@@ -107,6 +122,7 @@ impl Weekday {
         Weekday::Sun,
     ];
 
+    /// 全表键名。
     pub fn key(&self) -> &'static str {
         match self {
             Weekday::Mon => "automation.schedule.day.MO",
@@ -138,6 +154,7 @@ pub enum Frequency {
 }
 
 impl Frequency {
+    /// 全表键名。
     pub fn key(&self) -> &'static str {
         match self {
             Frequency::Once => "automation.schedule.once",
@@ -159,6 +176,7 @@ impl Frequency {
 /// 一条自动化计划（字段值来自数据源；⛔ 无源不构造）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScheduleEntry {
+    /// 重复频率。
     pub frequency: Frequency,
     /// 执行时间（如 `08:00`）；缺省渲染「待选择」。
     pub time: Option<String>,
@@ -223,7 +241,11 @@ impl ScheduleEntry {
                     .unwrap_or_else(|| pending.to_string());
                 tpl(
                     "automation.schedule.summary.yearly",
-                    &[("{month}", month.as_str()), ("{day}", day.as_str()), ("{time}", time)],
+                    &[
+                        ("{month}", month.as_str()),
+                        ("{day}", day.as_str()),
+                        ("{time}", time),
+                    ],
                 )
             }
             Frequency::Interval { hours } => tpl(
@@ -235,7 +257,11 @@ impl ScheduleEntry {
 
     /// 周几标签拼接（逐字标签 + 顿号分隔）。
     fn days_label(&self) -> String {
-        self.days.iter().map(|d| d.label()).collect::<Vec<_>>().join("、")
+        self.days
+            .iter()
+            .map(|d| d.label())
+            .collect::<Vec<_>>()
+            .join("、")
     }
 }
 
@@ -264,7 +290,7 @@ pub fn validate(entry: &ScheduleEntry) -> Vec<&'static str> {
         Frequency::Yearly if entry.day_of_month.is_none() => {
             errors.push(t("automation.schedule.validation.monthdayRequired"));
         }
-        Frequency::Interval { hours } if hours == 0 => {
+        Frequency::Interval { hours: 0 } => {
             errors.push(t("automation.schedule.validation.intervalHours"));
         }
         Frequency::Once if entry.date.is_none() => {
@@ -326,11 +352,11 @@ pub fn main_area(theme: &Theme) -> AnyElement {
 
 /// 按视图态逐分支渲染（纯函数；标题行 + 分支内容节点）。
 fn render_view(view: View<'_>, theme: &Theme) -> AnyElement {
-    let root = div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(div().text_color(theme.foreground).child(SharedString::from(TITLE)));
+    let root = div().flex().flex_col().gap_2().child(
+        div()
+            .text_color(theme.foreground)
+            .child(SharedString::from(TITLE)),
+    );
     match view {
         View::NotDelivered => root
             .child(caption(NOT_DELIVERED, theme))
@@ -406,15 +432,11 @@ fn field_row(label_key: &str, value_key: &str, theme: &Theme) -> AnyElement {
 
 /// 一条计划的摘要卡（摘要 + 校验错误行）。
 fn entry_card(entry: &ScheduleEntry, theme: &Theme) -> AnyElement {
-    let card = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_color(theme.foreground)
-                .child(SharedString::from(entry.summary())),
-        );
+    let card = div().flex().flex_col().gap_1().child(
+        div()
+            .text_color(theme.foreground)
+            .child(SharedString::from(entry.summary())),
+    );
     let errors = validate(entry);
     if errors.is_empty() {
         card.into_any_element()
@@ -436,26 +458,129 @@ fn entry_card(entry: &ScheduleEntry, theme: &Theme) -> AnyElement {
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{resolve, State, NS_KEY_COUNT, NS_PREFIX, TITLE};
+    use super::{
+        main_area, render_view, resolve, text, validate, view_of, Frequency, ScheduleEntry, State,
+        View, Weekday, NOT_DELIVERED, NS_KEY_COUNT, NS_PREFIX, TEXTS, TITLE,
+    };
+    use gpui_kit::component::Theme;
 
-    #[test]
-    fn title_is_verbatim() {
-        assert_eq!(TITLE, "自动化计划");
+    /// 紧凑构造（日期/月/日字段缺省；需要时用 `..mk(..)` 覆写）。
+    fn mk(frequency: Frequency, time: Option<&str>, days: &[Weekday]) -> ScheduleEntry {
+        ScheduleEntry {
+            frequency,
+            time: time.map(str::to_string),
+            date: None,
+            days: days.to_vec(),
+            day_of_month: None,
+            month: None,
+        }
     }
 
     #[test]
-    fn fail_closed_default() {
+    fn texts_verbatim_and_coverage() {
+        assert_eq!(TITLE, "自动化计划");
+        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(text("automation.schedule.daily"), Some("每天"));
+        assert_eq!(text("automation.schedule.day.SU"), Some("周日"));
+        assert_eq!(
+            text("automation.schedule.summary.once"),
+            Some("单次 {dateTime}")
+        );
+        assert_eq!(
+            text("automation.schedule.validation.weekdayRequired"),
+            Some("请至少选择一个星期")
+        );
+        // 覆盖量：≥40 键且不越命名空间全表（92 键）；用运行时绑定绕开
+        // clippy::assertions_on_constants。
+        let covered = TEXTS.len();
+        let total = NS_KEY_COUNT;
+        assert!(covered >= 40 && covered <= total);
+        let prefix = NS_PREFIX.to_string();
+        assert!(TEXTS.iter().all(|(k, _)| k.starts_with(&prefix)));
+    }
+
+    #[test]
+    fn fail_closed_default_is_not_delivered() {
         assert_eq!(State::default(), State::NotDelivered);
         assert_eq!(resolve(None), State::NotDelivered);
+        assert_eq!(view_of(State::default(), &[]), View::NotDelivered);
     }
 
     #[test]
-    fn ns_prefix_declared() {
-        // 用运行时比较绕开 clippy::assertions_on_constants（两侧都经函数边界）。
-        let prefix = NS_PREFIX.to_string();
-        let count = NS_KEY_COUNT;
-        assert!(!prefix.is_empty());
-        assert!(prefix.chars().next().is_some_and(char::is_alphabetic));
-        assert!(count > 0 && count < 10_000);
+    fn empty_input_is_empty_state_not_empty_list() {
+        let ready = resolve(Some(true));
+        assert_eq!(ready, State::Ready);
+        assert_eq!(view_of(ready, &[]), View::Empty);
+        assert_ne!(view_of(ready, &[]), View::Entries(&[]));
+    }
+
+    #[test]
+    fn summary_uses_verbatim_templates() {
+        let daily = mk(Frequency::Daily, Some("08:00"), &[]);
+        assert_eq!(daily.summary(), "每天 08:00");
+        let weekly = mk(
+            Frequency::Weekly,
+            Some("09:30"),
+            &[Weekday::Mon, Weekday::Wed],
+        );
+        assert_eq!(weekly.summary(), "每周 周一、周三 09:30");
+        let once_pending = mk(Frequency::Once, None, &[]);
+        assert_eq!(once_pending.summary(), "单次 待选择");
+        let yearly = ScheduleEntry {
+            frequency: Frequency::Yearly,
+            month: Some(3),
+            day_of_month: Some(5),
+            ..mk(Frequency::Daily, Some("08:00"), &[])
+        };
+        assert_eq!(yearly.summary(), "每年 3月5日 08:00");
+        let interval = mk(Frequency::Interval { hours: 2 }, None, &[]);
+        assert_eq!(interval.summary(), "每 2 小时");
+    }
+
+    #[test]
+    fn validation_rules_are_verbatim() {
+        assert_eq!(
+            validate(&mk(Frequency::Weekly, None, &[])),
+            vec!["请至少选择一个星期"]
+        );
+        assert_eq!(
+            validate(&mk(Frequency::Monthly, None, &[])),
+            vec!["请至少选择一个日期"]
+        );
+        assert_eq!(
+            validate(&mk(Frequency::Yearly, None, &[])),
+            vec!["请选择月份"]
+        );
+        assert_eq!(
+            validate(&mk(Frequency::Interval { hours: 0 }, None, &[])),
+            vec!["按间隔执行需至少每 1 小时"]
+        );
+        assert_eq!(
+            validate(&mk(Frequency::Once, None, &[])),
+            vec!["请选择单次执行日期"]
+        );
+        assert!(validate(&mk(Frequency::Daily, Some("08:00"), &[])).is_empty());
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        // 只构造元素树（fail-closed 默认分支），不渲染。
+        let element = main_area(&Theme::default());
+        let _ = element;
+    }
+
+    #[test]
+    fn every_view_branch_renders_without_panic() {
+        let theme = Theme::default();
+        for view in [View::NotDelivered, View::LoadFailed, View::Empty] {
+            let _ = render_view(view, &theme);
+        }
+        let entry = mk(Frequency::Weekly, Some("07:00"), &[Weekday::Fri]);
+        let _ = render_view(View::Entries(&[entry]), &theme);
+        // 星期 / 频率标签逐字。
+        assert_eq!(Weekday::Fri.label(), "周五");
+        assert_eq!(Weekday::ALL.len(), 7);
+        assert_eq!(Frequency::Once.label(), "单次任务");
+        assert_eq!(Frequency::Interval { hours: 1 }.label(), "按间隔");
     }
 }
