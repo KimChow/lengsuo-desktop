@@ -184,34 +184,198 @@ impl DetailPanelModel {
 /// 无数据源 ⇒ [`DetailPanelModel::not_delivered`]，如实显示「未下发」。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(&DetailPanelModel::not_delivered(), theme)
+}
+
+/// 具名模型渲染（接线/测试用；按纯数据层分支渲染）。
+#[must_use]
+pub fn render(model: &DetailPanelModel, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .border_l_1()
+        .border_color(theme.border)
+        .child(header_row(model, theme))
+        .child(new_tab_menu(theme))
+        .child(content_body(model, theme))
+}
+
+/// 标题行：概览/审查页签 + 关注 / 侧栏切换动作。
+fn header_row(model: &DetailPanelModel, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(OVERVIEW),
-        )
-        .child(
-            div()
-                .flex_1()
                 .flex()
                 .items_center()
-                .justify_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_bold()
+                                .text_color(theme.foreground)
+                                .child(OVERVIEW),
+                        )
+                        .child(div().mt_1().h(px(2.)).w_full().bg(theme.accent)),
+                )
+                .child(div().text_sm().text_color(theme.muted_foreground).child(REVIEW)),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(chip(theme, FOLLOW))
+                .child(chip(theme, model.sidebar_toggle_text())),
+        )
+}
+
+/// 新标签页菜单（含「打开浏览器」等子动作）。
+fn new_tab_menu(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(NEW_TAB),
+        )
+        .child(menu_row(theme, OPEN_BROWSER))
+        .child(menu_row(theme, OPEN_TERMINAL))
+        .child(menu_row(theme, VIEW_WORKSPACE))
+        .child(menu_row(theme, VIEW_CHANGES))
+}
+
+/// 菜单行（静态文案；接线前无交互）。
+fn menu_row(theme: &Theme, label: &'static str) -> Div {
+    div()
+        .py_1()
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(label)
+}
+
+/// 动作胶囊（静态文案；接线前无交互）。
+fn chip(theme: &Theme, label: &'static str) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(label)
+}
+
+/// 内容体：未下发 ⇒ fail-closed 说明；已下发 ⇒ 分节。
+fn content_body(model: &DetailPanelModel, theme: &Theme) -> Div {
+    let inner = match model.state() {
+        PanelState::NotDelivered => div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED),
+        PanelState::Empty | PanelState::Normal => sections(model, theme),
+    };
+    div().flex_1().flex().flex_col().child(inner)
+}
+
+/// 三节清单（产物 / 文件 / 任务进程）。
+fn sections(model: &DetailPanelModel, theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .child(section(model, theme, Section::Artifacts))
+        .child(section(model, theme, Section::Files))
+        .child(section(model, theme, Section::TaskProgress))
+}
+
+/// 单节：标题 + 计数/空态体。
+fn section(model: &DetailPanelModel, theme: &Theme, s: Section) -> Div {
+    let mut head = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .text_xs()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(s.label()),
+        );
+    if let Some(count) = section_count(model, s) {
+        head = head.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(format!("{count}")),
+        );
+    }
+    let mut body = div();
+    match model.state() {
+        PanelState::Empty => {
+            body = body
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(match DetailPanelModel::not_delivered().state() {
-                    PanelState::NotDelivered => NOT_DELIVERED,
-                    _ => NO_CONTENT,
-                }),
-        )
+                .child(s.empty_text());
+        }
+        PanelState::NotDelivered => {
+            // 防御：上层已按状态分流，正常不会走到。
+            body = body
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(NOT_DELIVERED);
+        }
+        PanelState::Normal => {
+            if s == Section::Artifacts {
+                body = body.child(chip(theme, NEW_CANVAS));
+            }
+        }
+    }
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(head)
+        .child(body)
+}
+
+/// Normal 态的节计数（仅真实下发数值；任务进程无计数）。
+fn section_count(model: &DetailPanelModel, s: Section) -> Option<usize> {
+    if model.state() != PanelState::Normal {
+        return None;
+    }
+    match s {
+        Section::Artifacts => Some(model.artifact_count()),
+        Section::Files => Some(model.file_count()),
+        Section::TaskProgress => None,
+    }
 }
 
 #[cfg(test)]
