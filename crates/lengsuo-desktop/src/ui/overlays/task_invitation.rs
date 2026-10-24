@@ -208,18 +208,50 @@ impl TaskInvitation {
     }
 }
 
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；本卡负责补全真实视图）。
-pub fn main_area(theme: &Theme) -> Div {
-    div()
+// ===== GPUI 层 =====
+
+/// 单状态分支卡：主文案 + 次文案行 + 动作文案（全部取自纯数据层访问器；颜色一律 theme token）。
+fn state_card(theme: &Theme, state: State) -> Div {
+    let mut card = div()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
+        .child(div().text_color(theme.foreground).child(state.headline()));
+    for line in state.detail_lines() {
+        card = card.child(div().text_color(theme.muted_foreground).child(*line));
+    }
+    if let Some(action) = state.action_label() {
+        card = card.child(div().text_color(theme.foreground).child(action));
+    }
+    card
+}
+
+/// 主区渲染：标题行 + 「未下发」fail-closed 实况卡 + 各状态分支卡（含 LinkInvalid 空态）。
+/// 数据源未接 ⇒ 实况恒为 [`State::NotDelivered`]；接线后由运行态单卡替换分支预览。
+pub fn main_area(theme: &Theme) -> Div {
+    let live = TaskInvitation::fail_closed().state();
+    let mut area = div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        // 标题行
         .child(div().text_color(theme.foreground).child(TITLE))
-        .child(
-            div()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+        // 「未下发」fail-closed 实况（⛔ 无数据源时如实显示，不伪造条目）
+        .child(state_card(theme, live));
+    // 其余分支预览：接受邀请 / 结果×2 / 已是成员 / 空态·过期 / 登录 / 提交失败 / 加载失败
+    for state in [
+        State::Pending,
+        State::Accepted,
+        State::PendingApproval,
+        State::AlreadyMember,
+        State::LinkInvalid,
+        State::LoginRequired,
+        State::SubmitFailed,
+        State::LoadFailed,
+    ] {
+        area = area.child(state_card(theme, state));
+    }
+    area
 }
 #[cfg(test)]
 mod tests {
