@@ -336,7 +336,18 @@ fn image_view(p: &ImagePayload, theme: &gpui_kit::component::Theme) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{fit_label, next_zoom, zoom_steps};
+    use super::{decode, fit_label, next_zoom, zoom_steps};
+    use crate::state::preview_payload::{DecodeError, PreviewPayload, MAX_BYTES};
+
+    /// 3×2 纯色 PNG（内存构造，不碰磁盘）；`pub(super)` 供 render_tests 复用。
+    pub(super) fn tiny_png() -> Vec<u8> {
+        let pixels = image::RgbaImage::from_pixel(3, 2, image::Rgba([24, 48, 96, 255]));
+        let mut buf = Vec::new();
+        image::DynamicImage::ImageRgba8(pixels)
+            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .expect("内存编码 3×2 PNG 不会失败");
+        buf
+    }
 
     #[test]
     fn zoom_steps_cover_quarter_to_4x() {
@@ -363,6 +374,56 @@ mod tests {
         assert_eq!(fit_label(true), "适应窗口");
         assert_eq!(fit_label(false), "原始大小");
     }
+
+    /// ① 正常字节 ⇒ 载荷字段全对（格式 / 宽高 / 字节 / 原始长度，未截断）。
+    #[test]
+    fn decode_png_bytes_yields_full_payload() {
+        let png = tiny_png();
+        let PreviewPayload::Image(p) = decode("a/tiny.png", Some(&png)) else {
+            panic!("合法 PNG 字节必须解出 Image 载荷");
+        };
+        assert_eq!((p.width, p.height), (3, 2));
+        assert_eq!(p.format, "png");
+        assert_eq!(p.bytes, png);
+        assert_eq!(p.source_len, png.len());
+        assert_eq!(p.source_len, p.bytes.len(), "未超限不许标截断");
+    }
+
+    /// ② 垃圾字节 ⇒ fail-closed 返回 `Failed`，不 panic、不伪造内容。
+    #[test]
+    fn decode_garbage_bytes_fail_closed() {
+        match decode("x.png", Some(b"definitely not an image")) {
+            PreviewPayload::Failed(DecodeError::Parse(_)) => {}
+            other => panic!("垃圾字节必须 Parse 失败，得到 {other:?}"),
+        }
+    }
+
+    /// ②b `bytes = None` 且路径不存在 ⇒ `Failed(Io)`（同样 fail-closed，不 panic）。
+    #[test]
+    fn decode_missing_path_fails_io() {
+        assert!(matches!(
+            decode("/nonexistent/definitely-missing.png", None),
+            PreviewPayload::Failed(DecodeError::Io(_))
+        ));
+    }
+
+    /// ③ 超 `MAX_BYTES` ⇒ 截断到上限：`bytes.len() == MAX_BYTES` 且
+    /// `source_len > bytes.len()`（载荷以长度差表达截断态），头信息仍可解尺寸。
+    #[test]
+    fn decode_over_max_bytes_truncates() {
+        let mut oversized = tiny_png();
+        oversized.resize(MAX_BYTES + 1024, 0);
+        let PreviewPayload::Image(p) = decode("big.png", Some(&oversized)) else {
+            panic!("超限字节（头完整）仍应给出载荷");
+        };
+        assert_eq!(p.bytes.len(), MAX_BYTES);
+        assert_eq!(p.source_len, MAX_BYTES + 1024);
+        assert!(
+            p.source_len > p.bytes.len(),
+            "source_len > bytes.len() 即截断"
+        );
+        assert_eq!((p.width, p.height), (3, 2));
+    }
 }
 
 /// 接线层的无窗口渲染断言：`TestAppContext` + `VisualTestContext::draw`
@@ -371,7 +432,8 @@ mod tests {
 /// ⛔ 不写 `use super::*`：避免 GPUI 的 `test` 属性宏遮蔽标准库 `#[test]`。
 #[cfg(all(test, feature = "ui"))]
 mod render_tests {
-    use super::{render_with, zoom_steps};
+    use super::{decode, render_with, render_with_payload, zoom_steps};
+    use crate::state::preview_payload::{DecodeError, PreviewPayload};
     use gpui_kit::component::Theme;
     use gpui_kit::{
         div, point, px, size, AnyElement, Bounds, InteractiveElement as _, IntoElement,
@@ -435,5 +497,22 @@ mod render_tests {
     fn image_panel_normalizes_invalid_zoom() {
         let bounds = draw_probe(|theme| render_with("c/d.webp", true, 0.3, theme));
         assert_rendered(bounds, "图片预览（非法档位归一态）");
+    }
+
+    /// ④ `bytes = Some(..)` → decode → render 端到端：真像素路径完整画一帧不 panic。
+    #[test]
+    fn decoded_payload_renders_end_to_end() {
+        let png = super::tests::tiny_png();
+        let payload = decode("a/tiny.png", Some(&png));
+        let bounds = draw_probe(|theme| render_with_payload("a/tiny.png", &payload, theme));
+        assert_rendered(bounds, "图片预览（decode→render 端到端）");
+    }
+
+    /// ④b 失败载荷：`Failed` 的诚实说明行照实画出（外壳保留），不 panic。
+    #[test]
+    fn failed_payload_renders_honest_note() {
+        let payload = PreviewPayload::Failed(DecodeError::Parse("坏字节".to_owned()));
+        let bounds = draw_probe(|theme| render_with_payload("x.png", &payload, theme));
+        assert_rendered(bounds, "图片预览（失败态说明行）");
     }
 }
