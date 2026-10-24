@@ -6,6 +6,9 @@
 //!
 //! fail-closed：应用名来自运行时数据，未下发就显示「未下发」，不伪造。
 #![cfg(feature = "ui")]
+use std::rc::Rc;
+
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
@@ -112,18 +115,64 @@ pub fn title_bar(theme: &Theme) -> Div {
 }
 
 /// 渲染顶栏：`app` 未下发显示「未下发」；点击经 `on_intent` 只上报意图枚举。
+///
+/// 颜色一律 `theme.*` token（⛔ 硬编码色值）；布局 gpui flex。
 pub fn title_bar_with(
     theme: &Theme,
     app: Option<&str>,
     on_intent: impl Fn(MenuIntent) + 'static,
 ) -> Div {
-    let _ = (&theme, &on_intent);
-    let mut bar = div().flex().gap_3();
-    for m in MENUS {
-        bar = bar.child(SharedString::from(m.to_string()));
+    let on_intent = Rc::new(on_intent) as Rc<dyn Fn(MenuIntent)>;
+    let mut menus = div().flex().items_center().gap_3();
+    for idx in 0..MENUS.len() {
+        menus = menus.child(menu_word(theme, idx, Rc::clone(&on_intent)));
     }
-    bar.child(SharedString::from(app_name(app).to_string()))
-        .child(DISCOVER_APPS)
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .bg(theme.title_bar)
+        .border_b_1()
+        .border_color(theme.title_bar_border)
+        .child(
+            div().flex().items_center().gap_4().child(menus).child(
+                div()
+                    .text_sm()
+                    .font_bold()
+                    .text_color(theme.foreground)
+                    .child(SharedString::from(app_name(app).to_string())),
+            ),
+        )
+        .child(discover_button(theme, on_intent))
+}
+
+/// 单个菜单词：可点，点击上报对应意图（`MENUS[idx] ⇔ MENU_INTENTS[idx]`）。
+fn menu_word(theme: &Theme, idx: usize, on_intent: Rc<dyn Fn(MenuIntent)>) -> impl IntoElement {
+    div()
+        .id(SharedString::from(format!("topbar-menu-{idx}")))
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(MENUS[idx]))
+        .on_click(move |_, _, _| on_intent(MENU_INTENTS[idx]))
+}
+
+/// 「发现应用」：描边圆角按钮（逐字：`buddyApp.switcher.discover`）。
+fn discover_button(theme: &Theme, on_intent: Rc<dyn Fn(MenuIntent)>) -> impl IntoElement {
+    div()
+        .id("topbar-discover")
+        .flex()
+        .items_center()
+        .h_7()
+        .px_3()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(SharedString::from(DISCOVER_APPS.to_string()))
+        .on_click(move |_, _, _| on_intent(MenuIntent::DiscoverApps))
 }
 
 #[cfg(test)]
