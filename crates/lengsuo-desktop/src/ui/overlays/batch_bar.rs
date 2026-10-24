@@ -303,7 +303,10 @@ mod tests {
         assert_eq!(SELECT_ALL, "全选");
         assert_eq!(SELECTED_COUNT, "已选 {count} 项");
         assert_eq!(SELECT_ALL_COUNT, "({count})");
-        assert_eq!(ARCHIVE_UNSUPPORTED, "暂不支持助理和项目任务归档，请重新选择");
+        assert_eq!(
+            ARCHIVE_UNSUPPORTED,
+            "暂不支持助理和项目任务归档，请重新选择"
+        );
         assert_eq!(EMPTY_HINT, "没有可执行的任务，请重新选择");
     }
 
@@ -335,6 +338,24 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn fail_closed_state_never_fabricates_counts() {
+        let line = BatchBarState::initial().status_line();
+        assert!(!line.contains("已选"));
+        assert!(!line.contains("全选"));
+        assert!(!line.contains("归档"));
+    }
+
+    #[test]
+    fn ready_state_status_line_reports_count() {
+        let sel = Selection {
+            selected: 2,
+            total: 4,
+            archive_unsupported: false,
+        };
+        assert_eq!(BatchBarState::Ready(sel).status_line(), "已选 2 项");
     }
 
     #[test]
