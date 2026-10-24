@@ -1,26 +1,357 @@
-//! 协作·连接器 —— 波次 9 脚手架（诚实占位）。
-//! 文案命名空间 `collab.connectors`（140 有效键，品牌词已剔除）。
-//! 真实视图由卡 `ui-overlay-collab-connectors` 落地；本占位保证模块登记与 fail-closed 文案。
+//! 协作·连接器（波次 9，卡 `ui-overlay-collab-connectors`）。
+//!
+//! 分层约定（同 `panel_views` / `collab_plan_detail`）：纯数据层 + GPUI 层。
+//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `collab.connectors`。
+//! 全表 140 键未随卡下发：[`TEXTS`] 先落任务书逐字摘录 12 条，其余键待全表下发后补（⛔ 不自编中文）。
+#![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
-/// 面板标题（逐字取自文案全表）。
+/// 面板标题（逐字取自文案全表，占位卡沿用）。
 pub const PANEL_TITLE: &str = "协作·连接器";
+/// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
+pub const NOT_DELIVERED: &str = "未下发";
+/// 命名空间前缀。
+pub const NS_PREFIX: &str = "collab.connectors";
+/// 已下发键数（全表 140 键待下发，见 [`TEXTS`] 文档）。
+pub const NS_KEY_COUNT: usize = TEXTS.len();
 
-/// 渲染占位：加载失败必须可见（fail-closed），不退化成空列表。
-pub fn render_placeholder() -> String {
-    format!("{}：数据未接入（fail-closed）", PANEL_TITLE)
+// ===== 纯数据层（无 GPUI 依赖）=====
+/// 命名空间 `collab.connectors` 已下发文案（key、中文均逐字，⛔ 不自编）。
+/// 每行两条仅为压行数，键序与摘录一致。
+#[rustfmt::skip]
+pub const TEXTS: &[(&str, &str)] = &[
+    ("collab.connectors.action.addTeamCredential", "添加团队凭证"), ("collab.connectors.action.authorizeAll", "授权全员使用"),
+    ("collab.connectors.action.connect", "连接"), ("collab.connectors.action.connecting", "连接中…"),
+    ("collab.connectors.action.deleteTeamCredential", "删除团队凭证"), ("collab.connectors.action.disconnect", "断开连接"),
+    ("collab.connectors.action.goConnect", "去连接"), ("collab.connectors.action.moreLabel", "更多操作"),
+    ("collab.connectors.action.remove", "移除"), ("collab.connectors.action.removeFromList", "删除"),
+    ("collab.connectors.action.updateCredential", "更新凭证"), ("collab.connectors.addWithPlus", "+ 添加"),
+];
+
+/// 按全量 key 取文案；未知 key 返回 `None`（fail-closed，不猜值）。
+pub fn text(key: &str) -> Option<&'static str> {
+    TEXTS.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+}
+
+/// 渲染层取词（key 必须在 [`TEXTS`]；测试锁表防漂移，缺词落空串显形）。
+fn t(key: &str) -> &'static str {
+    text(key).unwrap_or_default()
+}
+
+/// 单条连接器的连接态（主按钮文案映射见 [`Connector::action_label`]）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConnState {
+    /// 未连接（可发起连接）。
+    #[default]
+    Disconnected,
+    /// 连接进行中（`action.connecting`）。
+    Connecting,
+    /// 已连接（可断开）。
+    Connected,
+}
+
+/// 一条连接器（名称必填、其余可空；⛔ 不伪造服务端数据）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Connector {
+    /// 连接器名称（数据下发时必有，无逐字 fallback 故不做 Option）。
+    pub name: String,
+    /// 描述（可无；无值不渲染该行）。
+    pub desc: Option<String>,
+    /// 连接态。
+    pub conn: ConnState,
+    /// 是否已配置团队凭证（决定凭证行动作集）。
+    pub team_credential: bool,
+}
+
+impl Connector {
+    /// 主动作文案：已连接「断开连接」/连接中「连接中…」/未连接「连接」；
+    /// 未连接且未配凭证须先走授权流程 ⇒「去连接」。
+    pub fn action_label(&self) -> &'static str {
+        match self.conn {
+            ConnState::Connected => t("collab.connectors.action.disconnect"),
+            ConnState::Connecting => t("collab.connectors.action.connecting"),
+            ConnState::Disconnected if !self.team_credential => {
+                t("collab.connectors.action.goConnect")
+            }
+            ConnState::Disconnected => t("collab.connectors.action.connect"),
+        }
+    }
+
+    /// 行内次级动作：未连接「移除」；连接中/已连接「删除」。
+    pub fn secondary_label(&self) -> &'static str {
+        match self.conn {
+            ConnState::Disconnected => t("collab.connectors.action.remove"),
+            ConnState::Connecting | ConnState::Connected => {
+                t("collab.connectors.action.removeFromList")
+            }
+        }
+    }
+
+    /// 凭证行文案：已配 ⇒ 更新/删除/授权全员使用；未配 ⇒ 添加团队凭证。
+    pub fn credential_labels(&self) -> Vec<&'static str> {
+        if self.team_credential {
+            vec![
+                t("collab.connectors.action.updateCredential"),
+                t("collab.connectors.action.deleteTeamCredential"),
+                t("collab.connectors.action.authorizeAll"),
+            ]
+        } else {
+            vec![t("collab.connectors.action.addTeamCredential")]
+        }
+    }
+}
+
+/// 浮层/面板状态机（默认 `NotDelivered`：未拉取过 ≠ 空集，⛔ 不伪造）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum State {
+    /// 就绪：数据已下发且有连接器。
+    Ready(Vec<Connector>),
+    /// 空态：已下发但无连接器（以「+ 添加」引导，⛔ 不是空列表）。
+    Empty,
+    /// 加载中（面板级加载即连接，显示 `action.connecting`）。
+    Loading,
+    /// 数据未下发（无数据源时的诚实默认态，显示「未下发」）。
+    #[default]
+    NotDelivered,
+}
+
+impl State {
+    /// 各分支提示文案（逐字取自 [`TEXTS`]；`Ready` 无提示行）。
+    /// 空态专属键未随摘录下发，暂以 `addWithPlus` 引导，待全表下发后替换。
+    pub fn status_text(&self) -> &'static str {
+        match self {
+            State::Ready(_) => "",
+            State::Empty => t("collab.connectors.addWithPlus"),
+            State::Loading => t("collab.connectors.action.connecting"),
+            State::NotDelivered => NOT_DELIVERED,
+        }
+    }
+}
+
+/// 由运行时输入解析初始态（纯函数）：`None` = 未拉取过 ≠ `Some(vec![])` = 空集。
+pub fn resolve(delivered: Option<Vec<Connector>>) -> State {
+    match delivered {
+        None => State::NotDelivered,
+        Some(items) if items.is_empty() => State::Empty,
+        Some(items) => State::Ready(items),
+    }
+}
+
+// ===== GPUI 层 =====
+/// 主区/浮层呈现入口（签名固定；无数据源 ⇒ fail-closed 默认 `NotDelivered`，显示「未下发」）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render(theme, &State::default())
+}
+
+/// 按状态渲染整棵树（只构造元素，不触实体/上下文；测试逐分支调用防 panic）。
+pub fn render(theme: &Theme, state: &State) -> AnyElement {
+    let frame = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(header_row(theme));
+    match state {
+        State::Ready(items) => frame
+            .children(items.iter().map(|c| item_card(theme, c)))
+            .into_any_element(),
+        State::Empty | State::Loading | State::NotDelivered => frame
+            .child(status_block(theme, state.status_text()))
+            .into_any_element(),
+    }
+}
+
+/// 标题行：面板名（前景色）+「+ 添加」。
+fn header_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(PANEL_TITLE)),
+        )
+        .child(SharedString::from(t("collab.connectors.addWithPlus")))
+        .into_any_element()
+}
+
+/// 非就绪分支的提示块（加载中/空态/未下发共用，文案由 [`State::status_text`] 给出）。
+fn status_block(theme: &Theme, text: &str) -> AnyElement {
+    div()
+        .px_4()
+        .py_2()
+        .text_color(theme.foreground)
+        .child(SharedString::from(text))
+        .into_any_element()
+}
+
+/// 单条连接器卡（值全部来自 [`Connector`] 纯函数，⛔ 不伪造）。
+fn item_card(theme: &Theme, c: &Connector) -> AnyElement {
+    let mut card = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(c.name.as_str())),
+                )
+                .child(SharedString::from(c.action_label()))
+                .child(SharedString::from(c.secondary_label()))
+                .child(SharedString::from(t("collab.connectors.action.moreLabel"))),
+        );
+    if let Some(d) = c.desc.as_deref() {
+        card = card.child(div().text_xs().child(SharedString::from(d)));
+    }
+    card = card.child(
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .text_xs()
+            .children(c.credential_labels().iter().map(|l| SharedString::from(*l))),
+    );
+    card.into_any_element()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
+    use super::{
+        main_area, render, resolve, text, ConnState, Connector, State, NOT_DELIVERED, NS_KEY_COUNT,
+        PANEL_TITLE, TEXTS,
+    };
 
     #[test]
-    fn title_is_verbatim() {
-        assert!(!PANEL_TITLE.is_empty());
+    fn copy_is_verbatim() {
+        assert_eq!(PANEL_TITLE, "协作·连接器");
+        assert_eq!(
+            text("collab.connectors.action.addTeamCredential"),
+            Some("添加团队凭证")
+        );
+        assert_eq!(
+            text("collab.connectors.action.authorizeAll"),
+            Some("授权全员使用")
+        );
+        assert_eq!(text("collab.connectors.action.connect"), Some("连接"));
+        assert_eq!(text("collab.connectors.action.connecting"), Some("连接中…"));
+        assert_eq!(
+            text("collab.connectors.action.disconnect"),
+            Some("断开连接")
+        );
+        assert_eq!(text("collab.connectors.action.goConnect"), Some("去连接"));
+        assert_eq!(text("collab.connectors.action.remove"), Some("移除"));
+        assert_eq!(
+            text("collab.connectors.action.removeFromList"),
+            Some("删除")
+        );
+        assert_eq!(
+            text("collab.connectors.action.updateCredential"),
+            Some("更新凭证")
+        );
+        assert_eq!(text("collab.connectors.addWithPlus"), Some("+ 添加"));
     }
 
     #[test]
-    fn placeholder_mentions_fail_closed() {
-        assert!(render_placeholder().contains("fail-closed"));
+    fn fail_closed_default() {
+        assert_eq!(State::default(), State::NotDelivered);
+        assert_eq!(resolve(None), State::NotDelivered);
+        assert_eq!(State::NotDelivered.status_text(), NOT_DELIVERED);
+    }
+
+    #[test]
+    fn ns_table_locked() {
+        let n = TEXTS.len();
+        assert_eq!(n, NS_KEY_COUNT);
+        assert_eq!(n, 12); // 任务书摘录 12 条；全表 140 键待下发后改锁 140
+        let mut seen: Vec<&str> = TEXTS.iter().map(|(k, _)| *k).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), n);
+        assert!(seen.iter().all(|k| k.starts_with("collab.connectors.")));
+    }
+
+    #[test]
+    fn resolve_and_action_labels() {
+        let bare = Connector {
+            name: "示例仓库".into(),
+            ..Default::default()
+        };
+        assert_eq!(bare.action_label(), "去连接"); // 未连接且未配凭证 ⇒ 先授权
+        assert_eq!(bare.secondary_label(), "移除");
+        assert_eq!(bare.credential_labels(), vec!["添加团队凭证"]);
+        let ready = Connector {
+            conn: ConnState::Connected,
+            team_credential: true,
+            ..bare.clone()
+        };
+        assert_eq!(ready.action_label(), "断开连接");
+        assert_eq!(ready.secondary_label(), "删除");
+        assert_eq!(
+            ready.credential_labels(),
+            vec!["更新凭证", "删除团队凭证", "授权全员使用"]
+        );
+        let linking = Connector {
+            conn: ConnState::Connecting,
+            team_credential: true,
+            ..bare.clone()
+        };
+        assert_eq!(linking.action_label(), "连接中…");
+        let direct = Connector {
+            team_credential: true,
+            ..bare
+        };
+        assert_eq!(direct.action_label(), "连接"); // 已配凭证可直接连接
+        assert_eq!(resolve(None), State::NotDelivered);
+        assert_eq!(
+            resolve(Some(vec![direct.clone()])),
+            State::Ready(vec![direct])
+        );
+    }
+
+    #[test]
+    fn empty_input_is_empty_state_not_empty_list() {
+        let s = resolve(Some(Vec::new()));
+        assert_eq!(s, State::Empty);
+        assert_eq!(s.status_text(), "+ 添加"); // 空态引导；专属键待全表下发
+        assert_ne!(s.status_text(), NOT_DELIVERED); // 空集 ≠ 未下发 ≠ 空列表
+        assert_eq!(State::Loading.status_text(), "连接中…");
+    }
+
+    #[test]
+    fn render_branches_construct() {
+        let theme = gpui_kit::component::Theme::default();
+        let _ = main_area(&theme); // 固定签名入口只构造元素树，不 panic
+        let _ = render(&theme, &State::NotDelivered);
+        let _ = render(&theme, &State::Loading);
+        let _ = render(&theme, &State::Empty);
+        let full = Connector {
+            name: "示例仓库".into(),
+            desc: Some("只读镜像".into()),
+            conn: ConnState::Connected,
+            team_credential: true,
+        };
+        let bare = Connector {
+            name: "示例看板".into(),
+            ..Default::default()
+        };
+        let _ = render(&theme, &State::Ready(vec![full, bare])); // 含描述/凭证与裸卡分支
     }
 }
