@@ -2,6 +2,7 @@
 //!
 //! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `sandbox`。
+//! 数据源在运行时侧：无数据源时如实渲染「未下发」，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::component::Theme;
 use gpui_kit::*;
@@ -150,8 +151,9 @@ impl SandboxIntercept {
     }
 }
 
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；本卡负责补全真实视图）。
+/// 主区渲染：标题行 + 说明行 + 「范围」载荷区 + 操作行（颜色全取主题 token）。
 pub fn main_area(theme: &Theme) -> Div {
+    let model = SandboxIntercept::not_delivered();
     div()
         .flex()
         .flex_col()
@@ -160,8 +162,48 @@ pub fn main_area(theme: &Theme) -> Div {
         .child(
             div()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(copy::DESCRIPTION),
         )
+        .child(scope_section(&model, theme))
+        .child(action_row(theme))
+}
+
+/// 「范围」载荷区：未下发 ⇒ 如实一行「未下发」（fail-closed，⛔ 不伪造条目）。
+fn scope_section(model: &SandboxIntercept, theme: &Theme) -> Div {
+    let mut section = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_color(theme.muted_foreground).child(copy::SCOPE));
+    if model.is_not_delivered() {
+        section = section.child(div().text_color(theme.foreground).child(NOT_DELIVERED));
+    } else {
+        for (kind, scope) in model.rows() {
+            section = section.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(div().text_color(theme.muted_foreground).child(kind))
+                    .child(div().text_color(theme.foreground).child(scope.to_string())),
+            );
+        }
+    }
+    section
+}
+
+/// 操作行：「操作」标签 + 允许 / 允许，不再询问 / 拒绝（纯展示骨架，不接线）。
+fn action_row(theme: &Theme) -> Div {
+    let model = SandboxIntercept::not_delivered();
+    let mut row = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_color(theme.muted_foreground).child(copy::ACTION));
+    for label in model.actions() {
+        row = row.child(div().text_color(theme.foreground).child(label));
+    }
+    row
 }
 #[cfg(test)]
 mod tests {
