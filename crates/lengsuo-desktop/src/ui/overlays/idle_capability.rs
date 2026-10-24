@@ -2,7 +2,7 @@
 //!
 //! 分层约定（同 `panel_views`）：纯数据层（状态机 + 逐字文案 + 计数模板）+ GPUI 层（[`main_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `idleCapability`。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 数据源在运行时侧：[`main_area`] 以「未下发」诚实占位，跨线契约就绪后改喂 [`overlay_area`]。
 #![cfg(feature = "ui")]
 use std::collections::BTreeSet;
 
@@ -311,35 +311,267 @@ pub fn relative_text(days: u32) -> String {
 
 // ===== GPUI 层 =====
 
-/// 视图标题（逐字取自界面文案全表）。
-pub const TITLE: &str = "闲置能力提示";
-/// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 浮层渲染入口：无数据源时的诚实占位（「未下发」，fail-closed）。
+///
+/// 波次 6：浮层不占主区，返回整层容器由调用方叠加。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    overlay_area(theme, &IdleCapabilityCard::not_delivered())
+}
+
+/// 按纯数据层状态渲染整卡：标题行 / 副标题 / 操作条 / 清单 / 空态 / 未下发分支。
+#[must_use]
+pub fn overlay_area(theme: &Theme, card: &IdleCapabilityCard) -> Div {
+    let area = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
-        .flex_col()
+        .flex_col();
+    match card.phase {
+        Phase::NotDelivered => area
+            .child(header_row(theme, ARIA_LABEL))
+            .child(centered(theme, NOT_DELIVERED)),
+        Phase::Delivered => delivered_area(theme, card, area),
+    }
+}
+
+/// 已下发分支：标题 + 副标题 +（空态 / 操作条 + 清单 + 脚注）+ 已关闭 toast。
+fn delivered_area(theme: &Theme, card: &IdleCapabilityCard, mut area: Div) -> Div {
+    let Some(title) = card.title_text() else {
+        return area;
+    };
+    area = area
+        .child(header_row(theme, &title))
+        .child(subtitle_row(theme));
+    if card.is_empty_state() {
+        return area.child(centered(theme, SUBTITLE));
+    }
+    area = area
+        .child(action_bar(theme, card))
+        .child(list_header(theme))
+        .child(list_rows(theme, card))
+        .child(footer_rows(theme, card));
+    if let Some(count) = card.closed_count {
+        area = area.child(toast_row(theme, count));
+    }
+    area
+}
+
+/// 标题行：卡片名/动态标题 + 关闭（closeAriaLabel）。
+fn header_row(theme: &Theme, title: &str) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
-                .child(TITLE),
+                .child(title.to_owned()),
         )
+        .child(div().flex_1())
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(CLOSE_ARIA_LABEL),
+        )
+}
+
+/// 副标题行：subtitlePrefix + 管理页（强调）+ subtitleSuffix。
+fn subtitle_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .px_4()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SUBTITLE_PREFIX),
+        )
+        .child(div().text_xs().text_color(theme.accent).child(MANAGE_LINK))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SUBTITLE_SUFFIX),
+        )
+}
+
+/// 居中说明（未下发 / 空态）。
+fn centered(theme: &Theme, text: &str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text.to_owned())
+}
+
+/// 操作条：全选 / 取消选择 / 已选中计数 / 一键关闭（正在关闭…）。
+fn action_bar(theme: &Theme, card: &IdleCapabilityCard) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(div().text_sm().text_color(theme.accent).child(SELECT_ALL))
+        .child(div().text_sm().text_color(theme.accent).child(DESELECT_ALL))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(card.selected_count_text()),
+        )
+        .child(div().flex_1())
+        .child(
+            div()
+                .text_sm()
+                .text_color(if card.disabling {
+                    theme.muted_foreground
+                } else {
+                    theme.accent
+                })
+                .child(card.disable_all_label()),
+        )
+}
+
+/// 清单表头：类型和名称 | 上次使用时间。
+fn list_header(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .px_4()
+        .py_1()
         .child(
             div()
                 .flex_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(COLUMN_TYPE_AND_NAME),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(COLUMN_LAST_USED),
+        )
+}
+
+/// 清单行：徽标 + 名称 | 上次使用 | 单条关闭。
+fn list_rows(theme: &Theme, card: &IdleCapabilityCard) -> Div {
+    let mut rows = div().flex().flex_col();
+    for item in &card.items {
+        rows = rows.child(
+            div()
                 .flex()
                 .items_center()
-                .justify_center()
-                .text_sm()
+                .gap_2()
+                .px_4()
+                .py_1()
+                .child(
+                    div()
+                        .px_2()
+                        .text_xs()
+                        .text_color(theme.accent)
+                        .border_1()
+                        .border_color(theme.border)
+                        .rounded_sm()
+                        .child(item.kind.badge()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(item.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(item.last_used.column_text()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(DISABLE),
+                ),
+        );
+    }
+    rows
+}
+
+/// 脚注：查看详情/收起详情 + 不再提醒；展开时附详情说明（subtitleDetail）。
+fn footer_rows(theme: &Theme, card: &IdleCapabilityCard) -> Div {
+    let mut column = div().flex().flex_col().child(
+        div()
+            .flex()
+            .items_center()
+            .px_4()
+            .py_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.accent)
+                    .child(if card.detail_expanded {
+                        COLLAPSE_DETAIL
+                    } else {
+                        VIEW_DETAIL
+                    }),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(NEVER_REMIND),
+            ),
+    );
+    if card.detail_expanded {
+        column = column.child(
+            div()
+                .px_4()
+                .pb_2()
+                .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(SUBTITLE_DETAIL),
+        );
+    }
+    column
+}
+
+/// 已关闭 toast：closedToastPrefix + 管理页（强调）+ closedToastSuffix。
+fn toast_row(theme: &Theme, count: usize) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_4()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(fill_count(CLOSED_TOAST_PREFIX, count)),
+        )
+        .child(div().text_sm().text_color(theme.accent).child(MANAGE_LINK))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(CLOSED_TOAST_SUFFIX),
         )
 }
 #[cfg(test)]
@@ -479,5 +711,23 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn overlay_area_renders_all_branches_without_panic() {
+        let theme = Theme::default();
+        let mut card = IdleCapabilityCard::delivered(30, sample_items());
+        let _ = super::overlay_area(&theme, &card);
+        card.toggle_select(0);
+        card.disable_selected();
+        let _ = super::overlay_area(&theme, &card);
+        card.detail_expanded = true;
+        let _ = super::overlay_area(&theme, &card);
+        card.disabling = true;
+        let _ = super::overlay_area(&theme, &card);
+        let empty = IdleCapabilityCard::delivered(30, Vec::new());
+        let _ = super::overlay_area(&theme, &empty);
+        let undelivered = IdleCapabilityCard::not_delivered();
+        let _ = super::overlay_area(&theme, &undelivered);
     }
 }
