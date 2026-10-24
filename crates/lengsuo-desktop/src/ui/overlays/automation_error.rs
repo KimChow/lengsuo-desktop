@@ -188,3 +188,135 @@ fn error_body(theme: &Theme, state: &AutomationErrorState) -> Div {
                 .child(state.code().unwrap_or_default().to_string()),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
+    use super::{
+        code_text, main_area, render, resolve, text, AutomationErrorState, NOT_DELIVERED,
+        NS_PREFIX, TEXTS, TEXT_EMPTY, TEXT_LOADING, TITLE,
+    };
+    use gpui_kit::component::Theme;
+
+    /// ① 全表 12 键：短名唯一、非空、拼前缀后均可经 `text` 解析回原值。
+    #[test]
+    fn table_has_12_unique_short_names_resolvable_by_full_key() {
+        assert_eq!(TEXTS.len(), 12);
+        let mut names: Vec<&str> = TEXTS.iter().map(|(k, _)| *k).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), TEXTS.len());
+        assert!(names.iter().all(|n| !n.is_empty() && !n.starts_with('.')));
+        for (name, value) in TEXTS {
+            let full = format!("{NS_PREFIX}.{name}");
+            assert_eq!(text(&full), Some(value));
+        }
+    }
+
+    /// ② 文案逐字一致：任务书摘录 12 键全量比对（⛔ 一字不差）。
+    #[test]
+    fn copy_is_verbatim_from_task_brief() {
+        let t = |name: &str| text(&format!("{NS_PREFIX}.{name}"));
+        assert_eq!(t("agentMissing"), Some("未找到频道对应的助理，请稍后再试"));
+        assert_eq!(
+            t("code.CHANNEL_NOT_ALLOWED"),
+            Some("投递渠道与任务类型不匹配")
+        );
+        assert_eq!(
+            t("code.CRON_INTERVAL_TOO_SHORT"),
+            Some("触发频率过高，最低每 5 分钟执行一次")
+        );
+        assert_eq!(t("code.INTERNAL_ERROR"), Some("服务异常，请稍后再试"));
+        assert_eq!(
+            t("code.INVALID_CRON_EXPR"),
+            Some("定时设置无效，请检查频率或格式后重试")
+        );
+        assert_eq!(t("code.INVALID_PARAM"), Some("请求参数有误，请检查后重试"));
+        assert_eq!(t("code.INVALID_TOKEN"), Some("凭证无效或已过期"));
+        assert_eq!(t("code.LOG_NOT_FOUND"), Some("运行记录不存在"));
+        assert_eq!(
+            t("code.NOT_PROJECT_MEMBER"),
+            Some("你不是该项目成员，无权执行此操作")
+        );
+        assert_eq!(t("code.OWNER_TYPE_IMMUTABLE"), Some("任务归属不可修改"));
+        assert_eq!(t("code.PROJECT_NOT_FOUND"), Some("项目不存在或已被删除"));
+        assert_eq!(
+            t("code.RESOURCE_NOT_IN_PROJECT"),
+            Some("引用的资源不在项目可用范围内")
+        );
+    }
+
+    /// ③ 错误码解析：已知码命中；`agentMissing` 非码；未知码 fail-closed 兜底 INTERNAL_ERROR。
+    #[test]
+    fn code_text_known_miss_and_fallback() {
+        assert_eq!(code_text("INVALID_TOKEN"), Some("凭证无效或已过期"));
+        assert_eq!(
+            code_text("CRON_INTERVAL_TOO_SHORT"),
+            Some("触发频率过高，最低每 5 分钟执行一次")
+        );
+        assert_eq!(code_text("agentMissing"), None);
+        assert_eq!(code_text("NO_SUCH_CODE"), None);
+        let unknown = AutomationErrorState::Ready {
+            code: "NO_SUCH_CODE".into(),
+        };
+        assert_eq!(unknown.message(), Some("服务异常，请稍后再试"));
+        assert_eq!(unknown.code(), Some("NO_SUCH_CODE"));
+    }
+
+    /// ④ 状态机默认态与 `resolve` 全分支：未拉取过 ≠ 空集；空白码视为无错误。
+    #[test]
+    fn resolve_covers_every_branch_and_default_is_loading() {
+        assert_eq!(
+            AutomationErrorState::default(),
+            AutomationErrorState::Loading
+        );
+        assert_ne!(AutomationErrorState::default(), AutomationErrorState::Empty);
+        assert_eq!(resolve(None), AutomationErrorState::Loading);
+        assert_eq!(resolve(Some(Err(()))), AutomationErrorState::LoadFailed);
+        assert_eq!(resolve(Some(Ok(None))), AutomationErrorState::Empty);
+        assert_eq!(resolve(Some(Ok(Some("  ")))), AutomationErrorState::Empty);
+        let ready = resolve(Some(Ok(Some(" INVALID_TOKEN "))));
+        assert_eq!(ready.code(), Some("INVALID_TOKEN"));
+        assert_eq!(ready.message(), Some("凭证无效或已过期"));
+    }
+
+    /// ⑤ 文案/错误码只在正常态产出：加载/失败/空态 ⇒ `None`（⛔ 不混用分支文案）。
+    #[test]
+    fn message_and_code_only_exist_in_ready_state() {
+        for state in [
+            AutomationErrorState::Loading,
+            AutomationErrorState::LoadFailed,
+            AutomationErrorState::Empty,
+        ] {
+            assert_eq!(state.message(), None);
+            assert_eq!(state.code(), None);
+        }
+        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(TEXT_LOADING, "加载中...");
+        assert_eq!(TEXT_EMPTY, "暂无内容");
+        assert_eq!(TITLE, "自动化·错误");
+    }
+
+    /// ⑥ `main_area` / `render` 全分支不 panic（含未知码正常态）。
+    #[test]
+    fn renders_do_not_panic_for_every_state() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+        let _ = render(&theme, &AutomationErrorState::Loading);
+        let _ = render(&theme, &AutomationErrorState::LoadFailed);
+        let _ = render(&theme, &AutomationErrorState::Empty);
+        let _ = render(
+            &theme,
+            &AutomationErrorState::Ready {
+                code: "INVALID_TOKEN".into(),
+            },
+        );
+        let _ = render(
+            &theme,
+            &AutomationErrorState::Ready {
+                code: "NO_SUCH_CODE".into(),
+            },
+        );
+    }
+}
