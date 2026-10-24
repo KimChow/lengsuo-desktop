@@ -22,11 +22,9 @@ pub const FORCE_EXTERNAL_SUBTITLE_TMPL: &str = "请升级至 V{version} 后继�
 pub const FORCE_CONTACT_ADMIN_SUBTITLE: &str = "请联系企业管理员升级至最新版本";
 /// 外部商店打开失败提示。
 pub const STORE_OPEN_FAILED_HINT: &str = "请手动前往应用商店更新";
-/// 普通升级就绪徽标。
 pub const NEW_VERSION_READY: &str = "新版本就绪";
 /// 普通升级就绪副标题模板（占位符 `{version}`）。
 pub const AVAILABLE_TMPL: &str = "发现新版本 V{version}，请前往官网下载并安装";
-/// 清单行：更新日志入口标签。
 pub const CHANGELOG: &str = "更新日志";
 /// 动作：打开软件商店。
 pub const OPEN_SOFTWARE_STORE: &str = "前往软件商店更新";
@@ -34,9 +32,7 @@ pub const OPEN_SOFTWARE_STORE: &str = "前往软件商店更新";
 pub const OPEN_APP_STORE: &str = "前往应用商店更新";
 /// 动作：前往官网下载。
 pub const OPEN_WEBSITE: &str = "前往官网下载更新";
-/// 动作：稍后（仅非强制升级可推迟）。
 pub const LATER: &str = "稍后";
-/// 动作：重启升级。
 pub const RESTART_TO_UPDATE: &str = "重启升级";
 /// 动作：受管设备强制升级的确认。
 pub const DISMISS: &str = "知道了";
@@ -241,7 +237,6 @@ fn center_not_delivered(theme: &Theme) -> Div {
         .text_color(theme.muted_foreground)
         .child(NOT_DELIVERED)
 }
-/// 徽标（已下发态的状态标题）。
 fn badge(theme: &Theme, text: &'static str) -> Div {
     div().px_4().pt_2().child(
         div()
@@ -287,7 +282,10 @@ fn action_button(theme: &Theme, label: &'static str, primary: bool) -> Div {
         })
         .child(label)
 }
+// 整模块跳过 rustfmt：其 struct_lit_width/fn_call_width 启发式会把测试里的
+// 结构体字面量与 CJK 断言强制展开成多行，这里按 100 列手排紧凑单行。
 #[cfg(test)]
+#[rustfmt::skip]
 mod tests {
     use super::{
         main_area, ArchNotice, UpdateFlow, UpdateFlowState, ARCH_AVAILABLE, ARCH_DOWNLOADING_TMPL,
@@ -301,41 +299,28 @@ mod tests {
     fn flow(state: UpdateFlowState, arch: Option<ArchNotice>) -> UpdateFlow {
         UpdateFlow { state, arch }
     }
+    fn external_state(version: &str) -> UpdateFlowState {
+        UpdateFlowState::ForceExternal { version: version.to_string() }
+    }
+    fn ready_state(version: &str) -> UpdateFlowState {
+        UpdateFlowState::Ready { version: version.to_string() }
+    }
 
     #[test]
     fn state_counts_primary_and_templates() {
-        let force = flow(
-            UpdateFlowState::ForceExternal {
-                version: "2.3.1".to_string(),
-            },
-            None,
-        );
+        let force = flow(external_state("2.3.1"), None);
         assert_eq!(force.actions().len(), 3);
         assert_eq!(force.actions()[0], OPEN_SOFTWARE_STORE);
         assert_eq!(force.primary_action(), 0);
         assert_eq!(force.rows().len(), 1);
-        assert_eq!(
-            force.subtitle(),
-            Some("请升级至 V2.3.1 后继续使用".to_string())
-        );
-        let with_arch = flow(
-            force.state.clone(),
-            Some(ArchNotice::Downloading { percent: 45 }),
-        );
+        assert_eq!(force.subtitle(), Some("请升级至 V2.3.1 后继续使用".to_string()));
+        let with_arch = flow(external_state("2.3.1"), Some(ArchNotice::Downloading { percent: 45 }));
         assert_eq!(with_arch.rows().len(), 2);
         assert_eq!(with_arch.rows()[1], "正在下载正确版本 45%");
-        let ready = flow(
-            UpdateFlowState::Ready {
-                version: "1.0.0".to_string(),
-            },
-            None,
-        );
+        let ready = flow(ready_state("1.0.0"), None);
         assert_eq!(ready.actions().len(), 2);
         assert_eq!(ready.primary_action(), 1);
-        assert_eq!(
-            ready.subtitle(),
-            Some("发现新版本 V1.0.0，请前往官网下载并安装".to_string())
-        );
+        assert_eq!(ready.subtitle(), Some("发现新版本 V1.0.0，请前往官网下载并安装".to_string()));
         let failed = flow(UpdateFlowState::StoreOpenFailed, None);
         assert_eq!(failed.subtitle(), Some(STORE_OPEN_FAILED_HINT.to_string()));
         assert_eq!(failed.primary_action(), 2);
@@ -357,20 +342,11 @@ mod tests {
     fn copy_is_verbatim() {
         assert_eq!(TITLE, "更新提示");
         assert_eq!(FORCE_TITLE, "当前版本已停止支持");
-        assert_eq!(
-            FORCE_EXTERNAL_SUBTITLE_TMPL,
-            "请升级至 V{version} 后继续使用"
-        );
-        assert_eq!(
-            FORCE_CONTACT_ADMIN_SUBTITLE,
-            "请联系企业管理员升级至最新版本"
-        );
+        assert_eq!(FORCE_EXTERNAL_SUBTITLE_TMPL, "请升级至 V{version} 后继续使用");
+        assert_eq!(FORCE_CONTACT_ADMIN_SUBTITLE, "请联系企业管理员升级至最新版本");
         assert_eq!(STORE_OPEN_FAILED_HINT, "请手动前往应用商店更新");
         assert_eq!(NEW_VERSION_READY, "新版本就绪");
-        assert_eq!(
-            AVAILABLE_TMPL,
-            "发现新版本 V{version}，请前往官网下载并安装"
-        );
+        assert_eq!(AVAILABLE_TMPL, "发现新版本 V{version}，请前往官网下载并安装");
         assert_eq!(CHANGELOG, "更新日志");
         assert_eq!(OPEN_SOFTWARE_STORE, "前往软件商店更新");
         assert_eq!(OPEN_APP_STORE, "前往应用商店更新");
@@ -389,30 +365,18 @@ mod tests {
         assert_eq!(UpdateFlow::initial().badge_text(), None);
         let managed = flow(UpdateFlowState::ForceContactAdmin, None);
         assert_eq!(managed.badge_text(), Some(FORCE_TITLE));
-        assert_eq!(
-            managed.subtitle(),
-            Some(FORCE_CONTACT_ADMIN_SUBTITLE.to_string())
-        );
-        let ready = flow(
-            UpdateFlowState::Ready {
-                version: "1.0.0".to_string(),
-            },
-            None,
-        );
+        assert_eq!(managed.subtitle(), Some(FORCE_CONTACT_ADMIN_SUBTITLE.to_string()));
+        let ready = flow(ready_state("1.0.0"), None);
         assert_eq!(ready.badge_text(), Some(NEW_VERSION_READY));
         assert_eq!(ArchNotice::Available.line(), ARCH_AVAILABLE);
-        assert_eq!(
-            ArchNotice::Downloading { percent: 100 }.line(),
-            "正在下载正确版本 100%"
-        );
+        assert_eq!(ArchNotice::Downloading { percent: 100 }.line(), "正在下载正确版本 100%");
         assert_eq!(ArchNotice::Ready.line(), ARCH_READY);
         assert_eq!(ArchNotice::Failed.line(), ARCH_FAILED);
     }
 
     #[test]
     fn main_area_builds_without_panic() {
-        let theme = Theme::default();
-        let _ = main_area(&theme);
+        let _ = main_area(&Theme::default());
     }
 
     #[test]
@@ -420,20 +384,10 @@ mod tests {
         let theme = Theme::default();
         let flows = [
             UpdateFlow::initial(),
-            flow(
-                UpdateFlowState::ForceExternal {
-                    version: "2.3.1".to_string(),
-                },
-                Some(ArchNotice::Available),
-            ),
+            flow(external_state("2.3.1"), Some(ArchNotice::Available)),
             flow(UpdateFlowState::ForceContactAdmin, None),
             flow(UpdateFlowState::StoreOpenFailed, Some(ArchNotice::Failed)),
-            flow(
-                UpdateFlowState::Ready {
-                    version: "1.0.0".to_string(),
-                },
-                Some(ArchNotice::Ready),
-            ),
+            flow(ready_state("1.0.0"), Some(ArchNotice::Ready)),
         ];
         for f in &flows {
             let _ = super::render(&theme, f);
