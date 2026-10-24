@@ -3,6 +3,9 @@
 //! 分层约定（同 `security_cmd_safety`）：纯数据层（文案表 + 事件模型 + 状态机）加 GPUI 层（只做映射）。
 //! 硬约束：fail-closed（加载失败可见，⛔ 不退化成空列表）；文案逐字，禁止自编中文。
 //! 数据源在运行时侧：当前按纯数据层逐分支呈现，等跨线契约就绪后换源。
+#![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 视图标题（逐字取自界面文案全表）。
 pub const TITLE: &str = "安全中心·网络审计";
@@ -226,6 +229,58 @@ impl Feed {
             events,
         }
     }
+}
+
+// ===== GPUI 层 =====
+/// 单条事件行：类别标识（枚举名，⛔ 不自编中文组名）+ 按模板渲染的逐字文案。
+fn render_event_row(theme: &Theme, event: &NetworkAuditEvent) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(format!(
+            "[{:?}] {}",
+            event.kind,
+            event.render_text()
+        )))
+}
+
+/// 事件流四分支渲染（fail-closed：未下发可见；空态 ≠ 空列表的沉默渲染）。
+pub fn render_feed(theme: &Theme, feed: &Feed) -> AnyElement {
+    let list = div().flex().flex_col().gap_2();
+    let list = match feed.state {
+        State::Loading => list.child(SharedString::from(LOADING_TEXT)),
+        State::Failed => list.child(SharedString::from(NOT_DELIVERED)),
+        State::Empty => list.child(SharedString::from(EMPTY_TEXT)),
+        State::Active => feed
+            .events
+            .iter()
+            .fold(list, |acc, e| acc.child(render_event_row(theme, e))),
+    };
+    list.into_any_element()
+}
+
+/// 主区/浮层呈现入口：标题行 + 事件流。
+/// 签名固定 `theme: &Theme`；数据源未接入 ⇒ fail-closed 走 [`Feed::undelivered`]，
+/// 数据源就绪后由运行时侧喂 [`Feed`]。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    let feed = Feed::undelivered();
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_color(theme.muted_foreground)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_color(theme.foreground)
+                .child(SharedString::from(TITLE)),
+        )
+        .child(render_feed(theme, &feed))
+        .into_any_element()
 }
 
 #[cfg(test)]
