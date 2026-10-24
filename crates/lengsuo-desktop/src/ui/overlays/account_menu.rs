@@ -188,3 +188,108 @@ fn menu_row(item: &MenuItem) -> impl IntoElement {
         .rounded_sm()
         .child(SharedString::from(item.text()))
 }
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
+    use super::{
+        catalog, copy, main_area, render, resolve, MenuItem, State, COPY, NOT_DELIVERED,
+        NS_KEY_COUNT, NS_PREFIX,
+    };
+    use gpui_kit::component::Theme;
+
+    #[test]
+    fn copy_table_verbatim() {
+        // 全表 12 键逐字一致；键数与声明一致；键全部落在命名空间内。
+        let expect: &[(&str, &str)] = &[
+            ("account.menu.account", "账户管理"),
+            ("account.menu.adminConsole", "企业智能体"),
+            ("account.menu.appearance", "外观"),
+            ("account.menu.appearanceNew", "外观上新"),
+            ("account.menu.archivedTasks", "已归档任务"),
+            ("account.menu.checkForUpdates", "检查更新"),
+            ("account.menu.clawSettings", "设置"),
+            ("account.menu.credits", "积分余额"),
+            ("account.menu.dataManagement", "数据管理"),
+            ("account.menu.fuelStation", "Buddy加油站"),
+            ("account.menu.fuelStation.claimCredits", "签到领积分"),
+            ("account.menu.fuelStation.claimed", "今日已签到"),
+        ];
+        assert_eq!(COPY, expect);
+        assert_eq!(COPY.len(), NS_KEY_COUNT);
+        assert!(COPY.iter().all(|(k, _)| k.starts_with(NS_PREFIX)));
+    }
+
+    #[test]
+    fn copy_lookup_fail_closed() {
+        // 命中抽查（含四段子键）+ 未收录键 ⇒ None（不猜不编）+ 兜底文案逐字。
+        assert_eq!(copy("account.menu.account"), Some("账户管理"));
+        assert_eq!(copy("account.menu.fuelStation"), Some("Buddy加油站"));
+        assert_eq!(
+            copy("account.menu.fuelStation.claimCredits"),
+            Some("签到领积分")
+        );
+        assert_eq!(copy("account.menu.fuelStation.claimed"), Some("今日已签到"));
+        assert_eq!(copy("account.menu.notInTable"), None);
+        assert_eq!(MenuItem::new("account.menu.notInTable"), None);
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    #[test]
+    fn catalog_top_level_only() {
+        // 三段键入列（12-2=10 条），四段子键不入列；首尾文案逐字；键全部可回查。
+        let items = catalog();
+        assert_eq!(items.len(), 10);
+        assert_eq!(items[0].text(), "账户管理");
+        assert_eq!(items[9].text(), "Buddy加油站");
+        assert!(items
+            .iter()
+            .all(|item| copy(item.key()).is_some() && MenuItem::new(item.key()).is_some()));
+    }
+
+    #[test]
+    fn default_state_is_loading() {
+        // 三态契约：未拉取过 ≠ 空集；默认态必须是 Loading。
+        assert_eq!(State::default(), State::Loading);
+        assert_eq!(resolve(None), State::Loading);
+        assert_eq!(State::Loading.items(), None);
+        assert!(!State::Loading.is_fail_closed());
+    }
+
+    #[test]
+    fn delivered_empty_is_empty_not_loading() {
+        // 下发空集 ⇒ Empty（≠ 未拉取 Loading）；loaded 与 resolve 等价。
+        assert_eq!(resolve(Some(Vec::new())), State::Empty);
+        assert_eq!(State::Empty.items(), None);
+        assert_eq!(State::loaded(catalog()), resolve(Some(catalog())));
+    }
+
+    #[test]
+    fn failed_is_fail_closed() {
+        // 拉取失败：fail-closed 标记成立，不暴露条目，且与空态可区分。
+        assert!(State::Failed.is_fail_closed());
+        assert_eq!(State::Failed.items(), None);
+        assert_ne!(State::Failed, State::Empty);
+    }
+
+    #[test]
+    fn ready_items_exposed() {
+        let state = State::loaded(catalog());
+        let items = state.items().expect("Ready 必须暴露条目");
+        assert_eq!(items.len(), 10);
+        assert_eq!(items[0].text(), "账户管理");
+        assert_eq!(items[9].text(), "Buddy加油站");
+    }
+
+    #[test]
+    fn render_branches_do_not_panic() {
+        // 四分支整树渲染不 panic；无数据源入口（main_area）⇒ Loading 骨架。
+        let theme = Theme::default();
+        let _ = render(&State::Loading, &theme);
+        let _ = render(&State::Failed, &theme);
+        let _ = render(&State::Empty, &theme);
+        let _ = render(&State::loaded(catalog()), &theme);
+        let _ = main_area(&theme);
+    }
+}
