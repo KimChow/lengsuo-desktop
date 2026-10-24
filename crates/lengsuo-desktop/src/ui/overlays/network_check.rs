@@ -8,8 +8,6 @@ use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
-// ─────────── 纯数据层（无 GPUI 依赖） ───────────
-
 /// 视图标题（逐字取自界面文案全表）。
 pub const TITLE: &str = "网络检测";
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
@@ -24,17 +22,11 @@ pub const CHECKS_TITLE: &str = "检测项";
 /// 徽标状态；文案逐字取自 `badge` 子命名空间。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Badge {
-    /// 失败
     Error,
-    /// 等待中
     Pending,
-    /// 检测中
     Running,
-    /// 通过
     Success,
-    /// 不支持
     Unsupported,
-    /// 警告
     Warning,
 }
 
@@ -51,20 +43,12 @@ impl Badge {
             Self::Warning => "警告",
         }
     }
-
-    /// 仍在进行（检测中/等待中）⇒ 清单顶部展示状态行。
-    #[must_use]
-    pub fn in_progress(self) -> bool {
-        matches!(self, Self::Running | Self::Pending)
-    }
 }
 
 /// 检测项条目（标题/说明逐字）。
 #[derive(Debug)]
 pub struct CheckItem {
-    /// 条目标题（逐字）。
     pub title: &'static str,
-    /// 条目说明（逐字）。
     pub description: &'static str,
 }
 
@@ -95,9 +79,7 @@ pub const CHECK_ITEMS: &[CheckItem] = &[
 /// 检测项清单行 = 目录条目 + 徽标状态。
 #[derive(Debug)]
 pub struct CheckRow {
-    /// 目录条目。
     pub item: &'static CheckItem,
-    /// 该项徽标状态。
     pub badge: Badge,
 }
 
@@ -113,12 +95,6 @@ pub enum OverlayState {
 }
 
 impl OverlayState {
-    /// 无数据源时的默认态（fail-closed）。
-    #[must_use]
-    pub fn not_delivered() -> Self {
-        Self::NotDelivered
-    }
-
     /// 按逐项状态构造清单；空输入归一化为空态（⛔ 不是空清单）。
     #[must_use]
     pub fn from_badges(badges: &[Badge]) -> Self {
@@ -164,13 +140,11 @@ pub fn overall_badge(rows: &[CheckRow]) -> Badge {
     }
 }
 
-// ─────────── GPUI 层 ───────────
-
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
-/// 无数据源接线 ⇒ 按 fail-closed 渲染「未下发」。
+/// 无数据源接线 ⇒ 默认态 fail-closed，只如实渲染「未下发」。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    render_overlay(theme, &OverlayState::not_delivered())
+    render_overlay(theme, &OverlayState::NotDelivered)
 }
 
 /// 按纯数据层状态渲染整层：标题行 + 三分支内容区。
@@ -230,6 +204,7 @@ fn centered_note(theme: &Theme, text: &'static str) -> Div {
 /// 检测项清单：区块标题 +（进行中）状态行 + 逐行 条目标题/徽标/说明。
 fn checks_list(theme: &Theme, rows: &[CheckRow]) -> Div {
     let overall = overall_badge(rows);
+    let running = matches!(overall, Badge::Running | Badge::Pending);
     let mut list = div()
         .flex_1()
         .flex()
@@ -243,7 +218,7 @@ fn checks_list(theme: &Theme, rows: &[CheckRow]) -> Div {
                 .text_color(theme.muted_foreground)
                 .child(CHECKS_TITLE),
         );
-    if overall.in_progress() {
+    if running {
         list = list.child(
             div()
                 .text_sm()
@@ -306,16 +281,33 @@ fn badge_chip(theme: &Theme, badge: Badge) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, overall_badge, Badge, CheckRow, OverlayState, CHECK_ITEMS, NOT_DELIVERED, TITLE,
+        main_area, overall_badge, render_overlay, Badge, CheckRow, OverlayState, CHECKING,
+        CHECKS_TITLE, CHECK_ITEMS, EMPTY_HINT, NOT_DELIVERED, TITLE,
     };
     use gpui_kit::component::Theme;
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+    fn overlay_texts_verbatim() {
+        assert_eq!(TITLE, "网络检测");
+        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(CHECKING, "检测中...");
+        assert_eq!(EMPTY_HINT, "正在收集代理、Hosts、服务、TCP 和丢包检测结果…");
+        assert_eq!(CHECKS_TITLE, "检测项");
     }
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
-        assert_eq!(NOT_DELIVERED, "未下发");
+    fn render_all_states_without_panic() {
+        let theme = Theme::default();
+        let _ = render_overlay(&theme, &OverlayState::NotDelivered);
+        let _ = render_overlay(&theme, &OverlayState::from_badges(&[]));
+        let _ = render_overlay(
+            &theme,
+            &OverlayState::from_badges(&[
+                Badge::Running,
+                Badge::Success,
+                Badge::Error,
+                Badge::Pending,
+                Badge::Warning,
+            ]),
+        );
     }
     #[test]
     fn from_badges_builds_rows_and_counts() {
@@ -341,13 +333,6 @@ mod tests {
         assert!(matches!(state, OverlayState::Empty));
         assert_eq!(state.row_count(), 0);
         assert!(!matches!(state, OverlayState::NotDelivered));
-    }
-    #[test]
-    fn default_is_fail_closed_not_delivered() {
-        assert!(matches!(
-            OverlayState::not_delivered(),
-            OverlayState::NotDelivered
-        ));
     }
     #[test]
     fn overall_badge_precedence() {
