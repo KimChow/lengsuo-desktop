@@ -166,16 +166,20 @@ pub fn render(data: &UnifiedMarketBar, theme: &Theme) -> Div {
         .find(|item| item.tab == data.tab)
         .expect("tab_items 覆盖所有 Tab 分支");
     column
-        .child(div().flex().flex_row().gap_2().children(items.iter().map(
-            |item| {
-                let color = if item.tab == data.tab {
-                    foreground
-                } else {
-                    muted
-                };
-                div().text_color(color).child(item.label)
-            },
-        )))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .children(items.iter().map(|item| {
+                    let color = if item.tab == data.tab {
+                        foreground
+                    } else {
+                        muted
+                    };
+                    div().text_color(color).child(item.label)
+                })),
+        )
         .child(div().text_color(muted).child(active.tooltip))
         .children(
             search_placeholder(data.tab)
@@ -185,24 +189,105 @@ pub fn render(data: &UnifiedMarketBar, theme: &Theme) -> Div {
             list_heading(data.tab, data.scope)
                 .map(|heading| div().text_color(foreground).child(heading)),
         )
-        .children(
-            action_label(data.tab).map(|action| div().text_color(foreground).child(action)),
-        )
+        .children(action_label(data.tab).map(|action| div().text_color(foreground).child(action)))
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::{
+        action_label, list_heading, main_area, render, search_placeholder, tab_items, Scope, State,
+        Tab, UnifiedMarketBar, ADD_SKILL, BACK_TO_ALL, BACK_TO_ALL_SKILLS, CUSTOM_CONNECTOR,
+        KEY_COUNT, MY_EXPERTS, MY_INSTALLED, NOT_DELIVERED, SEARCH_EXPERTS, SEARCH_SKILLS,
+        TAB_CONNECTORS, TAB_CONNECTORS_TOOLTIP, TAB_EXPERTS, TAB_EXPERTS_TOOLTIP, TAB_SKILLS,
+        TAB_SKILLS_TOOLTIP, TITLE,
+    };
     use gpui_kit::component::Theme;
     #[test]
     fn default_state_is_not_delivered() {
         assert_eq!(State::default(), State::NotDelivered);
+        assert_eq!(
+            UnifiedMarketBar::default(),
+            UnifiedMarketBar {
+                state: State::NotDelivered,
+                tab: Tab::Experts,
+                scope: Scope::All,
+            }
+        );
     }
     #[test]
-    fn title_not_empty() {
+    fn pure_layer_counts() {
+        assert_eq!(tab_items().len(), 3);
+        assert_eq!(KEY_COUNT, 14);
         assert!(!TITLE.is_empty());
+    }
+    #[test]
+    fn empty_input_is_empty_state_not_empty_list() {
+        assert_eq!(
+            UnifiedMarketBar::default().empty_state(),
+            Some(NOT_DELIVERED)
+        );
+    }
+    #[test]
+    fn copy_is_verbatim_from_table() {
+        let table = [
+            (ADD_SKILL, "添加技能"),
+            (BACK_TO_ALL, "全部专家"),
+            (BACK_TO_ALL_SKILLS, "全部技能"),
+            (CUSTOM_CONNECTOR, "自定义连接器"),
+            (MY_EXPERTS, "我的专家"),
+            (MY_INSTALLED, "已安装"),
+            (SEARCH_EXPERTS, "搜索专家职称或描述"),
+            (SEARCH_SKILLS, "搜索技能"),
+            (TAB_CONNECTORS, "连接器"),
+            (TAB_CONNECTORS_TOOLTIP, "帮你连接外部应用数据"),
+            (TAB_EXPERTS, "专家"),
+            (TAB_EXPERTS_TOOLTIP, "以专家视角完成你的任务"),
+            (TAB_SKILLS, "技能"),
+            (TAB_SKILLS_TOOLTIP, "适合高效完成特定的任务"),
+        ];
+        assert_eq!(table.len(), KEY_COUNT);
+        for (got, want) in table {
+            assert_eq!(got, want);
+        }
     }
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+    #[test]
+    fn render_covers_every_state_branch() {
+        for state in [
+            State::Normal,
+            State::Loading,
+            State::Failed,
+            State::NotDelivered,
+        ] {
+            let bar = UnifiedMarketBar {
+                state,
+                ..UnifiedMarketBar::default()
+            };
+            let expected = match state {
+                State::Normal => None,
+                _ => Some(NOT_DELIVERED),
+            };
+            assert_eq!(bar.empty_state(), expected, "state={state:?}");
+            let _ = render(&bar, &Theme::default());
+        }
+    }
+    #[test]
+    fn mappings_are_fail_closed_where_key_missing() {
+        assert_eq!(search_placeholder(Tab::Experts), Some(SEARCH_EXPERTS));
+        assert_eq!(search_placeholder(Tab::Skills), Some(SEARCH_SKILLS));
+        assert_eq!(search_placeholder(Tab::Connectors), None);
+        assert_eq!(list_heading(Tab::Experts, Scope::All), Some(BACK_TO_ALL));
+        assert_eq!(list_heading(Tab::Experts, Scope::My), Some(MY_EXPERTS));
+        assert_eq!(
+            list_heading(Tab::Skills, Scope::All),
+            Some(BACK_TO_ALL_SKILLS)
+        );
+        assert_eq!(list_heading(Tab::Skills, Scope::My), Some(MY_INSTALLED));
+        assert_eq!(list_heading(Tab::Connectors, Scope::All), None);
+        assert_eq!(action_label(Tab::Skills), Some(ADD_SKILL));
+        assert_eq!(action_label(Tab::Connectors), Some(CUSTOM_CONNECTOR));
+        assert_eq!(action_label(Tab::Experts), None);
     }
 }
