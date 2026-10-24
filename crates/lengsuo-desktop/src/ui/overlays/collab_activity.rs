@@ -336,25 +336,87 @@ pub fn body_label(feed: &Feed) -> Option<&'static str> {
 }
 
 // ===== GPUI 层 =====
-/// 主区/浮层呈现入口（fail-closed：无数据源 ⇒ 固定「未下发」分支）。
+/// 主区/浮层呈现入口（fail-closed：无数据源 ⇒ 固定「未下发」分支，⛔ 不伪造条目）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = resolve(None);
-    let title = SharedString::from(format!(
-        "{}（{}）",
-        TITLE,
-        match state {
-            State::Ready => "就绪",
-            State::Loading => "加载中",
-            State::LoadFailed => "加载失败",
-            State::NotDelivered => NOT_DELIVERED,
-        }
-    ));
+    feed_panel(theme, &Feed::default())
+}
+
+/// 面板骨架：标题行 + 正文（按状态机）+ 留言发布行；颜色一律 `theme.*`。
+pub fn feed_panel(theme: &Theme, feed: &Feed) -> AnyElement {
     div()
         .flex()
         .flex_col()
         .gap_2()
         .text_color(theme.muted_foreground)
-        .child(title)
+        .child(title_row(theme))
+        .child(body(theme, feed))
+        .child(composer_row(theme))
+        .into_any_element()
+}
+
+/// 标题行：标题 + 双页签（页签文案逐字取自文案表）。
+fn title_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(TITLE)),
+        )
+        .child(SharedString::from(must_text(
+            "collab.activity.panel.mineTab",
+        )))
+        .child(SharedString::from(must_text(
+            "collab.activity.panel.memberTab",
+        )))
+        .into_any_element()
+}
+
+/// 正文：`body_label` 驱动的分支渲染（未下发/加载中/失败+重试/空态/条目列表）。
+fn body(theme: &Theme, feed: &Feed) -> AnyElement {
+    let col = div().flex().flex_col().gap_2();
+    match body_label(feed) {
+        Some(label) if feed.state == State::LoadFailed => col
+            .child(SharedString::from(label))
+            .child(SharedString::from(must_text(
+                "collab.activity.panel.loadFailedRetryMessage",
+            )))
+            .child(SharedString::from(must_text("collab.activity.panel.retry")))
+            .into_any_element(),
+        Some(label) => col.child(SharedString::from(label)).into_any_element(),
+        None => col
+            .children(feed.entries.iter().map(|entry| entry_row(theme, entry)))
+            .child(SharedString::from(must_text(
+                "collab.activity.panel.noMore",
+            )))
+            .into_any_element(),
+    }
+}
+
+/// 单条动态行：操作人 + 动作文案（文案由 [`ActionText::render`] 渲染）。
+fn entry_row(theme: &Theme, entry: &ActivityEntry) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_color(theme.foreground)
+        .child(SharedString::from(format!(
+            "{} {}",
+            entry.actor,
+            entry.action.render()
+        )))
+        .into_any_element()
+}
+
+/// 底部留言发布行（占位文案逐字取自文案表）。
+fn composer_row(theme: &Theme) -> AnyElement {
+    div()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(must_text(
+            "collab.activity.message.placeholder",
+        )))
         .into_any_element()
 }
 
