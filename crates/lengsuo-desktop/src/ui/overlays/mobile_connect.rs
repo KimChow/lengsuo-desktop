@@ -170,8 +170,18 @@ fn qr_row(theme: &Theme, tab: ConnectTab) -> Div {
         .flex()
         .items_center()
         .gap_2()
-        .child(div().size_20().rounded_md().border_1().border_color(theme.border))
-        .child(div().text_color(theme.muted_foreground).child(tab.qr_desc()))
+        .child(
+            div()
+                .size_20()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border),
+        )
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(tab.qr_desc()),
+        )
 }
 
 /// 开关行：指示块（开 = accent / 关 = muted）+ 文案。
@@ -190,18 +200,116 @@ fn switch_row(theme: &Theme, label: &'static str, on: bool) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::{
+        body_text, main_area, render, ConnectTab, MobileConnect, State, EMPTY, KEYS, NOT_DELIVERED,
+        QR_APP_DESC, QR_MINIPROGRAM_DESC, SWITCH_ALLOW_CONNECT, SWITCH_PREVENT_SLEEP, TAB_APP,
+        TAB_MINIPROGRAM, TITLE,
+    };
     use gpui_kit::component::Theme;
+
+    /// ① 纯函数层：默认态 = 未下发（未拉取过 ≠ 空集），开关值不下发。
     #[test]
     fn default_state_is_not_delivered() {
+        let model = MobileConnect::default();
+        assert_eq!(model.state, State::NotDelivered);
         assert_eq!(State::default(), State::NotDelivered);
+        assert_eq!(model.switch_rows(), None);
+        assert!(!model.allow_connect && !model.prevent_sleep);
     }
+
+    /// ③ 文案逐字一致：命名空间 8 键全量对应全表文本。
     #[test]
-    fn title_not_empty() {
-        assert!(!TITLE.is_empty());
+    fn namespace_keys_complete_and_verbatim() {
+        assert_eq!(KEYS.len(), 8);
+        assert!(KEYS.iter().all(|k| k.starts_with("mobileConnect.")));
+        assert_eq!(TITLE, "连接移动端");
+        assert_eq!(TAB_APP, "App");
+        assert_eq!(TAB_MINIPROGRAM, "小程序");
+        assert_eq!(QR_APP_DESC, "使用 App 连接电脑");
+        assert_eq!(QR_MINIPROGRAM_DESC, "使用小程序连接电脑");
+        assert_eq!(SWITCH_ALLOW_CONNECT, "允许移动端连接此设备");
+        assert_eq!(SWITCH_PREVENT_SLEEP, "保持唤醒状态，以便远程访问");
+        assert_eq!(EMPTY, "暂无可用的移动端连接方式");
     }
+
+    /// ② 空输入 ⇒ 空态文案（不是空列表 / 不是未下发）。
+    #[test]
+    fn empty_input_yields_empty_state_not_empty_list() {
+        assert_eq!(body_text(State::Empty), Some(EMPTY));
+        let model = MobileConnect {
+            state: State::Empty,
+            ..MobileConnect::default()
+        };
+        assert_eq!(model.switch_rows(), None);
+    }
+
+    /// ④ `main_area` 默认（未下发）分支不 panic。
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+
+    /// ⑤ 状态分支覆盖：`body_text` 每个分支一条。
+    #[test]
+    fn body_text_covers_every_state_branch() {
+        assert_eq!(body_text(State::Normal), None);
+        assert_eq!(body_text(State::Loading), Some(NOT_DELIVERED));
+        assert_eq!(body_text(State::Failed), Some(NOT_DELIVERED));
+        assert_eq!(body_text(State::Empty), Some(EMPTY));
+        assert_eq!(body_text(State::NotDelivered), Some(NOT_DELIVERED));
+    }
+
+    /// ⑤ 状态分支覆盖：每个状态分支（含 Normal 双 Tab）都能渲染，不 panic。
+    #[test]
+    fn every_state_branch_renders_without_panic() {
+        let theme = Theme::default();
+        for state in [
+            State::Normal,
+            State::Loading,
+            State::Failed,
+            State::Empty,
+            State::NotDelivered,
+        ] {
+            for tab in [ConnectTab::App, ConnectTab::Miniprogram] {
+                let model = MobileConnect {
+                    state,
+                    tab,
+                    ..MobileConnect::default()
+                };
+                let _ = render(&theme, &model);
+            }
+        }
+    }
+
+    /// fail-closed：开关行仅 `Normal` 态下发，值逐字取自文案表。
+    #[test]
+    fn switch_rows_only_when_normal() {
+        let model = MobileConnect {
+            state: State::Normal,
+            allow_connect: true,
+            prevent_sleep: false,
+            ..MobileConnect::default()
+        };
+        assert_eq!(
+            model.switch_rows(),
+            Some([(SWITCH_ALLOW_CONNECT, true), (SWITCH_PREVENT_SLEEP, false)])
+        );
+        for state in [
+            State::Loading,
+            State::Failed,
+            State::Empty,
+            State::NotDelivered,
+        ] {
+            assert_eq!(MobileConnect { state, ..model }.switch_rows(), None);
+        }
+    }
+
+    /// 双 Tab 的 label / 二维码说明映射逐字正确。
+    #[test]
+    fn tab_labels_and_qr_descs_verbatim() {
+        assert_eq!(ConnectTab::App.label(), TAB_APP);
+        assert_eq!(ConnectTab::App.qr_desc(), QR_APP_DESC);
+        assert_eq!(ConnectTab::Miniprogram.label(), TAB_MINIPROGRAM);
+        assert_eq!(ConnectTab::Miniprogram.qr_desc(), QR_MINIPROGRAM_DESC);
     }
 }
