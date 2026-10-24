@@ -5,8 +5,12 @@
 //! 图像内容由运行时契约下发，未下发时诚实显示，⛔ 不伪造图像。
 //!
 //! 纯函数层（本段）无 GPUI 依赖，可无窗口测试。
+use std::io::{Cursor, Read as _};
+
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::*;
+
+use crate::state::preview_payload::{DecodeError, ImagePayload, PreviewPayload, MAX_BYTES};
 
 /// 缩放档位（0.25 / 0.5 / 1.0 / 2.0 / 4.0）。
 pub(super) fn zoom_steps() -> [f32; 5] {
@@ -190,14 +194,54 @@ fn fit_toggle(fit: bool, theme: &gpui_kit::component::Theme) -> Div {
 //   · `render_with_payload`  —— 把载荷画出来。**默认退回既有占位视图**，因此外壳
 //                              （头信息 / 缩放控件 / 「未下发」提示行）行为与本次基建前一致。
 
-/// A14：解码待预览文件。当前为**诚实占位**（不读文件、不解码）。
-pub(super) fn decode(
-    _path: &str,
-    _bytes: Option<&[u8]>,
-) -> crate::state::preview_payload::PreviewPayload {
-    crate::state::preview_payload::PreviewPayload::NotDelivered {
-        reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+/// 解压后像素数上限（16 MP）：防解压炸弹，超限 fail-closed。
+const MAX_PIXELS: u64 = 16_000_000;
+
+/// 读文件前 [`MAX_BYTES`] 字节（⛔ 不整包进内存），返回 (字节, 原始长度)。
+fn read_capped(path: &str) -> Result<(Vec<u8>, usize), String> {
+    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len() as usize;
+    let mut buf = vec![0u8; len.min(MAX_BYTES)];
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    file.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    Ok((buf, len))
+}
+
+/// 从字节解出 (格式名, 宽, 高)；识别不出 / 尺寸解不出 ⇒ Err（fail-closed）。
+fn sniff(data: &[u8]) -> Result<(String, u32, u32), String> {
+    let reader = image::ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let format = reader.format().ok_or("无法识别图像格式")?;
+    let (width, height) = reader.into_dimensions().map_err(|e| e.to_string())?;
+    if u64::from(width) * u64::from(height) > MAX_PIXELS {
+        return Err(format!("像素数超限（{width}×{height} > {MAX_PIXELS}）"));
     }
+    Ok((format!("{format:?}").to_lowercase(), width, height))
+}
+
+/// A14：解码待预览图片。
+///
+/// 字节优先用运行时下发（`bytes`：⛔ 只用传入字节，不碰文件系统）；
+/// 未下发则读 `path`（按 [`MAX_BYTES`] 截断）。拿不到 / 识别不出 ⇒ `Failed`，⛔ 绝不伪造。
+pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
+    let (capped, source_len) = match bytes {
+        Some(b) => (b[..b.len().min(MAX_BYTES)].to_vec(), b.len()),
+        None => match read_capped(path) {
+            Ok(pair) => pair,
+            Err(e) => return PreviewPayload::Failed(DecodeError::Io(e)),
+        },
+    };
+    let (format, width, height) = match sniff(&capped) {
+        Ok(it) => it,
+        Err(msg) => return PreviewPayload::Failed(DecodeError::Parse(msg)),
+    };
+    PreviewPayload::Image(ImagePayload {
+        bytes: capped,
+        format,
+        width,
+        height,
+        source_len,
+    })
 }
 
 /// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
