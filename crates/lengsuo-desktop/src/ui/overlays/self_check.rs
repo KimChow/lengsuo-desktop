@@ -195,18 +195,34 @@ fn fill_count(tmpl: &str, count: usize) -> String {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`SelfCheckModel::not_delivered`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &SelfCheckModel::not_delivered())
+}
+
+/// 按模型渲染整层：标题行 + 分支主体。
+fn render(theme: &Theme, model: &SelfCheckModel) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme, model))
+        .child(body(theme, model))
+}
+
+/// 标题行：标题 + 副标题（文案即无障碍标签）。
+fn title_row(theme: &Theme, model: &SelfCheckModel) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .flex_col()
+        .gap_1()
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
@@ -214,14 +230,168 @@ pub fn main_area(theme: &Theme) -> Div {
         )
         .child(
             div()
-                .flex_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(model.subtitle()),
+        )
+}
+
+/// 分支主体：未下发 / 空态 / 内容（徽标 + 清单行 + FPS 行 + 按钮）。
+fn body(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let mut col = div().flex_1().flex().flex_col();
+    if model.is_not_delivered() {
+        col = col.child(centered_line(theme, NOT_DELIVERED));
+    } else if model.show_content() {
+        col = col
+            .child(badges_row(theme, model))
+            .child(items_list(theme, model))
+            .child(fps_row(theme))
+            .child(buttons_row(theme, model));
+    } else {
+        col = col
+            .child(centered_line(theme, SUBTITLE_IDLE))
+            .child(buttons_row(theme, model));
+    }
+    col
+}
+
+/// 居中状态行（未下发 / 空态共用；占满剩余高度）。
+fn centered_line(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 徽标计数行（只在内容分支出现，⛔ 未下发不伪造数值）。
+fn badges_row(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let counts = model.badges();
+    div()
+        .flex()
+        .items_center()
+        .flex_wrap()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(badge_chip(theme, counts.label_pass()))
+        .child(badge_chip(theme, counts.label_warn()))
+        .child(badge_chip(theme, counts.label_fail()))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(counts.label_items()),
+        )
+}
+
+/// 单枚徽标（文案即无障碍标签）。
+fn badge_chip(theme: &Theme, label: String) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.foreground)
+        .child(label)
+}
+
+/// 清单行：分类 + 结论标签。
+fn items_list(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let mut list = div().flex().flex_col().gap_1().px_4().py_2();
+    for item in &model.items {
+        list = list.child(
+            div()
                 .flex()
                 .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(item.category),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(item.status.label()),
+                ),
+        );
+    }
+    list
+}
+
+/// FPS/内存/CPU 说明行（对齐 ui-parity-spec §8 A32）。
+fn fps_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_xs()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(FPS_TITLE),
         )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(FPS_DESCRIPTION),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(FPS_HINT),
+        )
+}
+
+/// 底部按钮行：未开始「开始检测」，进行中/完成后「重新检测」。
+fn buttons_row(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let primary = match model.state {
+        SelfCheckState::Idle => START,
+        _ => RERUN,
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(button(theme, primary, true))
+        .child(button(theme, CLOSE, false))
+}
+
+/// 按钮（文案即无障碍标签；主按钮描边取 accent）。
+fn button(theme: &Theme, label: &'static str, primary: bool) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if primary { theme.accent } else { theme.border })
+        .text_sm()
+        .text_color(if primary {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(label)
 }
 #[cfg(test)]
 mod tests {
@@ -309,5 +479,26 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_branches_build_without_panic() {
+        let theme = Theme::default();
+        let empty = SelfCheckModel {
+            state: SelfCheckState::Idle,
+            items: Vec::new(),
+        };
+        let running = SelfCheckModel {
+            state: SelfCheckState::Running,
+            items: sample_items(),
+        };
+        let done = SelfCheckModel {
+            state: SelfCheckState::Done,
+            items: sample_items(),
+        };
+        let _ = super::render(&theme, &SelfCheckModel::not_delivered());
+        let _ = super::render(&theme, &empty);
+        let _ = super::render(&theme, &running);
+        let _ = super::render(&theme, &done);
     }
 }
