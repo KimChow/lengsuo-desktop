@@ -234,7 +234,10 @@ fn item_card(theme: &Theme, c: &Connector) -> AnyElement {
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{resolve, text, State, NOT_DELIVERED, PANEL_TITLE, TEXTS};
+    use super::{
+        main_area, render, resolve, text, ConnState, Connector, State, NOT_DELIVERED, NS_KEY_COUNT,
+        PANEL_TITLE, TEXTS,
+    };
 
     #[test]
     fn copy_is_verbatim() {
@@ -276,11 +279,79 @@ mod tests {
     #[test]
     fn ns_table_locked() {
         let n = TEXTS.len();
-        assert_eq!(n, super::NS_KEY_COUNT);
+        assert_eq!(n, NS_KEY_COUNT);
+        assert_eq!(n, 12); // 任务书摘录 12 条；全表 140 键待下发后改锁 140
         let mut seen: Vec<&str> = TEXTS.iter().map(|(k, _)| *k).collect();
         seen.sort_unstable();
         seen.dedup();
         assert_eq!(seen.len(), n);
         assert!(seen.iter().all(|k| k.starts_with("collab.connectors.")));
+    }
+
+    #[test]
+    fn resolve_and_action_labels() {
+        let bare = Connector {
+            name: "示例仓库".into(),
+            ..Default::default()
+        };
+        assert_eq!(bare.action_label(), "去连接"); // 未连接且未配凭证 ⇒ 先授权
+        assert_eq!(bare.secondary_label(), "移除");
+        assert_eq!(bare.credential_labels(), vec!["添加团队凭证"]);
+        let ready = Connector {
+            conn: ConnState::Connected,
+            team_credential: true,
+            ..bare.clone()
+        };
+        assert_eq!(ready.action_label(), "断开连接");
+        assert_eq!(ready.secondary_label(), "删除");
+        assert_eq!(
+            ready.credential_labels(),
+            vec!["更新凭证", "删除团队凭证", "授权全员使用"]
+        );
+        let linking = Connector {
+            conn: ConnState::Connecting,
+            team_credential: true,
+            ..bare.clone()
+        };
+        assert_eq!(linking.action_label(), "连接中…");
+        let direct = Connector {
+            team_credential: true,
+            ..bare
+        };
+        assert_eq!(direct.action_label(), "连接"); // 已配凭证可直接连接
+        assert_eq!(resolve(None), State::NotDelivered);
+        assert_eq!(
+            resolve(Some(vec![direct.clone()])),
+            State::Ready(vec![direct])
+        );
+    }
+
+    #[test]
+    fn empty_input_is_empty_state_not_empty_list() {
+        let s = resolve(Some(Vec::new()));
+        assert_eq!(s, State::Empty);
+        assert_eq!(s.status_text(), "+ 添加"); // 空态引导；专属键待全表下发
+        assert_ne!(s.status_text(), NOT_DELIVERED); // 空集 ≠ 未下发 ≠ 空列表
+        assert_eq!(State::Loading.status_text(), "连接中…");
+    }
+
+    #[test]
+    fn render_branches_construct() {
+        let theme = gpui_kit::component::Theme::default();
+        let _ = main_area(&theme); // 固定签名入口只构造元素树，不 panic
+        let _ = render(&theme, &State::NotDelivered);
+        let _ = render(&theme, &State::Loading);
+        let _ = render(&theme, &State::Empty);
+        let full = Connector {
+            name: "示例仓库".into(),
+            desc: Some("只读镜像".into()),
+            conn: ConnState::Connected,
+            team_credential: true,
+        };
+        let bare = Connector {
+            name: "示例看板".into(),
+            ..Default::default()
+        };
+        let _ = render(&theme, &State::Ready(vec![full, bare])); // 含描述/凭证与裸卡分支
     }
 }
