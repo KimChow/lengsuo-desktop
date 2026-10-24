@@ -168,8 +168,14 @@ pub fn delivered(items: &[&'static str]) -> QueueProgress {
     }
 }
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+/// 运行期无数据源 ⇒ 恒以未下发快照渲染（fail-closed，不伪造条目）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(&not_delivered(), theme)
+}
+
+/// 按快照渲染整层：标题行 + 排队横幅 + 进度区。
+fn render(overlay: &QueueProgress, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
@@ -185,7 +191,45 @@ pub fn main_area(theme: &Theme) -> Div {
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
-        .child(
+        .child(banner_row(theme))
+        .child(progress_area(overlay, theme))
+}
+
+/// 排队横幅：3 档升级档位（h_12 = 48px 触摸目标）。
+fn banner_row(theme: &Theme) -> Div {
+    let mut row = div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .gap_2()
+        .px_4()
+        .pb_2()
+        .border_b_1()
+        .border_color(theme.border);
+    for tier in &BANNER_TIERS {
+        row = row.child(
+            div()
+                .h_12()
+                .flex()
+                .items_center()
+                .px_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .text_sm()
+                .text_color(theme.accent)
+                .child(tier.label),
+        );
+    }
+    row
+}
+
+/// 进度区：Normal 态有条目 → 清单行；否则按状态提示（空态 / 加载 / 未下发）。
+fn progress_area(overlay: &QueueProgress, theme: &Theme) -> Div {
+    let labels = overlay.visible_labels();
+    let mut area = div().flex_1().flex().flex_col().p_4().gap_2();
+    if labels.is_empty() {
+        area = area.child(
             div()
                 .flex_1()
                 .flex()
@@ -193,8 +237,22 @@ pub fn main_area(theme: &Theme) -> Div {
                 .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .child(overlay.hint()),
+        );
+    } else {
+        for label in labels {
+            area = area.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().w_2().h_2().rounded_full().bg(theme.accent))
+                    .child(div().text_sm().text_color(theme.foreground).child(label)),
+            );
+        }
+    }
+    area
 }
 #[cfg(test)]
 mod tests {
