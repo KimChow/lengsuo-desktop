@@ -19,6 +19,8 @@ pub const NS_KEY_COUNT: usize = 202;
 // ===== 纯数据层（无 GPUI 依赖）=====
 
 /// 文案表（key → 中文，逐字取自文案全表命名空间 `home.schedule.create`；⛔ 不自编中文）。
+// rustfmt::skip：中文按 2 列计宽，逐键单行才不会被拆成三行。
+#[rustfmt::skip]
 pub const COPY: &[(&str, &str)] = &[
     ("home.schedule.create", "新建日程"),
     ("home.schedule.create.start", "开始"),
@@ -30,109 +32,45 @@ pub const COPY: &[(&str, &str)] = &[
     ("home.schedule.create.duration.minutes", "{count} 分钟"),
     ("home.schedule.create.quick.title", "快速创建日程"),
     ("home.schedule.create.quick.expand", "更多设置"),
-    (
-        "home.schedule.create.kindHint",
-        "当前只开放会议。时间安排、自动化、提醒要等对应契约。",
-    ),
-    (
-        "home.schedule.create.formHint",
-        "表单与自然语言使用同一份日程字段。",
-    ),
-    ("home.schedule.create.field.calendar", "日历"),
+    ("home.schedule.create.kindHint", "当前只开放会议。时间安排、自动化、提醒要等对应契约。"),
+    ("home.schedule.create.formHint", "表单与自然语言使用同一份日程字段。"),
     ("home.schedule.create.field.participants", "参与人"),
-    ("home.schedule.create.field.location", "地点"),
-    ("home.schedule.create.field.description", "描述"),
     ("home.schedule.create.field.recurrence", "重复"),
     ("home.schedule.create.field.reminder", "提醒"),
     ("home.schedule.create.field.onlineMeeting", "会议"),
     ("home.schedule.create.field.meetingMinutes", "纪要"),
     ("home.schedule.create.field.attachment", "附件"),
     ("home.schedule.create.placeholder.title", "添加主题"),
-    (
-        "home.schedule.create.placeholder.participants",
-        "添加联系人、邮件地址",
-    ),
+    ("home.schedule.create.placeholder.participants", "添加联系人、邮件地址"),
     ("home.schedule.create.addParticipants", "添加参会人"),
     ("home.schedule.create.batchAdd", "批量添加"),
-    (
-        "home.schedule.create.error.participantsRequired",
-        "至少邀请一位参与人",
-    ),
-    (
-        "home.schedule.create.scope.personal",
-        "个人日历 · {count} 人正式受邀",
-    ),
-    (
-        "home.schedule.create.scope.channel",
-        "频道可见 · {count} 人正式受邀",
-    ),
+    ("home.schedule.create.error.participantsRequired", "至少邀请一位参与人"),
+    ("home.schedule.create.scope.personal", "个人日历 · {count} 人正式受邀"),
+    ("home.schedule.create.scope.channel", "频道可见 · {count} 人正式受邀"),
     ("home.schedule.create.addAttachment", "添加附件"),
-    (
-        "home.schedule.create.attachment.tooMany",
-        "最多添加 {count} 个附件",
-    ),
-    (
-        "home.schedule.create.attachment.unavailable",
-        "当前环境还不能添加附件",
-    ),
-    (
-        "home.schedule.create.attachment.waitPick",
-        "正在选择附件，请稍后再创建",
-    ),
-    (
-        "home.schedule.create.attachment.pickFailed",
-        "打开资料库失败，请重试",
-    ),
-    (
-        "home.schedule.create.busy.date",
-        "{month} 月 {day} 日 · {weekday}",
-    ),
+    ("home.schedule.create.attachment.tooMany", "最多添加 {count} 个附件"),
+    ("home.schedule.create.attachment.unavailable", "当前环境还不能添加附件"),
+    ("home.schedule.create.attachment.waitPick", "正在选择附件，请稍后再创建"),
+    ("home.schedule.create.attachment.pickFailed", "打开资料库失败，请重试"),
+    ("home.schedule.create.busy.date", "{month} 月 {day} 日 · {weekday}"),
     ("home.schedule.create.busy.everyoneFree", "所有人都有空"),
     ("home.schedule.create.busy.me", "我"),
-    (
-        "home.schedule.create.busy.membersBusy",
-        "{count} 名成员在忙（{names}）",
-    ),
+    ("home.schedule.create.busy.membersBusy", "{count} 名成员在忙（{names}）"),
     ("home.schedule.create.busy.membersBusyNameSep", "、"),
     ("home.schedule.create.busy.loading", "正在加载当天日程"),
     ("home.schedule.create.busy.unknown", "暂无忙闲"),
-    (
-        "home.schedule.create.error.invalidRange",
-        "结束时间需晚于开始时间",
-    ),
-    ("home.schedule.create.mode.form", "表单模式"),
+    ("home.schedule.create.error.invalidRange", "结束时间需晚于开始时间"),
     ("home.schedule.create.mode.switchToNl", "切换到自然语言"),
-    (
-        "home.schedule.create.mode.formHint",
-        "与 @WorkBuddy 自然语言草稿共用全部字段",
-    ),
-    (
-        "home.schedule.create.natural.heading",
-        "告诉 WorkBuddy 你的日程安排",
-    ),
-    (
-        "home.schedule.create.natural.description",
-        "可以描述时间、参与人、主题和会议方式，随后在表单中检查与补充。",
-    ),
-    (
-        "home.schedule.create.natural.placeholder",
-        "例如：{example}",
-    ),
-    (
-        "home.schedule.create.natural.example.personal",
-        "明天上午 10 点安排一小时方案评审",
-    ),
+    ("home.schedule.create.mode.formHint", "与 @WorkBuddy 自然语言草稿共用全部字段"),
+    ("home.schedule.create.natural.heading", "告诉 WorkBuddy 你的日程安排"),
+    ("home.schedule.create.natural.description", "可以描述时间、参与人、主题和会议方式，随后在表单中检查与补充。"),
+    ("home.schedule.create.natural.placeholder", "例如：{example}"),
+    ("home.schedule.create.natural.example.personal", "明天上午 10 点安排一小时方案评审"),
     ("home.schedule.create.natural.trySay", "试试这样说"),
-    (
-        "home.schedule.create.natural.footerHint",
-        "下一步可在表单中确认和调整",
-    ),
+    ("home.schedule.create.natural.footerHint", "下一步可在表单中确认和调整"),
     ("home.schedule.create.natural.openForm", "直接打开表单"),
     ("home.schedule.create.natural.continue", "继续创建"),
-    (
-        "home.schedule.create.natural.switchToForm",
-        "切换到表单创建",
-    ),
+    ("home.schedule.create.natural.switchToForm", "切换到表单创建"),
     ("home.schedule.create.submit", "创建日程"),
 ];
 
@@ -266,10 +204,9 @@ fn join_names(names: &[String]) -> String {
     names.join(copy("home.schedule.create.busy.membersBusyNameSep").unwrap())
 }
 
-/// 时长文案（`duration.*`）：60 ⇒ `1 小时`；整小时 ⇒ `{count} 小时`；其余 ⇒ `{count} 分钟`。
+/// 时长文案：60 ⇒ `1 小时`；整小时 ⇒ `{count} 小时`；其余 ⇒ 总分钟数 `{count} 分钟`。
 pub fn duration_label(minutes: u32) -> String {
-    let (hours, mins) = (minutes / 60, minutes % 60);
-    match (hours, mins) {
+    match (minutes / 60, minutes % 60) {
         (1, 0) => copy("home.schedule.create.duration.hour")
             .unwrap()
             .to_string(),
@@ -277,9 +214,9 @@ pub fn duration_label(minutes: u32) -> String {
             copy("home.schedule.create.duration.hours").unwrap(),
             &[("count", &h.to_string())],
         ),
-        (_, m) => fill(
+        _ => fill(
             copy("home.schedule.create.duration.minutes").unwrap(),
-            &[("count", &m.to_string())],
+            &[("count", &minutes.to_string())],
         ),
     }
 }
@@ -355,7 +292,7 @@ pub fn attachment_row(gate: AttachmentGate, names: &[String]) -> Row {
     Row::Value(copy(key).unwrap().to_string())
 }
 
-/// 自然语言输入占位（`natural.placeholder`）：例如：{example}（示例取 `natural.example.personal`）。
+/// 自然语言输入占位：`natural.placeholder` 的 {example} 取 `natural.example.personal`。
 pub fn natural_placeholder() -> String {
     fill(
         copy("home.schedule.create.natural.placeholder").unwrap(),
@@ -420,17 +357,20 @@ pub fn view_model(state: &State) -> ViewModel {
         }),
         State::Ready { mode, draft } => match mode {
             Mode::Form => {
+                let ph = c("home.schedule.create.placeholder.participants");
                 let mut participant_rows = vec![
                     ("", participants_row(draft)),
-                    (
-                        "",
-                        Row::Value(c("home.schedule.create.placeholder.participants").to_string()),
-                    ),
+                    ("", Row::Value(ph.to_string())),
                 ];
                 if !draft.participants.is_empty() {
                     participant_rows
                         .push(("", Row::Value(scope_line(false, draft.participants.len()))));
                 }
+                let duration_row = draft
+                    .duration_minutes
+                    .map(|m| Row::Value(duration_label(m)))
+                    .unwrap_or(Row::NotDelivered);
+                let attachments = attachment_row(draft.attachment_gate, &draft.attachments);
                 ViewModel {
                     title: TITLE,
                     mode_switch: c("home.schedule.create.mode.switchToNl"),
@@ -440,13 +380,7 @@ pub fn view_model(state: &State) -> ViewModel {
                             rows: vec![
                                 ("", draft_title_row(draft)),
                                 ("", Row::Value(time_range_label())),
-                                (
-                                    c("home.schedule.create.duration"),
-                                    draft
-                                        .duration_minutes
-                                        .map(|m| Row::Value(duration_label(m)))
-                                        .unwrap_or(Row::NotDelivered),
-                                ),
+                                (c("home.schedule.create.duration"), duration_row),
                                 (
                                     c("home.schedule.create.busy.me"),
                                     busy_row(draft.busy.as_ref()),
@@ -459,10 +393,7 @@ pub fn view_model(state: &State) -> ViewModel {
                         },
                         Section {
                             label: c("home.schedule.create.field.attachment"),
-                            rows: vec![(
-                                "",
-                                attachment_row(draft.attachment_gate, &draft.attachments),
-                            )],
+                            rows: vec![("", attachments)],
                         },
                         settings_section(),
                     ],
@@ -595,34 +526,173 @@ fn row_view(theme: &Theme, label: &str, row: &Row) -> Div {
         .child(div().text_color(color).child(text))
 }
 
+/// 逐字断言用例（key → 期望中文，均取自文案全表）。
+#[cfg(test)]
+#[rustfmt::skip]
+const VERBATIM: &[(&str, &str)] = &[
+    ("home.schedule.create", "新建日程"),
+    ("home.schedule.create.attachment.tooMany", "最多添加 {count} 个附件"),
+    ("home.schedule.create.busy.membersBusy", "{count} 名成员在忙（{names}）"),
+    ("home.schedule.create.natural.heading", "告诉 WorkBuddy 你的日程安排"),
+    ("home.schedule.create.error.invalidRange", "结束时间需晚于开始时间"),
+    ("home.schedule.create.error.participantsRequired", "至少邀请一位参与人"),
+];
+
 #[cfg(test)]
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{copy, resolve, view_model, State, NS_KEY_COUNT, NS_PREFIX, TITLE};
+    // 覆盖卡要求的五类：③ 文案逐字 / ① 纯函数 / ② 空态 / ④ main_area / ⑤ 分支。
+    use super::{
+        attachment_row, busy_date, busy_row, copy, duration_label, main_area, natural_placeholder,
+        participants_row, resolve, scope_line, view_model, AttachmentGate, BusyFeed, Draft, Mode,
+        Row, State, ViewModel, COPY, NS_KEY_COUNT, NS_PREFIX, TITLE, VERBATIM,
+    };
+    use gpui_kit::component::Theme;
 
+    /// 门禁 → 未选附件时的行输出。
+    fn gate(g: AttachmentGate) -> Row {
+        attachment_row(g, &[])
+    }
+
+    /// 渲染模型里是否存在某行内容。
+    fn has_row(vm: &ViewModel, want: &Row) -> bool {
+        vm.sections
+            .iter()
+            .any(|s| s.rows.iter().any(|(_, r)| r == want))
+    }
+
+    /// ③ 文案逐字（≥3 键）+ 全表键数与命名空间前缀约束。
     #[test]
-    fn title_is_verbatim() {
+    fn copy_verbatim() {
+        for &(k, want) in VERBATIM {
+            assert_eq!(copy(k), Some(want), "文案不符: {k}");
+        }
+        let n = COPY.len();
+        assert!((40..=NS_KEY_COUNT).contains(&n));
+        for (k, _) in COPY {
+            assert!(*k == NS_PREFIX || k.starts_with("home.schedule.create."));
+        }
+    }
+
+    /// ① 纯函数层：状态解析、时长、计数、模板填槽。
+    #[test]
+    fn pure_counts_and_templates() {
         assert_eq!(TITLE, "新建日程");
-    }
-
-    #[test]
-    fn fail_closed_default() {
-        assert_eq!(State::default(), State::NotDelivered);
         assert_eq!(resolve(None), State::NotDelivered);
-        let vm = view_model(&State::NotDelivered);
-        assert_eq!(vm.title, TITLE);
-        assert_eq!(vm.submit, "创建日程");
+        assert_eq!(duration_label(60), "1 小时");
+        assert_eq!(duration_label(120), "2 小时");
+        assert_eq!(duration_label(90), "90 分钟");
+        assert_eq!(scope_line(false, 3), "个人日历 · 3 人正式受邀");
+        assert_eq!(scope_line(true, 12), "频道可见 · 12 人正式受邀");
+        assert_eq!(busy_date(10, 24, "周五"), "10 月 24 日 · 周五");
+        assert_eq!(
+            natural_placeholder(),
+            "例如：明天上午 10 点安排一小时方案评审"
+        );
+        let names = vec!["李昊".to_string(), "王五".to_string()];
+        let members = BusyFeed::MembersBusy { names };
+        assert_eq!(
+            busy_row(Some(&members)),
+            Row::Value("2 名成员在忙（李昊、王五）".to_string())
+        );
     }
 
+    /// ② 空输入 ⇒ 空态（⛔ 不是空列表）；无源 ⇒ 未下发。
     #[test]
-    fn ns_prefix_declared() {
-        // 用运行时比较绕开 clippy::assertions_on_constants（两侧都经函数边界）。
-        let prefix = NS_PREFIX.to_string();
-        let count = NS_KEY_COUNT;
-        assert!(!prefix.is_empty());
-        assert!(prefix.chars().next().is_some_and(char::is_alphabetic));
-        assert!(count > 0 && count < 10_000);
-        assert_eq!(copy(NS_PREFIX), Some("新建日程"));
+    fn empty_input_is_empty_state_not_empty_list() {
+        let empty = Draft::default();
+        assert_eq!(participants_row(&empty), Row::Empty("添加参会人"));
+        assert_eq!(gate(AttachmentGate::Ok), Row::Empty("添加附件"));
+        assert_eq!(busy_row(None), Row::NotDelivered);
+        let vm = view_model(&State::Ready {
+            mode: Mode::Form,
+            draft: empty,
+        });
+        assert!(has_row(&vm, &Row::Empty("添加参会人")));
+    }
+
+    /// ④ main_area 只构建元素树，不 panic。
+    #[test]
+    fn main_area_builds_tree_only() {
+        let _ = main_area(&Theme::default());
+    }
+
+    /// 附件门禁各态文案逐字（上限计数由调用方给出，⛔ 不内置数值）。
+    #[test]
+    fn attachment_gates_verbatim() {
+        let cases = [
+            (AttachmentGate::Unsupported, "当前环境还不能添加附件"),
+            (AttachmentGate::Picking, "正在选择附件，请稍后再创建"),
+            (AttachmentGate::Failed, "打开资料库失败，请重试"),
+            (AttachmentGate::AtLimit { count: 9 }, "最多添加 9 个附件"),
+        ];
+        for (g, want) in cases {
+            assert_eq!(gate(g), Row::Value(want.to_string()));
+        }
+        let picked = vec!["纪要.pdf".to_string()];
+        assert_eq!(
+            attachment_row(AttachmentGate::Ok, &picked),
+            Row::Value("纪要.pdf".to_string())
+        );
+    }
+
+    /// ⑤-1 NotDelivered（默认态）：数据位如实标未下发。
+    #[test]
+    fn branch_not_delivered_is_default_and_fail_closed() {
+        assert_eq!(State::default(), State::NotDelivered);
+        let vm = view_model(&State::NotDelivered);
+        assert_eq!(vm.title, "新建日程");
+        assert_eq!(vm.submit, "创建日程");
+        assert!(has_row(&vm, &Row::NotDelivered));
+    }
+
+    /// ⑤-2 LoadFailed（拉取失败同样 fail-closed）。
+    #[test]
+    fn branch_load_failed_stays_fail_closed() {
+        assert_eq!(resolve(Some(false)), State::LoadFailed);
+        let vm = view_model(&State::LoadFailed);
+        assert_eq!(vm.submit, "创建日程");
+        assert!(has_row(&vm, &Row::NotDelivered));
+    }
+
+    /// ⑤-3 Ready·表单：草稿字段逐项落到行。
+    #[test]
+    fn branch_ready_form_fills_draft() {
+        let draft = Draft {
+            title: "需求评审".to_string(),
+            participants: vec!["李昊".to_string()],
+            duration_minutes: Some(30),
+            busy: Some(BusyFeed::EveryoneFree),
+            ..Draft::default()
+        };
+        let vm = view_model(&State::Ready {
+            mode: Mode::Form,
+            draft,
+        });
+        for want in [
+            "需求评审",
+            "李昊",
+            "30 分钟",
+            "所有人都有空",
+            "个人日历 · 1 人正式受邀",
+        ] {
+            assert!(has_row(&vm, &Row::Value(want.to_string())));
+        }
+        assert_eq!(vm.mode_switch, "切换到自然语言");
+    }
+
+    /// ⑤-4 Ready·自然语言：整段走 `natural.*` 文案。
+    #[test]
+    fn branch_ready_natural_uses_natural_copy() {
+        let vm = view_model(&State::Ready {
+            mode: Mode::Natural,
+            draft: Draft::default(),
+        });
+        assert_eq!(vm.sections[0].label, "告诉 WorkBuddy 你的日程安排");
+        assert_eq!(vm.mode_switch, "切换到表单创建");
+        assert_eq!(vm.submit, "继续创建");
+        let example = Row::Value("例如：明天上午 10 点安排一小时方案评审".to_string());
+        assert!(has_row(&vm, &example));
     }
 }
