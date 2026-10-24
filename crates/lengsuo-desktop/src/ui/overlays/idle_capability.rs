@@ -1,7 +1,7 @@
-//! 闲置能力提示浮层（波次 6，卡 ）。
+//! 闲置能力提示浮层（波次 6，卡 `ui-overlay-idle-capability`）。
 //!
-//! 分层约定（同 ）：纯数据层 + GPUI 层（[]）。
-//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 。
+//! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
+//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `idleCapability`。
 //! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
