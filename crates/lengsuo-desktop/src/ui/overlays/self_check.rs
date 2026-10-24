@@ -2,28 +2,227 @@
 //!
 //! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `selfCheck`。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 数据源在运行时侧：[`SelfCheckModel::not_delivered`] 恒为未下发，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
-/// 视图标题（逐字取自界面文案全表）。
-pub const TITLE: &str = "环境自检";
-/// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
+
+// ---------- 纯数据层（无 GPUI 依赖） ----------
+
+/// 层标题（逐字取自 `selfCheck.title`）。
+pub const TITLE: &str = "诊断工具";
+/// 数据未下发时的说明（fail-closed；⛔ 不得替换为空清单）。
 pub const NOT_DELIVERED: &str = "未下发";
+/// 副标题（逐字取自 `selfCheck.subtitle.*`）。
+pub const SUBTITLE_IDLE: &str = "点击“开始检测”执行环境诊断";
+/// 检测进行中副标题。
+pub const SUBTITLE_RUNNING: &str = "正在检测...";
+/// 检测完成副标题。
+pub const SUBTITLE_DONE: &str = "检测已完成";
+/// 徽标计数模板（`selfCheck.badge.count*`，占位符 `{count}`）。
+pub const BADGE_COUNT_PASS: &str = "{count} 通过";
+pub const BADGE_COUNT_WARN: &str = "{count} 警告";
+pub const BADGE_COUNT_FAIL: &str = "{count} 失败";
+/// 总项数模板。
+pub const BADGE_COUNT_ITEMS: &str = "{count} 项";
+/// 单项结论标签（`selfCheck.status.*`）。
+pub const STATUS_PASS: &str = "通过";
+pub const STATUS_WARNING: &str = "警告";
+pub const STATUS_FAIL: &str = "失败";
+pub const STATUS_PENDING: &str = "待检测";
+/// 分类标签（`selfCheck.category.*`）。
+pub const CATEGORY_ENVIRONMENT: &str = "环境信息";
+pub const CATEGORY_NETWORK: &str = "网络";
+pub const CATEGORY_SECURITY: &str = "安全软件";
+pub const CATEGORY_SYSTEM: &str = "系统资源";
+/// FPS/内存/CPU 说明行（`selfCheck.fps.*`）。
+pub const FPS_TITLE: &str = "性能指标";
+pub const FPS_DESCRIPTION: &str = "在右下角显示 FPS、内存和 CPU";
+pub const FPS_HINT: &str = "FPS 为当前窗口近 1 秒平均值";
+/// 按钮文案（`selfCheck.start` / `selfCheck.rerun` / `selfCheck.close`）。
+pub const START: &str = "开始检测";
+pub const RERUN: &str = "重新检测";
+pub const CLOSE: &str = "关闭";
+
+/// 单项检测结论。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ItemStatus {
+    /// 待检测（未开始时的诚实初值）。
+    Pending,
+    /// 通过。
+    Pass,
+    /// 警告。
+    Warning,
+    /// 失败。
+    Fail,
+}
+
+impl ItemStatus {
+    /// 结论标签（逐字取自 `selfCheck.status.*`）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pending => STATUS_PENDING,
+            Self::Pass => STATUS_PASS,
+            Self::Warning => STATUS_WARNING,
+            Self::Fail => STATUS_FAIL,
+        }
+    }
+}
+
+/// 一条分类检测行。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SelfCheckItem {
+    /// 分类标签（逐字取自 `selfCheck.category.*`）。
+    pub category: &'static str,
+    /// 结论。
+    pub status: ItemStatus,
+}
+
+/// 徽标计数（通过/警告/失败 + 项数）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct BadgeCounts {
+    /// 通过数。
+    pub pass: usize,
+    /// 警告数。
+    pub warn: usize,
+    /// 失败数。
+    pub fail: usize,
+    /// 总项数（含待检测）。
+    pub items: usize,
+}
+
+impl BadgeCounts {
+    /// 从清单行计数（空清单 ⇒ 全 0）。
+    pub fn from_items(items: &[SelfCheckItem]) -> Self {
+        let mut counts = Self {
+            items: items.len(),
+            ..Self::default()
+        };
+        for item in items {
+            match item.status {
+                ItemStatus::Pass => counts.pass += 1,
+                ItemStatus::Warning => counts.warn += 1,
+                ItemStatus::Fail => counts.fail += 1,
+                ItemStatus::Pending => {}
+            }
+        }
+        counts
+    }
+
+    /// 「{count} 通过」。
+    pub fn label_pass(self) -> String {
+        fill_count(BADGE_COUNT_PASS, self.pass)
+    }
+
+    /// 「{count} 警告」。
+    pub fn label_warn(self) -> String {
+        fill_count(BADGE_COUNT_WARN, self.warn)
+    }
+
+    /// 「{count} 失败」。
+    pub fn label_fail(self) -> String {
+        fill_count(BADGE_COUNT_FAIL, self.fail)
+    }
+
+    /// 「{count} 项」。
+    pub fn label_items(self) -> String {
+        fill_count(BADGE_COUNT_ITEMS, self.items)
+    }
+}
+
+/// 浮层状态机。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum SelfCheckState {
+    /// 数据未下发：唯一诚实的初始态（⛔ 不许伪装成空清单）。
+    NotDelivered,
+    /// 已下发，未开始检测。
+    Idle,
+    /// 检测进行中。
+    Running,
+    /// 检测完成。
+    Done,
+}
+
+/// 浮层模型（纯数据，Ⓐ 不持凭据、不判权限）。
+pub struct SelfCheckModel {
+    /// 状态机。
+    pub state: SelfCheckState,
+    /// 分类检测行。
+    pub items: Vec<SelfCheckItem>,
+}
+
+impl SelfCheckModel {
+    /// 数据源未接线时的诚实初始态。
+    pub fn not_delivered() -> Self {
+        Self {
+            state: SelfCheckState::NotDelivered,
+            items: Vec::new(),
+        }
+    }
+
+    /// 是否未下发。
+    pub fn is_not_delivered(&self) -> bool {
+        matches!(self.state, SelfCheckState::NotDelivered)
+    }
+
+    /// 是否渲染内容分支（徽标/清单行/FPS 行）；空清单 ⇒ 空态，不渲染空列表。
+    pub fn show_content(&self) -> bool {
+        !self.is_not_delivered() && !self.items.is_empty()
+    }
+
+    /// 副标题（未下发时即中央「未下发」行）。
+    pub fn subtitle(&self) -> String {
+        match self.state {
+            SelfCheckState::NotDelivered => NOT_DELIVERED.to_string(),
+            SelfCheckState::Idle => SUBTITLE_IDLE.to_string(),
+            SelfCheckState::Running => SUBTITLE_RUNNING.to_string(),
+            SelfCheckState::Done => SUBTITLE_DONE.to_string(),
+        }
+    }
+
+    /// 徽标计数。
+    pub fn badges(&self) -> BadgeCounts {
+        BadgeCounts::from_items(&self.items)
+    }
+}
+
+/// 把模板里的 `{count}` 占位符替换成数值。
+fn fill_count(tmpl: &str, count: usize) -> String {
+    tmpl.replace("{count}", &count.to_string())
+}
+
+// ---------- GPUI 层 ----------
+
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`SelfCheckModel::not_delivered`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &SelfCheckModel::not_delivered())
+}
+
+/// 按模型渲染整层：标题行 + 分支主体。
+fn render(theme: &Theme, model: &SelfCheckModel) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme, model))
+        .child(body(theme, model))
+}
+
+/// 标题行：标题 + 副标题（文案即无障碍标签）。
+fn title_row(theme: &Theme, model: &SelfCheckModel) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .flex()
+        .flex_col()
+        .gap_1()
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
@@ -31,30 +230,319 @@ pub fn main_area(theme: &Theme) -> Div {
         )
         .child(
             div()
-                .flex_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(model.subtitle()),
+        )
+}
+
+/// 分支主体：未下发 / 空态 / 内容（徽标 + 清单行 + FPS 行 + 按钮）。
+fn body(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let mut col = div().flex_1().flex().flex_col();
+    if model.is_not_delivered() {
+        col = col.child(centered_line(theme, NOT_DELIVERED));
+    } else if model.show_content() {
+        col = col
+            .child(badges_row(theme, model))
+            .child(items_list(theme, model))
+            .child(fps_row(theme))
+            .child(buttons_row(theme, model));
+    } else {
+        col = col
+            .child(centered_line(theme, SUBTITLE_IDLE))
+            .child(buttons_row(theme, model));
+    }
+    col
+}
+
+/// 居中状态行（未下发 / 空态共用；占满剩余高度）。
+fn centered_line(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 徽标计数行（只在内容分支出现，⛔ 未下发不伪造数值）。
+fn badges_row(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let counts = model.badges();
+    div()
+        .flex()
+        .items_center()
+        .flex_wrap()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(badge_chip(theme, counts.label_pass()))
+        .child(badge_chip(theme, counts.label_warn()))
+        .child(badge_chip(theme, counts.label_fail()))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(counts.label_items()),
+        )
+}
+
+/// 单枚徽标（文案即无障碍标签）。
+fn badge_chip(theme: &Theme, label: String) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.foreground)
+        .child(label)
+}
+
+/// 清单行：分类 + 结论标签。
+fn items_list(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let mut list = div().flex().flex_col().gap_1().px_4().py_2();
+    for item in &model.items {
+        list = list.child(
+            div()
                 .flex()
                 .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(item.category),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(item.status.label()),
+                ),
+        );
+    }
+    list
+}
+
+/// FPS/内存/CPU 说明行（对齐 ui-parity-spec §8 A32）。
+fn fps_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_xs()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(FPS_TITLE),
         )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(FPS_DESCRIPTION),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(FPS_HINT),
+        )
+}
+
+/// 底部按钮行：未开始「开始检测」，进行中/完成后「重新检测」。
+fn buttons_row(theme: &Theme, model: &SelfCheckModel) -> Div {
+    let primary = match model.state {
+        SelfCheckState::Idle => START,
+        _ => RERUN,
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(button(theme, primary, true))
+        .child(button(theme, CLOSE, false))
+}
+
+/// 按钮（文案即无障碍标签；主按钮描边取 accent）。
+fn button(theme: &Theme, label: &'static str, primary: bool) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if primary { theme.accent } else { theme.border })
+        .text_sm()
+        .text_color(if primary {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(label)
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        fill_count, main_area, BadgeCounts, ItemStatus, SelfCheckItem, SelfCheckModel,
+        SelfCheckState, BADGE_COUNT_FAIL, BADGE_COUNT_ITEMS, BADGE_COUNT_PASS, BADGE_COUNT_WARN,
+        CATEGORY_ENVIRONMENT, CATEGORY_NETWORK, CATEGORY_SECURITY, CATEGORY_SYSTEM, CLOSE,
+        FPS_DESCRIPTION, FPS_HINT, FPS_TITLE, NOT_DELIVERED, RERUN, START, STATUS_FAIL,
+        STATUS_PASS, STATUS_PENDING, STATUS_WARNING, SUBTITLE_DONE, SUBTITLE_IDLE,
+        SUBTITLE_RUNNING, TITLE,
+    };
     use gpui_kit::component::Theme;
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+
+    fn sample_items() -> Vec<SelfCheckItem> {
+        vec![
+            SelfCheckItem {
+                category: CATEGORY_ENVIRONMENT,
+                status: ItemStatus::Pass,
+            },
+            SelfCheckItem {
+                category: CATEGORY_NETWORK,
+                status: ItemStatus::Pending,
+            },
+            SelfCheckItem {
+                category: CATEGORY_SECURITY,
+                status: ItemStatus::Warning,
+            },
+            SelfCheckItem {
+                category: CATEGORY_SYSTEM,
+                status: ItemStatus::Fail,
+            },
+        ]
     }
+
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn badge_counts_and_labels_from_items() {
+        let counts = BadgeCounts::from_items(&sample_items());
+        assert_eq!(
+            counts,
+            BadgeCounts {
+                pass: 1,
+                warn: 1,
+                fail: 1,
+                items: 4
+            }
+        );
+        assert_eq!(counts.label_pass(), "1 通过");
+        assert_eq!(counts.label_warn(), "1 警告");
+        assert_eq!(counts.label_fail(), "1 失败");
+        assert_eq!(counts.label_items(), "4 项");
+    }
+
+    #[test]
+    fn empty_items_is_empty_state_not_blank_list() {
+        let model = SelfCheckModel {
+            state: SelfCheckState::Idle,
+            items: Vec::new(),
+        };
+        assert!(!model.show_content());
+        assert_eq!(model.subtitle(), SUBTITLE_IDLE);
+        assert_eq!(model.badges(), BadgeCounts::default());
+    }
+
+    #[test]
+    fn not_delivered_is_fail_closed() {
+        let model = SelfCheckModel::not_delivered();
+        assert!(model.is_not_delivered());
+        assert!(!model.show_content());
+        assert_eq!(model.subtitle(), NOT_DELIVERED);
         assert_eq!(NOT_DELIVERED, "未下发");
     }
+
+    #[test]
+    fn subtitle_tracks_state() {
+        let mut model = SelfCheckModel {
+            state: SelfCheckState::Idle,
+            items: sample_items(),
+        };
+        assert_eq!(model.subtitle(), SUBTITLE_IDLE);
+        model.state = SelfCheckState::Running;
+        assert_eq!(model.subtitle(), SUBTITLE_RUNNING);
+        model.state = SelfCheckState::Done;
+        assert_eq!(model.subtitle(), SUBTITLE_DONE);
+        assert!(model.show_content());
+    }
+
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_branches_build_without_panic() {
+        let theme = Theme::default();
+        let empty = SelfCheckModel {
+            state: SelfCheckState::Idle,
+            items: Vec::new(),
+        };
+        let running = SelfCheckModel {
+            state: SelfCheckState::Running,
+            items: sample_items(),
+        };
+        let done = SelfCheckModel {
+            state: SelfCheckState::Done,
+            items: sample_items(),
+        };
+        let _ = super::render(&theme, &SelfCheckModel::not_delivered());
+        let _ = super::render(&theme, &empty);
+        let _ = super::render(&theme, &running);
+        let _ = super::render(&theme, &done);
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_self_check_namespace() {
+        assert_eq!(TITLE, "诊断工具");
+        assert_eq!(SUBTITLE_IDLE, "点击“开始检测”执行环境诊断");
+        assert_eq!(SUBTITLE_RUNNING, "正在检测...");
+        assert_eq!(SUBTITLE_DONE, "检测已完成");
+        assert_eq!(BADGE_COUNT_PASS, "{count} 通过");
+        assert_eq!(BADGE_COUNT_WARN, "{count} 警告");
+        assert_eq!(BADGE_COUNT_FAIL, "{count} 失败");
+        assert_eq!(BADGE_COUNT_ITEMS, "{count} 项");
+        assert_eq!(STATUS_PASS, "通过");
+        assert_eq!(STATUS_WARNING, "警告");
+        assert_eq!(STATUS_FAIL, "失败");
+        assert_eq!(STATUS_PENDING, "待检测");
+        assert_eq!(CATEGORY_ENVIRONMENT, "环境信息");
+        assert_eq!(CATEGORY_NETWORK, "网络");
+        assert_eq!(CATEGORY_SECURITY, "安全软件");
+        assert_eq!(CATEGORY_SYSTEM, "系统资源");
+        assert_eq!(FPS_TITLE, "性能指标");
+        assert_eq!(FPS_DESCRIPTION, "在右下角显示 FPS、内存和 CPU");
+        assert_eq!(FPS_HINT, "FPS 为当前窗口近 1 秒平均值");
+        assert_eq!(START, "开始检测");
+        assert_eq!(RERUN, "重新检测");
+        assert_eq!(CLOSE, "关闭");
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    #[test]
+    fn status_labels_match_verbatim_consts() {
+        assert_eq!(ItemStatus::Pass.label(), STATUS_PASS);
+        assert_eq!(ItemStatus::Warning.label(), STATUS_WARNING);
+        assert_eq!(ItemStatus::Fail.label(), STATUS_FAIL);
+        assert_eq!(ItemStatus::Pending.label(), STATUS_PENDING);
+    }
+
+    #[test]
+    fn fill_count_replaces_placeholder() {
+        assert_eq!(fill_count(BADGE_COUNT_ITEMS, 0), "0 项");
+        assert_eq!(fill_count(BADGE_COUNT_PASS, 12), "12 通过");
     }
 }
