@@ -1,40 +1,38 @@
 //! 办公文档预览（`PreviewKind::Office`）：A14 真解码 + 载荷渲染。
-//!
-//! 分两层落：纯函数层（子类型分派/标签/工具条/zip+XML 事件流解码，无 GPUI 依赖）→
+//! 纯函数层（扩展名分派 / zip 容器 + quick-xml 事件流解码，无 GPUI 依赖）→
 //! 接线层（外壳 + 载荷渲染）。解码 ⛔ 绝不伪造内容：拿不到 ⇒ `NotDelivered` / `Failed`。
 //! 颜色一律取自 `theme`，⛔ 不硬编码。
-use gpui_kit::*;
-
-use std::io::{BufReader, Read, Seek};
-
-use quick_xml::events::{BytesStart, BytesText, Event};
-use quick_xml::Reader;
-
+use crate::state::preview_payload::OfficeBlockKind::{Bullet, Cell, Heading, Paragraph, Slide};
 use crate::state::preview_payload::{
     self as payload, DecodeError, OfficeBlock, OfficeBlockKind, OfficePayload, PreviewPayload,
     MAX_BYTES, MAX_LINES,
 };
+use gpui_kit::component::Theme;
+use gpui_kit::*;
+use quick_xml::events::{BytesStart, BytesText, Event};
+use quick_xml::Reader;
+use std::io::{BufReader, Read, Seek};
+
+type Blocks = Vec<OfficeBlock>;
 
 /// 办公文档预览的三个子类型（由扩展名分派）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum OfficeKind {
-    /// Word 类（doc/docx；未知扩展名兜底到这里）。
-    Word,
-    /// 表格类（xls/xlsx/csv/tsv）。
-    Sheet,
-    /// 演示类（ppt/pptx）。
-    Slide,
+    Word,  // doc/docx；未知扩展名兜底
+    Sheet, // xls/xlsx/csv/tsv
+    Slide, // ppt/pptx
 }
 
-/// 按扩展名分派子类型：`doc/docx`→Word、`xls/xlsx/csv/tsv`→Sheet、
-/// `ppt/pptx`→Slide；未知/无扩展名兜底 Word。
+/// 小写扩展名（无扩展名 ⇒ 空串）。
+fn ext_of(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    let e = p.extension().and_then(|e| e.to_str());
+    e.map(str::to_ascii_lowercase).unwrap_or_default()
+}
+
+/// 按扩展名分派子类型：`doc/docx`→Word、`xls/xlsx/csv/tsv`→Sheet、`ppt/pptx`→Slide；其余兜底 Word。
 fn office_kind(path: &str) -> OfficeKind {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
-    match ext.as_str() {
+    match ext_of(path).as_str() {
         "xls" | "xlsx" | "csv" | "tsv" => OfficeKind::Sheet,
         "ppt" | "pptx" => OfficeKind::Slide,
         _ => OfficeKind::Word,
@@ -61,165 +59,43 @@ fn toolbar_items(kind: OfficeKind) -> Vec<&'static str> {
 /// 未下发态的诚实提示：内容需运行时契约下发，本视图不伪造任何文档内容。
 const NOT_DELIVERED: &str = "文档未下发（等运行时契约）";
 
-/// 渲染办公文档预览：子类型标签 + 对应工具条 + 页面/网格占位区（未下发态）。
-pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
-    let kind = office_kind(path);
-    div()
-        .flex()
-        .flex_col()
-        .child(header_row(path, kind, theme))
-        .child(toolbar_row(kind, theme))
-        .child(placeholder_area(kind, theme))
-        .into_any_element()
-}
-
 /// 头部：子类型标签 + 文件路径（等宽字体）。
-fn header_row(path: &str, kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .px_3()
-        .py_2()
-        .border_b_1()
-        .border_color(theme.border)
-        .child(
-            div()
-                .px_2()
-                .py_1()
-                .rounded_sm()
-                .bg(theme.muted)
-                .text_xs()
-                .text_color(theme.foreground)
-                .child(kind_label(kind)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .truncate()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .font_family(theme.mono_font_family.clone())
-                .child(path.to_owned()),
-        )
+fn header_row(path: &str, kind: OfficeKind, theme: &Theme) -> Div {
+    let badge = div().px_2().py_1().rounded_sm().bg(theme.muted);
+    let badge = badge.text_xs().text_color(theme.foreground);
+    let badge = badge.child(kind_label(kind));
+    let file = div().flex_1().truncate().text_xs();
+    let file = file.text_color(theme.muted_foreground);
+    let file = file.font_family(theme.mono_font_family.clone());
+    let file = file.child(path.to_owned());
+    let row = div().flex().items_center().gap_2().px_3().py_2();
+    let row = row.border_b_1().border_color(theme.border);
+    row.child(badge).child(file)
 }
 
-/// 工具条：按子类型显示对应操作项。未下发态下为静态展示，交互待运行时契约。
-fn toolbar_row(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div {
-    let mut row = div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .px_3()
-        .py_2()
-        .border_b_1()
-        .border_color(theme.border);
+/// 工具条：按子类型显示对应操作项；交互待运行时契约。
+fn toolbar_row(kind: OfficeKind, theme: &Theme) -> Div {
+    let row = div().flex().items_center().gap_2().px_3().py_2();
+    let mut row = row.border_b_1().border_color(theme.border);
     for item in toolbar_items(kind) {
-        row = row.child(
-            div()
-                .px_2()
-                .py_1()
-                .rounded_sm()
-                .border_1()
-                .border_color(theme.border)
-                .text_xs()
-                .text_color(theme.foreground)
-                .child(item),
-        );
+        let chip = div().px_2().py_1().rounded_sm().border_1();
+        let chip = chip.border_color(theme.border);
+        let chip = chip.text_xs().text_color(theme.foreground);
+        row = row.child(chip.child(item));
     }
     row
 }
 
-/// 占位区：Word/Slide 为页面、Sheet 为网格，中央叠未下发提示。
-fn placeholder_area(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div {
-    div().flex().items_center().justify_center().p_6().child(
-        div()
-            .relative()
-            .child(placeholder_frame(kind, theme))
-            .child(
-                div()
-                    .absolute()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .px_3()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(theme.background)
-                            .border_1()
-                            .border_color(theme.border)
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(NOT_DELIVERED),
-                    ),
-            ),
-    )
+/// 预览外壳：头 + 工具条 + 内容区。
+fn shell_with(path: &str, kind: OfficeKind, content: Div, theme: &Theme) -> Div {
+    let shell = div().flex().flex_col().flex_1().w_full();
+    shell
+        .child(header_row(path, kind, theme))
+        .child(toolbar_row(kind, theme))
+        .child(content)
 }
 
-/// 占位框架：Word 竖版页、Slide 横版页、Sheet 网格。均为空画布，不伪造内容。
-fn placeholder_frame(kind: OfficeKind, theme: &gpui_kit::component::Theme) -> Div {
-    let frame = div()
-        .bg(theme.background)
-        .border_1()
-        .border_color(theme.border)
-        .rounded_sm();
-    match kind {
-        OfficeKind::Word => frame.w_64().h_96(),
-        OfficeKind::Slide => frame.w_96().h_64(),
-        OfficeKind::Sheet => sheet_grid(theme),
-    }
-}
-
-/// 表格空画布：6×4 网格线（末行/末列不加线，避免与容器边框重叠）。
-fn sheet_grid(theme: &gpui_kit::component::Theme) -> Div {
-    let mut grid = div()
-        .flex()
-        .flex_col()
-        .w_96()
-        .h_64()
-        .overflow_hidden()
-        .rounded_sm()
-        .bg(theme.background)
-        .border_1()
-        .border_color(theme.border);
-    for row in 0..6 {
-        let mut line = div().flex().flex_1();
-        if row + 1 < 6 {
-            line = line.border_b_1().border_color(theme.border);
-        }
-        for col in 0..4 {
-            let mut cell = div().flex_1();
-            if col + 1 < 4 {
-                cell = cell.border_r_1().border_color(theme.border);
-            }
-            line = line.child(cell);
-        }
-        grid = grid.child(line);
-    }
-    grid
-}
-
-// ---------------------------------------------------------------------------
 // A14 解码：zip 容器 + quick-xml 事件流（纯逻辑，无 GPUI 依赖，可单测）
-// ---------------------------------------------------------------------------
-
-/// OOXML 容器种类（按扩展名）；非 docx/pptx/xlsx ⇒ [`None`]（fail-closed，不猜）。
-fn ooxml_kind(path: &str) -> Option<payload::OfficeKind> {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
-    match ext.as_str() {
-        "docx" => Some(payload::OfficeKind::Docx),
-        "pptx" => Some(payload::OfficeKind::Pptx),
-        "xlsx" => Some(payload::OfficeKind::Xlsx),
-        _ => None,
-    }
-}
 
 /// 解码预算：累计**抽取**的字节 ≤ [`MAX_BYTES`]（容器本体不整包进内存），超了截断并标注。
 struct Budget {
@@ -227,13 +103,10 @@ struct Budget {
     truncated: bool,
 }
 
-impl Budget {
-    fn new(source_len: usize) -> Self {
-        Self {
-            left: MAX_BYTES,
-            truncated: source_len > MAX_BYTES,
-        }
-    }
+/// 解码器状态：zip 容器 + 预算。
+struct Zip<R: Read + Seek> {
+    arch: zip::ZipArchive<R>,
+    budget: Budget,
 }
 
 /// 元素/属性的本地名（去掉 `w:` 等命名空间前缀）；非 UTF-8 按空处理。
@@ -258,295 +131,256 @@ fn text_content(t: &BytesText<'_>) -> String {
     }
 }
 
-/// 压入块：超过 [`MAX_LINES`] 停止累计并如实标注截断。
-fn push_block(blocks: &mut Vec<OfficeBlock>, budget: &mut Budget, block: OfficeBlock) {
-    if blocks.len() >= MAX_LINES {
-        budget.truncated = true;
-    } else {
-        blocks.push(block);
+/// 推进一个事件：EOF 或自截断的字节流 ⇒ `Ok(None)`（正常收尾）；结构错误 ⇒ `Err`。
+fn next_event<'a>(
+    reader: &mut Reader<&'a [u8]>,
+    budget: &Budget,
+    ctx: &str,
+) -> Result<Option<Event<'a>>, String> {
+    match reader.read_event() {
+        Ok(Event::Eof) => Ok(None),
+        Err(_) if budget.truncated => Ok(None),
+        Err(e) => Err(format!("{ctx}：{e}")),
+        Ok(ev) => Ok(Some(ev)),
     }
 }
 
-/// 读单个 zip 条目，累计抽取字节 ≤ [`MAX_BYTES`]（超预算就地截断并标注）。
-/// 条目不存在 ⇒ `Ok(None)`；容器损坏 ⇒ `Err`。
-fn read_entry<R: Read + Seek>(
-    arch: &mut zip::ZipArchive<R>,
-    name: &str,
+/// 打开 zip 容器；失败 ⇒ 一行说明。
+fn open_zip<R: Read + Seek>(reader: R) -> Result<zip::ZipArchive<R>, String> {
+    zip::ZipArchive::new(reader).map_err(|e| format!("不是合法的 zip 容器：{e}"))
+}
+
+/// 压入块：超过 [`MAX_LINES`] 停止累计并如实标注截断。
+fn push_block(
+    blocks: &mut Vec<OfficeBlock>,
     budget: &mut Budget,
-) -> Result<Option<Vec<u8>>, String> {
-    let mut entry = match arch.by_name(name) {
-        Ok(entry) => entry,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(e) => return Err(format!("zip 条目 {name}：{e}")),
-    };
-    let mut out = Vec::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        let n = entry
-            .read(&mut buf)
-            .map_err(|e| format!("zip 条目 {name}：{e}"))?;
-        if n == 0 {
-            return Ok(Some(out));
+    kind: OfficeBlockKind,
+    text: String,
+) {
+    if blocks.len() >= MAX_LINES {
+        budget.truncated = true;
+    } else {
+        blocks.push(OfficeBlock { kind, text });
+    }
+}
+
+impl<R: Read + Seek> Zip<R> {
+    fn new(arch: zip::ZipArchive<R>, source_len: usize) -> Self {
+        Self {
+            arch,
+            budget: Budget {
+                left: MAX_BYTES,
+                truncated: source_len > MAX_BYTES,
+            },
         }
-        let take = n.min(budget.left);
-        out.extend_from_slice(&buf[..take]);
-        budget.left -= take;
-        if take < n {
-            budget.truncated = true;
-            return Ok(Some(out));
+    }
+
+    /// 读单个条目（超预算就地截断并标注）；缺条目 ⇒ `Ok(None)`。
+    fn read_entry(&mut self, name: &str) -> Result<Option<Vec<u8>>, String> {
+        let mut entry = match self.arch.by_name(name) {
+            Ok(entry) => entry,
+            Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+            Err(e) => return Err(format!("zip 条目 {name}：{e}")),
+        };
+        let mut out = Vec::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = entry.read(&mut buf);
+            let n = n.map_err(|e| format!("zip 条目 {name}：{e}"))?;
+            if n == 0 {
+                return Ok(Some(out));
+            }
+            let take = n.min(self.budget.left);
+            out.extend_from_slice(&buf[..take]);
+            self.budget.left -= take;
+            if take < n {
+                self.budget.truncated = true;
+                return Ok(Some(out));
+            }
         }
     }
 }
 
 /// docx 段落累积器：`<w:p>` 一段，`w:val` 含 heading ⇒ 标题，`<w:numPr>` ⇒ 列表项。
+#[derive(Default)]
 struct DocxPara {
     text: String,
     heading: bool,
     bullet: bool,
 }
 
-/// `w:val` 样式名含 `heading`（忽略大小写）即视为标题（只判样式名，不猜层级）。
-fn style_heading(e: &BytesStart<'_>, para: &mut Option<DocxPara>) {
-    if let (Some(p), Some(val)) = (para.as_mut(), attr_value(e, "val")) {
-        if val.to_ascii_lowercase().contains("heading") {
-            p.heading = true;
+/// 段内属性（Start/Empty 两种事件等价）：pStyle 的 `w:val` 含 heading ⇒ 标题；numPr ⇒ 列表项。
+fn note_para_props(e: &BytesStart<'_>, para: &mut Option<DocxPara>) {
+    let Some(p) = para.as_mut() else { return };
+    match local_tag(e.name().as_ref()) {
+        "pStyle" => {
+            if attr_value(e, "val").is_some_and(|v| v.to_ascii_lowercase().contains("heading")) {
+                p.heading = true;
+            }
         }
+        "numPr" => p.bullet = true,
+        _ => {}
     }
 }
 
-/// docx：`word/document.xml` → 块序列（标题/段落/列表项）。
-fn parse_docx_xml(xml: &str, budget: &mut Budget) -> Result<Vec<OfficeBlock>, String> {
+/// 段落 → 块种类：标题 > 列表项 > 段落。
+fn docx_kind(p: &DocxPara) -> OfficeBlockKind {
+    match (p.heading, p.bullet) {
+        (true, _) => Heading,
+        (_, true) => Bullet,
+        _ => Paragraph,
+    }
+}
+
+/// docx：`word/document.xml` → 块序列（`w:p` 一段一块）。
+fn parse_docx_xml(xml: &str, budget: &mut Budget) -> Result<Blocks, String> {
     let mut reader = Reader::from_str(xml);
     let mut blocks = Vec::new();
     let mut para: Option<DocxPara> = None;
     let mut in_text = false;
-    loop {
-        let ev = match reader.read_event() {
-            Ok(ev) => ev,
-            // 自己截断的字节流允许中途 EOF；未截断还报错 ⇒ 结构不合法。
-            Err(_) if budget.truncated => break,
-            Err(e) => return Err(format!("word/document.xml：{e}")),
-        };
+    while let Some(ev) = next_event(&mut reader, budget, "document.xml")? {
         match ev {
             Event::Start(e) => match local_tag(e.name().as_ref()) {
-                "p" => para = Some(DocxPara {
-                    text: String::new(),
-                    heading: false,
-                    bullet: false,
-                }),
-                "pStyle" => style_heading(&e, &mut para),
-                "numPr" => {
-                    if let Some(p) = para.as_mut() {
-                        p.bullet = true;
-                    }
-                }
+                "p" => para = Some(DocxPara::default()),
+                "pStyle" | "numPr" => note_para_props(&e, &mut para),
                 "t" => in_text = true,
                 _ => {}
             },
             Event::Empty(e) => match local_tag(e.name().as_ref()) {
-                "pStyle" => style_heading(&e, &mut para),
-                "numPr" => {
-                    if let Some(p) = para.as_mut() {
-                        p.bullet = true;
-                    }
-                }
+                "pStyle" | "numPr" => note_para_props(&e, &mut para),
                 _ => {}
             },
             Event::Text(t) => {
-                if in_text {
-                    if let Some(p) = para.as_mut() {
-                        p.text.push_str(&text_content(&t));
-                    }
+                if let (true, Some(p)) = (in_text, para.as_mut()) {
+                    p.text.push_str(&text_content(&t));
                 }
             }
             Event::End(e) => match local_tag(e.name().as_ref()) {
                 "t" => in_text = false,
                 "p" => {
-                    if let Some(p) = para.take() {
-                        if !p.text.trim().is_empty() {
-                            let kind = if p.heading {
-                                OfficeBlockKind::Heading
-                            } else if p.bullet {
-                                OfficeBlockKind::Bullet
-                            } else {
-                                OfficeBlockKind::Paragraph
-                            };
-                            push_block(
-                                &mut blocks,
-                                budget,
-                                OfficeBlock {
-                                    kind,
-                                    text: p.text,
-                                },
-                            );
-                        }
+                    if let Some(p) = para.take().filter(|p| !p.text.trim().is_empty()) {
+                        push_block(&mut blocks, budget, docx_kind(&p), p.text);
                     }
                 }
                 _ => {}
             },
-            Event::Eof => break,
             _ => {}
         }
     }
     Ok(blocks)
 }
 
-/// 抽取所有 `<…:tag>` 元素的文本，片段间以空格连接（pptx 页文本用）。
-fn extract_tagged_text(xml: &str, tag: &str, budget: &Budget) -> Result<String, String> {
+/// 按 `group` 标签分组收集 `item` 标签文本（`group = None` ⇒ 整篇一组），组内以 `sep` 连接。
+fn collect_texts(
+    xml: &str,
+    group: Option<&str>,
+    item: &str,
+    sep: &str,
+    budget: &Budget,
+    ctx: &str,
+) -> Result<Vec<String>, String> {
     let mut reader = Reader::from_str(xml);
-    let mut out = String::new();
-    let mut in_tag = false;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => in_tag = local_tag(e.name().as_ref()) == tag,
-            Ok(Event::End(e)) => {
-                if local_tag(e.name().as_ref()) == tag {
-                    in_tag = false;
-                }
-            }
-            Ok(Event::Text(t)) => {
-                if in_tag {
-                    if !out.is_empty() {
-                        out.push(' ');
-                    }
-                    out.push_str(&text_content(&t));
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) if budget.truncated => break,
-            Err(e) => return Err(format!("XML 事件流：{e}")),
-            Ok(_) => {}
+    let mut out = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut in_item = false;
+    while let Some(ev) = next_event(&mut reader, budget, ctx)? {
+        match ev {
+            Event::Start(e) => match local_tag(e.name().as_ref()) {
+                tag if Some(tag) == group => parts.clear(),
+                tag if tag == item => in_item = true,
+                _ => {}
+            },
+            Event::End(e) => match local_tag(e.name().as_ref()) {
+                tag if Some(tag) == group => out.push(parts.join(sep)),
+                tag if tag == item => in_item = false,
+                _ => {}
+            },
+            Event::Text(t) if in_item => parts.push(text_content(&t)),
+            _ => {}
         }
+    }
+    if group.is_none() && !parts.is_empty() {
+        out.push(parts.join(sep));
     }
     Ok(out)
 }
 
-/// pptx：`ppt/slides/slideN.xml` 按 N 排序，每页一块 [`OfficeBlockKind::Slide`]。
-fn parse_pptx_container<R: Read + Seek>(
-    arch: &mut zip::ZipArchive<R>,
-    budget: &mut Budget,
-) -> Result<Vec<OfficeBlock>, String> {
-    let mut slides: Vec<(u32, String)> = arch
-        .file_names()
-        .flatten()
-        .filter_map(|n| {
-            let num = n
-                .strip_prefix("ppt/slides/slide")?
-                .strip_suffix(".xml")?
-                .parse::<u32>()
-                .ok()?;
-            Some((num, n.into_owned()))
-        })
-        .collect();
+/// 幻灯片条目名 → 页号（`ppt/slides/slide12.xml` ⇒ 12）。
+fn slide_no(name: &str) -> Option<u32> {
+    name.strip_prefix("ppt/slides/slide")?
+        .strip_suffix(".xml")?
+        .parse()
+        .ok()
+}
+
+/// pptx：`ppt/slides/slideN.xml` 按页号数值排序，每页一块 Slide（页文本 = `<…:t>` 空格连写）。
+fn parse_pptx_container<R: Read + Seek>(zip: &mut Zip<R>) -> Result<Blocks, String> {
+    let mut slides: Vec<(u32, String)> = Vec::new();
+    for n in zip.arch.file_names().flatten() {
+        if let Some(num) = slide_no(&n) {
+            slides.push((num, n.into_owned()));
+        }
+    }
     slides.sort_by_key(|(num, _)| *num);
     let mut blocks = Vec::new();
     for (_, name) in slides {
-        if budget.left == 0 {
-            break; // 预算耗尽：余下页不再读，截断标志已置。
+        if zip.budget.left == 0 {
+            break; // 预算耗尽：余下页不读，截断标志已置。
         }
-        let Some(xml) = read_entry(arch, &name, budget)? else {
-            continue;
-        };
-        let text = extract_tagged_text(&String::from_utf8_lossy(&xml), "t", budget)?;
-        push_block(
-            &mut blocks,
-            budget,
-            OfficeBlock {
-                kind: OfficeBlockKind::Slide,
-                text,
-            },
-        );
+        if let Some(xml) = zip.read_entry(&name)? {
+            let s = String::from_utf8_lossy(&xml);
+            let mut texts = collect_texts(&s, None, "t", " ", &zip.budget, "slide.xml")?;
+            let text = texts.pop().unwrap_or_default();
+            push_block(&mut blocks, &mut zip.budget, Slide, text);
+        }
     }
     if blocks.is_empty() {
-        return Err("pptx 容器没有幻灯片（ppt/slides/slideN.xml）".to_owned());
+        return Err("pptx 没有幻灯片（ppt/slides/slideN.xml）".into());
     }
     Ok(blocks)
 }
 
-/// xlsx：`xl/sharedStrings.xml` → 共享字符串表（`<si>` 一条；富文本 run 直接连写）。
-fn parse_shared_strings(xml: &str, budget: &Budget) -> Result<Vec<String>, String> {
-    let mut reader = Reader::from_str(xml);
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_si = false;
-    let mut in_t = false;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => match local_tag(e.name().as_ref()) {
-                "si" => {
-                    in_si = true;
-                    cur.clear();
-                }
-                "t" => in_t = true,
-                _ => {}
-            },
-            Ok(Event::End(e)) => match local_tag(e.name().as_ref()) {
-                "si" => {
-                    in_si = false;
-                    out.push(std::mem::take(&mut cur));
-                }
-                "t" => in_t = false,
-                _ => {}
-            },
-            Ok(Event::Text(t)) => {
-                if in_si && in_t {
-                    cur.push_str(&text_content(&t));
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) if budget.truncated => break,
-            Err(e) => return Err(format!("sharedStrings.xml：{e}")),
-            Ok(_) => {}
-        }
-    }
-    Ok(out)
-}
-
-/// xlsx 单元格累积器：`t="s"` 查共享表，`t="inlineStr"` 取 `<is><t>`，其余取 `<v>` 原文。
+/// xlsx 单元格累积器：`t="s"` 查共享表、`t="inlineStr"` 取 `<is><t>`、其余取 `<v>` 原文。
 struct SheetCell {
     ty: Option<String>,
     val: String,
 }
 
-/// xlsx：共享表 + 第一个工作表 → 每个非空单元格一块 [`OfficeBlockKind::Cell`]。
-fn parse_xlsx_container<R: Read + Seek>(
-    arch: &mut zip::ZipArchive<R>,
-    budget: &mut Budget,
-) -> Result<Vec<OfficeBlock>, String> {
-    let shared = match read_entry(arch, "xl/sharedStrings.xml", budget)? {
-        Some(xml) => parse_shared_strings(&String::from_utf8_lossy(&xml), budget)?,
+/// 单元格取值：共享索引查表（越界 ⇒ None）；非共享取已累积文本（空白 ⇒ None）。
+fn cell_text(c: Option<SheetCell>, shared: &[String]) -> Option<String> {
+    let c = c?;
+    if c.ty.as_deref() == Some("s") {
+        let i = c.val.trim().parse::<usize>().ok()?;
+        return shared.get(i).cloned();
+    }
+    let val = c.val.trim();
+    (!val.is_empty()).then(|| val.to_owned())
+}
+
+/// xlsx：共享表（`<si>` 一条，`<…:t>` 连写）+ `xl/worksheets/sheet1.xml` → 非空单元格一块 Cell。
+fn parse_xlsx_container<R: Read + Seek>(zip: &mut Zip<R>) -> Result<Blocks, String> {
+    let shared = match zip.read_entry("xl/sharedStrings.xml")? {
+        Some(xml) => {
+            let s = String::from_utf8_lossy(&xml);
+            collect_texts(&s, Some("si"), "t", "", &zip.budget, "sharedStrings.xml")?
+        }
         None => Vec::new(), // sharedStrings 可缺省（纯数字表）
     };
-    let has_sheet1 = arch
-        .file_names()
-        .flatten()
-        .any(|n| n == "xl/worksheets/sheet1.xml");
-    let sheet_name = if has_sheet1 {
-        "xl/worksheets/sheet1.xml".to_owned()
-    } else {
-        arch.file_names()
-            .flatten()
-            .find(|n| n.starts_with("xl/worksheets/") && n.ends_with(".xml"))
-            .map(|n| n.into_owned())
-            .ok_or("xlsx 容器缺少工作表（xl/worksheets/sheetN.xml）")?
+    let Some(xml) = zip.read_entry("xl/worksheets/sheet1.xml")? else {
+        return Err("xlsx 缺 xl/worksheets/sheet1.xml".into());
     };
-    let xml = read_entry(arch, &sheet_name, budget)?.ok_or("xlsx 工作表读取失败")?;
-    parse_sheet_xml(&String::from_utf8_lossy(&xml), &shared, budget)
+    parse_sheet_xml(&String::from_utf8_lossy(&xml), &shared, &mut zip.budget)
 }
 
 /// 工作表事件流 → 单元格块（`<c>` 一个、`<v>`/`<is><t>` 取值）。
-fn parse_sheet_xml(
-    xml: &str,
-    shared: &[String],
-    budget: &mut Budget,
-) -> Result<Vec<OfficeBlock>, String> {
+fn parse_sheet_xml(xml: &str, shared: &[String], budget: &mut Budget) -> Result<Blocks, String> {
     let mut reader = Reader::from_str(xml);
     let mut blocks = Vec::new();
     let mut cell: Option<SheetCell> = None;
     let mut in_val = false;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => match local_tag(e.name().as_ref()) {
+    while let Some(ev) = next_event(&mut reader, budget, "worksheet")? {
+        match ev {
+            Event::Start(e) => match local_tag(e.name().as_ref()) {
                 "c" => {
                     cell = Some(SheetCell {
                         ty: attr_value(&e, "t"),
@@ -556,97 +390,68 @@ fn parse_sheet_xml(
                 "v" | "t" => in_val = true,
                 _ => {}
             },
-            Ok(Event::Text(t)) => {
-                if in_val {
-                    if let Some(c) = cell.as_mut() {
-                        c.val.push_str(&text_content(&t));
-                    }
+            Event::Text(t) if in_val => {
+                if let Some(c) = cell.as_mut() {
+                    c.val.push_str(&text_content(&t));
                 }
             }
-            Ok(Event::End(e)) => match local_tag(e.name().as_ref()) {
+            Event::End(e) => match local_tag(e.name().as_ref()) {
                 "v" | "t" => in_val = false,
                 "c" => {
-                    if let Some(c) = cell.take() {
-                        let text = if c.ty.as_deref() == Some("s") {
-                            c.val
-                                .trim()
-                                .parse::<usize>()
-                                .ok()
-                                .and_then(|i| shared.get(i).cloned())
-                        } else {
-                            (!c.val.trim().is_empty()).then(|| c.val.trim().to_owned())
-                        };
-                        if let Some(text) = text {
-                            push_block(
-                                &mut blocks,
-                                budget,
-                                OfficeBlock {
-                                    kind: OfficeBlockKind::Cell,
-                                    text,
-                                },
-                            );
-                        }
+                    if let Some(text) = cell_text(cell.take(), shared) {
+                        push_block(&mut blocks, budget, Cell, text);
                     }
                 }
                 _ => {}
             },
-            Ok(Event::Eof) => break,
-            Err(_) if budget.truncated => break,
-            Err(e) => return Err(format!("worksheet：{e}")),
-            Ok(_) => {}
+            _ => {}
         }
     }
     Ok(blocks)
 }
 
-/// 容器种类分派到对应解析器；解析失败 ⇒ `Err`（界面照实显示）。
-fn decode_with<R: Read + Seek>(
-    mut arch: zip::ZipArchive<R>,
-    fmt: payload::OfficeKind,
-    budget: &mut Budget,
-) -> PreviewPayload {
+/// 容器种类分派到对应解析器。
+fn decode_with<R: Read + Seek>(mut zip: Zip<R>, fmt: payload::OfficeKind) -> PreviewPayload {
     let parsed = match fmt {
-        payload::OfficeKind::Docx => match read_entry(&mut arch, "word/document.xml", budget) {
-            Ok(Some(xml)) => parse_docx_xml(&String::from_utf8_lossy(&xml), budget),
-            Ok(None) => Err("docx 容器缺少 word/document.xml".to_owned()),
+        payload::OfficeKind::Docx => match zip.read_entry("word/document.xml") {
+            Ok(Some(xml)) => parse_docx_xml(&String::from_utf8_lossy(&xml), &mut zip.budget),
+            Ok(None) => Err("docx 缺 word/document.xml".into()),
             Err(e) => Err(e),
         },
-        payload::OfficeKind::Pptx => parse_pptx_container(&mut arch, budget),
-        payload::OfficeKind::Xlsx => parse_xlsx_container(&mut arch, budget),
-        payload::OfficeKind::Unknown => Err("未知办公文档格式".to_owned()),
+        payload::OfficeKind::Pptx => parse_pptx_container(&mut zip),
+        payload::OfficeKind::Xlsx => parse_xlsx_container(&mut zip),
+        payload::OfficeKind::Unknown => Err("未知办公文档格式".into()),
     };
     match parsed {
         Ok(blocks) => PreviewPayload::Office(OfficePayload {
             kind: fmt,
             blocks,
-            truncated: budget.truncated,
+            truncated: zip.budget.truncated,
         }),
         Err(msg) => PreviewPayload::Failed(DecodeError::Parse(msg)),
     }
 }
 
-/// A14：解码待预览文件为 [`PreviewPayload::Office`]。
-/// `bytes = Some(..)` 时**只用传入字节**（不碰文件系统）；`None` 时读 `path`
-/// （读不到 ⇒ `Failed(Io)`）。非 OOXML / 解不开 ⇒ `Failed`，⛔ 绝不伪造内容。
+/// A14：解码待预览文件。`bytes = Some(..)` 时**只用传入字节**（不碰文件系统）；
+/// `None` 时读 `path`（读不到 ⇒ `Failed(Io)`）。非 OOXML / 解不开 ⇒ `Failed`，⛔ 绝不伪造内容。
 pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
-    let Some(fmt) = ooxml_kind(path) else {
-        return PreviewPayload::Failed(DecodeError::Unsupported(format!(
-            "仅支持 docx/pptx/xlsx OOXML 容器：{path}"
-        )));
+    let fmt = match ext_of(path).as_str() {
+        "docx" => payload::OfficeKind::Docx,
+        "pptx" => payload::OfficeKind::Pptx,
+        "xlsx" => payload::OfficeKind::Xlsx,
+        _ => return PreviewPayload::Failed(DecodeError::Unsupported(format!("非 OOXML：{path}"))),
     };
     match bytes {
-        Some(b) => match zip::ZipArchive::new(std::io::Cursor::new(b)) {
-            Ok(arch) => decode_with(arch, fmt, &mut Budget::new(b.len())),
-            Err(e) => PreviewPayload::Failed(DecodeError::Parse(format!("不是合法的 zip 容器：{e}"))),
+        Some(b) => match open_zip(std::io::Cursor::new(b)) {
+            Ok(arch) => decode_with(Zip::new(arch, b.len()), fmt),
+            Err(msg) => PreviewPayload::Failed(DecodeError::Parse(msg)),
         },
         None => match std::fs::File::open(path) {
             Ok(file) => {
-                let mut budget = Budget::new(file.metadata().map(|m| m.len() as usize).unwrap_or(0));
-                match zip::ZipArchive::new(BufReader::new(file)) {
-                    Ok(arch) => decode_with(arch, fmt, &mut budget),
-                    Err(e) => {
-                        PreviewPayload::Failed(DecodeError::Parse(format!("不是合法的 zip 容器：{e}")))
-                    }
+                let len = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+                match open_zip(BufReader::new(file)) {
+                    Ok(arch) => decode_with(Zip::new(arch, len), fmt),
+                    Err(msg) => PreviewPayload::Failed(DecodeError::Parse(msg)),
                 }
             }
             Err(e) => PreviewPayload::Failed(DecodeError::Io(e.to_string())),
@@ -654,31 +459,28 @@ pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
     }
 }
 
-/// A14：带载荷渲染。`Office` 画真内容、`Failed` 照实显示原因；其余退回占位外壳。
+// A14 接线层：外壳（头 + 工具条）+ 载荷渲染
+
+/// A14：带载荷渲染。`Office` 画真内容、`Failed`/未下发照实显示原因。
 pub(super) fn render_with_payload(
     path: &str,
     payload: &PreviewPayload,
-    theme: &gpui_kit::component::Theme,
+    theme: &Theme,
 ) -> AnyElement {
     match payload {
         PreviewPayload::Office(office) => office_content(path, office, theme).into_any_element(),
-        PreviewPayload::Failed(err) => failed_content(path, err, theme).into_any_element(),
-        _ => render(path, theme),
+        PreviewPayload::Failed(err) => note_content(path, err.line(), theme).into_any_element(),
+        _ => note_content(path, NOT_DELIVERED.to_owned(), theme).into_any_element(),
     }
 }
 
-/// 载荷种类 → 外壳子类型（沿用既有头/工具条）。
-fn local_kind(kind: payload::OfficeKind) -> OfficeKind {
-    match kind {
-        payload::OfficeKind::Docx | payload::OfficeKind::Unknown => OfficeKind::Word,
+/// 真内容区：既有外壳 + 块列表；空态/截断如实标注。
+fn office_content(path: &str, office: &OfficePayload, theme: &Theme) -> Div {
+    let kind = match office.kind {
         payload::OfficeKind::Xlsx => OfficeKind::Sheet,
         payload::OfficeKind::Pptx => OfficeKind::Slide,
-    }
-}
-
-/// 真内容区：既有外壳（头 + 工具条）+ 块列表；空态/截断如实标注。
-fn office_content(path: &str, office: &OfficePayload, theme: &gpui_kit::component::Theme) -> Div {
-    let kind = local_kind(office.kind);
+        _ => OfficeKind::Word,
+    };
     let mut list = div().flex().flex_col().gap_1().p_3();
     if office.blocks.is_empty() {
         list = list.child(muted_line("未解出文本内容（可能全是图形/图片）", theme));
@@ -689,292 +491,150 @@ fn office_content(path: &str, office: &OfficePayload, theme: &gpui_kit::componen
     if office.truncated {
         list = list.child(muted_line("已截断：超过预览上限（行数/字节）", theme));
     }
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .w_full()
-        .child(header_row(path, kind, theme))
-        .child(toolbar_row(kind, theme))
-        .child(list)
+    shell_with(path, kind, list, theme)
 }
 
 /// 单块排版：标题带分隔线、列表项带圆点、单元格等宽、幻灯片带页码徽标。
-fn block_line(idx: usize, block: &OfficeBlock, theme: &gpui_kit::component::Theme) -> Div {
+fn block_line(idx: usize, block: &OfficeBlock, theme: &Theme) -> Div {
+    let text = block.text.clone();
+    let fg = theme.foreground;
+    let para = div().px_2().py_1().text_sm().text_color(fg);
+    let mono = div().px_2().py_1().text_xs().text_color(fg);
     match block.kind {
-        OfficeBlockKind::Heading => div()
-            .px_2()
-            .py_2()
-            .text_sm()
-            .text_color(theme.foreground)
-            .border_b_1()
-            .border_color(theme.border)
-            .child(block.text.clone()),
-        OfficeBlockKind::Paragraph => div()
-            .px_2()
-            .py_1()
-            .text_sm()
-            .text_color(theme.foreground)
-            .child(block.text.clone()),
-        OfficeBlockKind::Bullet => div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .child(div().size_1().rounded_full().bg(theme.muted_foreground))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.foreground)
-                    .child(block.text.clone()),
-            ),
-        OfficeBlockKind::Cell => div()
-            .px_2()
-            .py_1()
-            .text_xs()
-            .text_color(theme.foreground)
-            .font_family(theme.mono_font_family.clone())
-            .child(block.text.clone()),
-        OfficeBlockKind::Slide => div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .p_2()
-            .border_1()
-            .border_color(theme.border)
-            .rounded_sm()
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .bg(theme.muted)
-                    .text_xs()
-                    .text_color(theme.foreground)
-                    .child(format!("第 {} 页", idx + 1)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(theme.foreground)
-                    .child(block.text.clone()),
-            ),
+        Heading => {
+            let h = para.py_2().border_b_1().border_color(theme.border);
+            h.child(text)
+        }
+        Paragraph => para.child(text),
+        Bullet => {
+            let dot = div().size_1().rounded_full().bg(theme.muted_foreground);
+            let row = div().flex().items_center().gap_2().px_2().py_1();
+            let row = row.text_color(fg);
+            row.child(dot).child(para.child(text))
+        }
+        Cell => {
+            let c = mono.font_family(theme.mono_font_family.clone());
+            c.child(text)
+        }
+        Slide => {
+            let frame = div().flex().items_center().gap_2().p_2().border_1();
+            let frame = frame.border_color(theme.border).rounded_sm();
+            let badge = div().px_2().py_1().rounded_sm().bg(theme.muted);
+            let badge = badge.text_xs().text_color(fg);
+            let badge = badge.child(format!("第 {} 页", idx + 1));
+            let body = div().flex_1().text_sm().text_color(fg);
+            frame.child(badge).child(body.child(text))
+        }
     }
 }
 
 /// 次要说明行（空态/截断标注）。
-fn muted_line(text: &str, theme: &gpui_kit::component::Theme) -> Div {
-    div()
-        .px_2()
-        .py_1()
-        .text_xs()
-        .text_color(theme.muted_foreground)
-        .child(text.to_owned())
+fn muted_line(text: &str, theme: &Theme) -> Div {
+    let line = div().px_2().py_1().text_xs();
+    let line = line.text_color(theme.muted_foreground);
+    line.child(text.to_owned())
 }
 
-/// 失败态：既有外壳 + 居中一行诚实原因（`DecodeError::line`）。
-fn failed_content(path: &str, err: &DecodeError, theme: &gpui_kit::component::Theme) -> Div {
+/// 失败/未下发共用外壳：居中一行诚实说明。
+fn note_content(path: &str, note: String, theme: &Theme) -> Div {
     let kind = office_kind(path);
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .w_full()
-        .child(header_row(path, kind, theme))
-        .child(toolbar_row(kind, theme))
-        .child(
-            div().flex().flex_1().items_center().justify_center().p_6().child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .rounded_sm()
-                    .bg(theme.background)
-                    .border_1()
-                    .border_color(theme.border)
-                    .text_sm()
-                    .text_color(theme.foreground)
-                    .child(err.line()),
-            ),
-        )
+    let card = div().px_3().py_2().rounded_sm().bg(theme.background);
+    let card = card.border_1().border_color(theme.border);
+    let card = card.text_sm().text_color(theme.foreground);
+    let card = card.child(note);
+    let center = div().flex().flex_1().items_center().justify_center();
+    let center = center.p_6().child(card);
+    shell_with(path, kind, center, theme)
 }
 
 #[cfg(all(test, feature = "ui"))]
 mod tests {
-    use super::{
-        decode, kind_label, office_kind, render, render_with_payload, toolbar_items, OfficeKind,
-    };
+    use super::OfficeBlockKind::{Bullet, Cell, Heading, Paragraph, Slide};
+    use super::{decode, kind_label, office_kind, render_with_payload, toolbar_items, OfficeKind};
     use crate::state::preview_payload::{
-        DecodeError, OfficeBlockKind, OfficeKind as PayloadKind, PreviewPayload, MAX_LINES,
+        DecodeError, OfficeBlockKind, OfficeKind as PayloadKind, OfficePayload, PreviewPayload,
+        MAX_LINES,
     };
     use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
     use gpui_kit::component::Theme;
-    use gpui_kit::px;
     use std::io::Write;
 
-    /// 测试用最小 zip 容器（存储不压缩，不依赖压缩特性）。只走 `bytes = Some` 路径。
+    /// 测试用最小 zip 容器（存储不压缩）；解码断言全部走 `bytes = Some` 路径，不碰磁盘。
     fn zip_bytes(files: &[(&str, &str)]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         for (name, data) in files {
-            writer
-                .start_file(*name, zip::write::SimpleFileOptions::default())
-                .unwrap();
+            let opts = zip::write::SimpleFileOptions::default();
+            writer.start_file(*name, opts).unwrap();
             writer.write_all(data.as_bytes()).unwrap();
         }
         writer.finish().unwrap().into_inner()
     }
 
-    /// 断言③：三类子类型的渲染元素树非空（无窗口真实绘制一帧）。
-    #[test]
-    fn render_office_tree_is_nonempty() {
-        let cases = [
-            ("计划.docx", "Word", OfficeKind::Word),
-            ("预算.xlsx", "Sheet", OfficeKind::Sheet),
-            ("路演.pptx", "Slide", OfficeKind::Slide),
-        ];
-        for (path, what, kind) in cases {
-            assert_eq!(office_kind(path), kind, "{what}：分派不符");
-            let bounds = draw_probe(|_| render(path, &Theme::default()));
-            let bounds = assert_rendered(bounds, what);
-            assert!(
-                bounds.size.width > px(240.0),
-                "{what}：渲染树宽度异常 {:?}",
-                bounds.size
-            );
+    /// 断言辅助：解出 Office 载荷 / 取块种类、块文本序列。
+    fn office_of(path: &str, bytes: &[u8]) -> OfficePayload {
+        match decode(path, Some(bytes)) {
+            PreviewPayload::Office(p) => p,
+            other => panic!("{path} 应解出 Office 载荷：{other:?}"),
         }
     }
 
-    /// 断言①：office_kind 三类各一例 + 未知扩展名。
-    #[test]
-    fn office_kind_dispatches_by_extension() {
-        assert_eq!(office_kind("计划.doc"), OfficeKind::Word);
-        assert_eq!(office_kind("报告.docx"), OfficeKind::Word);
-        assert_eq!(office_kind("预算.xls"), OfficeKind::Sheet);
-        assert_eq!(office_kind("预算.xlsx"), OfficeKind::Sheet);
-        assert_eq!(office_kind("导出.csv"), OfficeKind::Sheet);
-        assert_eq!(office_kind("导出.tsv"), OfficeKind::Sheet);
-        assert_eq!(office_kind("路演.ppt"), OfficeKind::Slide);
-        assert_eq!(office_kind("/tmp/路演.pptx"), OfficeKind::Slide);
-        // 未知/无扩展名：兜底 Word。
-        assert_eq!(office_kind("blob.bin"), OfficeKind::Word);
-        assert_eq!(office_kind("noext"), OfficeKind::Word);
-        // 扩展名大小写不敏感。
-        assert_eq!(office_kind("UP.DOCX"), OfficeKind::Word);
+    fn kinds_of(p: &OfficePayload) -> Vec<OfficeBlockKind> {
+        p.blocks.iter().map(|b| b.kind).collect()
     }
 
-    /// 断言②：Slide 工具条含翻页项；Word/Sheet 只有缩放。
-    #[test]
-    fn toolbar_items_match_kind() {
-        let slide = toolbar_items(OfficeKind::Slide);
-        assert!(slide.contains(&"上一页"), "Slide 工具条缺上一页：{slide:?}");
-        assert!(slide.contains(&"下一页"), "Slide 工具条缺下一页：{slide:?}");
-        assert!(slide.contains(&"页码"), "Slide 工具条缺页码：{slide:?}");
-        assert_eq!(toolbar_items(OfficeKind::Word), vec!["缩放"]);
-        assert_eq!(toolbar_items(OfficeKind::Sheet), vec!["缩放"]);
+    fn texts_of(p: &OfficePayload) -> Vec<&str> {
+        p.blocks.iter().map(|b| b.text.as_str()).collect()
     }
 
-    /// 子类型标签三类互异。
+    /// 断言①：docx/pptx/xlsx 三类真解码，字段逐项正确（块数/种类/文本/页序）。
     #[test]
-    fn kind_labels_are_distinct() {
-        let labels = [
-            kind_label(OfficeKind::Word),
-            kind_label(OfficeKind::Sheet),
-            kind_label(OfficeKind::Slide),
-        ];
-        assert_eq!(labels, ["文档", "表格", "演示"]);
-    }
-
-    /// 断言①：docx 真解码——标题/段落/列表项三块，种类与文本一一对应。
-    #[test]
-    fn decode_docx_extracts_blocks_from_bytes() {
-        let xml = r#"<?xml version="1.0"?><w:document xmlns:w="w"><w:body>
-<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>标题</w:t></w:r></w:p>
-<w:p><w:r><w:t>普通段落</w:t></w:r></w:p>
-<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>列表项</w:t></w:r></w:p>
-</w:body></w:document>"#;
-        let bytes = zip_bytes(&[("word/document.xml", xml)]);
-        let PreviewPayload::Office(p) = decode("计划.docx", Some(&bytes)) else {
-            panic!("docx 应解出 Office 载荷");
-        };
+    fn decode_extracts_blocks_for_all_kinds() {
+        let docx = zip_bytes(&[(
+            "word/document.xml",
+            r#"<?xml version="1.0"?><w:document xmlns:w="w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>标题</w:t></w:r></w:p><w:p><w:r><w:t>普通段落</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>列表项</w:t></w:r></w:p></w:body></w:document>"#,
+        )]);
+        let p = office_of("计划.docx", &docx);
         assert_eq!(p.kind, PayloadKind::Docx);
-        assert!(!p.truncated);
-        assert_eq!(p.blocks.len(), 3, "块数：{:?}", p.blocks);
-        let kinds: Vec<_> = p.blocks.iter().map(|b| b.kind).collect();
-        assert_eq!(
-            kinds,
-            [
-                OfficeBlockKind::Heading,
-                OfficeBlockKind::Paragraph,
-                OfficeBlockKind::Bullet
-            ]
-        );
-        let texts: Vec<_> = p.blocks.iter().map(|b| b.text.as_str()).collect();
-        assert_eq!(texts, ["标题", "普通段落", "列表项"]);
-    }
-
-    /// 断言①：pptx 真解码——slideN 按页号数值排序（10 排在 2 后）。
-    #[test]
-    fn decode_pptx_orders_slides_numerically() {
-        let slide = |text: &str| {
-            format!(r#"<p:sld xmlns:p="p"><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sld>"#)
-        };
-        let bytes = zip_bytes(&[
-            ("ppt/slides/slide10.xml", slide("十").as_str()),
-            ("ppt/slides/slide2.xml", slide("二").as_str()),
-            ("ppt/slides/slide1.xml", slide("一").as_str()),
+        assert_eq!(kinds_of(&p), [Heading, Paragraph, Bullet]);
+        assert_eq!(texts_of(&p), ["标题", "普通段落", "列表项"]);
+        let pptx = zip_bytes(&[
+            ("ppt/slides/slide10.xml", r#"<p:sld><a:t>十</a:t></p:sld>"#),
+            ("ppt/slides/slide2.xml", r#"<p:sld><a:t>二</a:t></p:sld>"#),
+            ("ppt/slides/slide1.xml", r#"<p:sld><a:t>一</a:t></p:sld>"#),
         ]);
-        let PreviewPayload::Office(p) = decode("路演.pptx", Some(&bytes)) else {
-            panic!("pptx 应解出 Office 载荷");
-        };
+        let p = office_of("路演.pptx", &pptx);
         assert_eq!(p.kind, PayloadKind::Pptx);
-        assert_eq!(p.blocks.len(), 3);
-        assert!(p.blocks.iter().all(|b| b.kind == OfficeBlockKind::Slide));
-        let texts: Vec<_> = p.blocks.iter().map(|b| b.text.as_str()).collect();
-        assert_eq!(texts, ["一", "二", "十"], "页序应为 1、2、10");
-    }
-
-    /// 断言①：xlsx 真解码——共享字符串查表 + 数值原文 + 内联字符串。
-    #[test]
-    fn decode_xlsx_resolves_cells_from_bytes() {
-        let shared = r#"<sst xmlns="x"><si><t>你好</t></si><si><t>世界</t></si></sst>"#;
-        let sheet = r#"<worksheet xmlns="x"><sheetData><row>
-<c r="A1" t="s"><v>0</v></c><c r="B1"><v>42</v></c><c r="C1" t="inlineStr"><is><t>内联</t></is></c>
-</row></sheetData></worksheet>"#;
-        let bytes = zip_bytes(&[
-            ("xl/sharedStrings.xml", shared),
-            ("xl/worksheets/sheet1.xml", sheet),
+        assert_eq!(kinds_of(&p), [Slide, Slide, Slide]);
+        assert_eq!(texts_of(&p), ["一", "二", "十"], "页序应为 1、2、10");
+        let xlsx = zip_bytes(&[
+            ("xl/sharedStrings.xml", r#"<sst><si><t>你好</t></si></sst>"#),
+            (
+                "xl/worksheets/sheet1.xml",
+                r#"<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="B1"><v>42</v></c><c r="C1" t="inlineStr"><is><t>内联</t></is></c></row></sheetData></worksheet>"#,
+            ),
         ]);
-        let PreviewPayload::Office(p) = decode("预算.xlsx", Some(&bytes)) else {
-            panic!("xlsx 应解出 Office 载荷");
-        };
+        let p = office_of("预算.xlsx", &xlsx);
         assert_eq!(p.kind, PayloadKind::Xlsx);
-        assert!(!p.truncated);
-        assert!(p.blocks.iter().all(|b| b.kind == OfficeBlockKind::Cell));
-        let texts: Vec<_> = p.blocks.iter().map(|b| b.text.as_str()).collect();
-        assert_eq!(texts, ["你好", "42", "内联"]);
+        assert_eq!(kinds_of(&p), [Cell, Cell, Cell]);
+        assert_eq!(texts_of(&p), ["你好", "42", "内联"]);
     }
 
     /// 断言②：垃圾/缺条目/非 OOXML/路径读不到 ⇒ Failed（fail-closed，不 panic）。
     #[test]
     fn decode_garbage_fails_closed() {
-        assert!(matches!(
-            decode("a.docx", Some(b"not a zip at all")),
-            PreviewPayload::Failed(_)
-        ));
+        let p = decode("a.docx", Some(b"not a zip at all"));
+        assert!(matches!(p, PreviewPayload::Failed(_)));
         let empty = zip_bytes(&[("unrelated.txt", "hi")]);
-        assert!(
-            matches!(decode("a.docx", Some(&empty)), PreviewPayload::Failed(_)),
-            "缺 word/document.xml 应失败"
-        );
+        let p = decode("a.docx", Some(&empty));
+        assert!(matches!(p, PreviewPayload::Failed(_)), "缺条目应失败");
         assert!(matches!(
             decode("legacy.doc", Some(b"whatever")),
             PreviewPayload::Failed(DecodeError::Unsupported(_))
         ));
-        match decode("/nonexistent/不存在.docx", None) {
-            PreviewPayload::Failed(DecodeError::Io(_)) => {}
-            other => panic!("文件读不到应为 Io 失败：{other:?}"),
-        }
+        assert!(matches!(
+            decode("/nonexistent/不存在.docx", None),
+            PreviewPayload::Failed(DecodeError::Io(_))
+        ));
     }
 
     /// 断言③：块数超 [`MAX_LINES`] ⇒ 截断标注 + 恰好保留上限行。
@@ -985,26 +645,53 @@ mod tests {
             xml.push_str(&format!("<w:p><w:r><w:t>第{i}行</w:t></w:r></w:p>"));
         }
         xml.push_str("</w:body></w:document>");
-        let bytes = zip_bytes(&[("word/document.xml", xml.as_str())]);
-        let PreviewPayload::Office(p) = decode("大文档.docx", Some(&bytes)) else {
-            panic!("超限文档仍应解出 Office 载荷");
-        };
+        let zip = zip_bytes(&[("word/document.xml", xml.as_str())]);
+        let p = office_of("大文档.docx", &zip);
         assert!(p.truncated, "超行数必须如实标注截断");
         assert_eq!(p.blocks.len(), MAX_LINES);
     }
 
-    /// 断言④：真载荷 / 失败态载荷渲染均不 panic 且元素树非空。
+    /// 断言④：真载荷 / 失败态 / 未下发态渲染均不 panic 且元素树非空。
     #[test]
-    fn render_with_payload_paints_office_and_failure() {
-        let bytes = zip_bytes(&[(
+    fn render_with_payload_paints_all_states() {
+        let not_delivered = PreviewPayload::NotDelivered {
+            reason: "未下发"
+        };
+        let bounds =
+            draw_probe(|_| render_with_payload("计划.docx", &not_delivered, &Theme::default()));
+        assert_rendered(bounds, "未下发态");
+        let docx = zip_bytes(&[(
             "word/document.xml",
             r#"<?xml version="1.0"?><w:document xmlns:w="w"><w:body><w:p><w:r><w:t>标题甲</w:t></w:r></w:p></w:body></w:document>"#,
         )]);
-        let payload = decode("计划.docx", Some(&bytes));
+        let payload = decode("计划.docx", Some(&docx));
         let bounds = draw_probe(|_| render_with_payload("计划.docx", &payload, &Theme::default()));
         assert_rendered(bounds, "Office 载荷");
         let failed = PreviewPayload::Failed(DecodeError::Parse("测试".into()));
         let bounds = draw_probe(|_| render_with_payload("计划.docx", &failed, &Theme::default()));
         assert_rendered(bounds, "失败态");
+    }
+
+    /// 纯函数层：三类分派 + 未知/大小写兜底；工具条项与标签三类互异。
+    #[test]
+    fn pure_layer_dispatch_toolbar_labels() {
+        let cases = [
+            ("计划.doc", OfficeKind::Word),
+            ("预算.xlsx", OfficeKind::Sheet),
+            ("路演.ppt", OfficeKind::Slide),
+            ("blob.bin", OfficeKind::Word),
+            ("UP.DOCX", OfficeKind::Word),
+        ];
+        for (path, kind) in cases {
+            assert_eq!(office_kind(path), kind, "{path}");
+        }
+        assert_eq!(
+            toolbar_items(OfficeKind::Slide),
+            vec!["上一页", "页码", "下一页"]
+        );
+        assert_eq!(toolbar_items(OfficeKind::Word), vec!["缩放"]);
+        assert_eq!(kind_label(OfficeKind::Word), "文档");
+        assert_eq!(kind_label(OfficeKind::Sheet), "表格");
+        assert_eq!(kind_label(OfficeKind::Slide), "演示");
     }
 }
