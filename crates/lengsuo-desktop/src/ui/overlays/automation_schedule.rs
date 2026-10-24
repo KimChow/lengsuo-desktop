@@ -316,25 +316,120 @@ pub fn view_of<'a>(state: State, entries: &'a [ScheduleEntry]) -> View<'a> {
 }
 
 // ===== GPUI 层 =====
-/// 主区/浮层呈现入口（诚实占位：等跨线契约就绪后换源）。
+/// 加载失败说明（承自脚手架占位；数据源接通后随跨线契约替换）。
+const LOAD_FAILED_SCAFFOLD: &str = "加载失败";
+
+/// 主区/浮层呈现入口。数据源未接线 ⇒ fail-closed：如实呈现「未下发」，⛔ 不伪造条目/数值。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = resolve(None);
-    let title = SharedString::from(format!(
-        "{}（{}）",
-        TITLE,
-        match state {
-            State::Ready => "就绪",
-            State::LoadFailed => "加载失败",
-            State::NotDelivered => NOT_DELIVERED,
-        }
-    ));
-    div()
+    render_view(view_of(State::default(), &[]), theme)
+}
+
+/// 按视图态逐分支渲染（纯函数；标题行 + 分支内容节点）。
+fn render_view(view: View<'_>, theme: &Theme) -> AnyElement {
+    let root = div()
         .flex()
         .flex_col()
         .gap_2()
+        .child(div().text_color(theme.foreground).child(SharedString::from(TITLE)));
+    match view {
+        View::NotDelivered => root
+            .child(caption(NOT_DELIVERED, theme))
+            .child(form_skeleton(theme))
+            .into_any_element(),
+        View::LoadFailed => root
+            .child(caption(LOAD_FAILED_SCAFFOLD, theme))
+            .child(form_skeleton(theme))
+            .into_any_element(),
+        View::Empty => root.child(form_skeleton(theme)).into_any_element(),
+        View::Entries(entries) => entries
+            .iter()
+            .fold(root, |acc, entry| acc.child(entry_card(entry, theme)))
+            .into_any_element(),
+    }
+}
+
+/// 说明行（弱化色）。
+fn caption(body: &str, theme: &Theme) -> AnyElement {
+    div()
         .text_color(theme.muted_foreground)
-        .child(title)
+        .child(SharedString::from(body.to_string()))
         .into_any_element()
+}
+
+/// 待选择表单骨架（键值逐字取自全表；⛔ 不携带任何伪造值）。
+fn form_skeleton(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(field_row(
+            "automation.schedule.frequencyLabel",
+            "automation.schedule.onceTab",
+            theme,
+        ))
+        .child(field_row(
+            "automation.schedule.onceDate",
+            "automation.schedule.onceTimeEmpty",
+            theme,
+        ))
+        .child(field_row(
+            "automation.schedule.timeLabel",
+            "automation.schedule.onceTimeEmpty",
+            theme,
+        ))
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(t("automation.schedule.peakHourHint"))),
+        )
+        .into_any_element()
+}
+
+/// 一行「标签 · 值」（两个文案键，逐字取自全表）。
+fn field_row(label_key: &str, value_key: &str, theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(t(label_key))),
+        )
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(t(value_key))),
+        )
+        .into_any_element()
+}
+
+/// 一条计划的摘要卡（摘要 + 校验错误行）。
+fn entry_card(entry: &ScheduleEntry, theme: &Theme) -> AnyElement {
+    let card = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(entry.summary())),
+        );
+    let errors = validate(entry);
+    if errors.is_empty() {
+        card.into_any_element()
+    } else {
+        errors
+            .iter()
+            .fold(card, |acc, msg| {
+                acc.child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(*msg)),
+                )
+            })
+            .into_any_element()
+    }
 }
 
 #[cfg(test)]
