@@ -13,10 +13,267 @@ pub const TITLE: &str = "自动化计划";
 pub const NOT_DELIVERED: &str = "未下发";
 
 // ===== 纯数据层（无 GPUI 依赖）=====
-/// 键数（据文案全表命名空间 `automation.schedule`，卡任务书逐字摘录 ≥12 条）。
+/// 键数（据文案全表命名空间 `automation.schedule` 全表 92 键）。
 pub const NS_KEY_COUNT: usize = 92;
 /// 命名空间前缀。
 pub const NS_PREFIX: &str = "automation.schedule";
+
+/// 本卡落地的文案子表（key → 中文，逐字取自全表命名空间 `automation.schedule`）。
+pub static TEXTS: &[(&str, &str)] = &[
+    ("automation.schedule.biweekly", "双周"),
+    ("automation.schedule.daily", "每天"),
+    ("automation.schedule.day.FR", "周五"),
+    ("automation.schedule.day.MO", "周一"),
+    ("automation.schedule.day.SA", "周六"),
+    ("automation.schedule.day.SU", "周日"),
+    ("automation.schedule.day.TH", "周四"),
+    ("automation.schedule.day.TU", "周二"),
+    ("automation.schedule.day.WE", "周三"),
+    ("automation.schedule.dayOfMonth", "选择日期"),
+    ("automation.schedule.executeTime", "执行时间"),
+    ("automation.schedule.frequencyLabel", "重复"),
+    ("automation.schedule.hourly", "按小时"),
+    ("automation.schedule.interval", "按间隔"),
+    ("automation.schedule.intervalEveryLabel", "每隔"),
+    ("automation.schedule.intervalLabel", "间隔"),
+    ("automation.schedule.intervalValue", "每 {count} 小时"),
+    ("automation.schedule.monthDaySection", "每月日期"),
+    ("automation.schedule.monthly", "每月"),
+    ("automation.schedule.monthlyFirst", "每月 1 号"),
+    ("automation.schedule.once", "单次任务"),
+    ("automation.schedule.onceDate", "执行日期"),
+    ("automation.schedule.onceTab", "单次"),
+    ("automation.schedule.onceTimeEmpty", "待选择"),
+    (
+        "automation.schedule.peakHourHint",
+        "建议避开上午高峰时段，高峰期容易排队等待; 选择非高峰期执行更稳定",
+    ),
+    ("automation.schedule.periodic", "周期"),
+    ("automation.schedule.periodicBiweekMenu", "每双周"),
+    ("automation.schedule.recurring", "周期任务"),
+    ("automation.schedule.selectMonth", "选择月份"),
+    ("automation.schedule.selectWeekday", "选择星期"),
+    ("automation.schedule.summary.biweekly", "双周 {days} {time}"),
+    ("automation.schedule.summary.daily", "每天 {time}"),
+    ("automation.schedule.summary.monthly", "每月 {day} {time}"),
+    ("automation.schedule.summary.once", "单次 {dateTime}"),
+    ("automation.schedule.summary.weekly", "每周 {days} {time}"),
+    ("automation.schedule.summary.yearly", "每年 {month}月{day}日 {time}"),
+    ("automation.schedule.timeLabel", "时间"),
+    ("automation.schedule.validation.intervalHours", "按间隔执行需至少每 1 小时"),
+    ("automation.schedule.validation.monthdayRequired", "请至少选择一个日期"),
+    ("automation.schedule.validation.monthRequired", "请选择月份"),
+    ("automation.schedule.validation.onceDateRequired", "请选择单次执行日期"),
+    ("automation.schedule.validation.weekdayRequired", "请至少选择一个星期"),
+    ("automation.schedule.weekdaySection", "重复星期"),
+    ("automation.schedule.weekdays", "工作日"),
+    ("automation.schedule.weekend", "周末"),
+    ("automation.schedule.weekly", "每周"),
+    ("automation.schedule.workday", "每个工作日"),
+    ("automation.schedule.yearly", "每年"),
+];
+
+/// 按键取文案（纯函数）。
+pub fn text(key: &str) -> Option<&'static str> {
+    TEXTS.iter().find(|&&(k, _)| k == key).map(|&(_, v)| v)
+}
+
+/// 取文案，缺键回空串（键表由测试逐字锁定）。
+fn t(key: &str) -> &'static str {
+    text(key).unwrap_or("")
+}
+
+/// 星期（键 `automation.schedule.day.*`，标签逐字：周一…周日）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Weekday {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+impl Weekday {
+    /// 周一开头的一周序。
+    pub const ALL: [Weekday; 7] = [
+        Weekday::Mon,
+        Weekday::Tue,
+        Weekday::Wed,
+        Weekday::Thu,
+        Weekday::Fri,
+        Weekday::Sat,
+        Weekday::Sun,
+    ];
+
+    pub fn key(&self) -> &'static str {
+        match self {
+            Weekday::Mon => "automation.schedule.day.MO",
+            Weekday::Tue => "automation.schedule.day.TU",
+            Weekday::Wed => "automation.schedule.day.WE",
+            Weekday::Thu => "automation.schedule.day.TH",
+            Weekday::Fri => "automation.schedule.day.FR",
+            Weekday::Sat => "automation.schedule.day.SA",
+            Weekday::Sun => "automation.schedule.day.SU",
+        }
+    }
+
+    /// 中文标签（逐字取自全表）。
+    pub fn label(&self) -> &'static str {
+        t(self.key())
+    }
+}
+
+/// 重复频率（键 = 该频率在全表中的标签键）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Frequency {
+    Once,
+    Daily,
+    Weekly,
+    Biweekly,
+    Monthly,
+    Yearly,
+    Interval { hours: u32 },
+}
+
+impl Frequency {
+    pub fn key(&self) -> &'static str {
+        match self {
+            Frequency::Once => "automation.schedule.once",
+            Frequency::Daily => "automation.schedule.daily",
+            Frequency::Weekly => "automation.schedule.weekly",
+            Frequency::Biweekly => "automation.schedule.biweekly",
+            Frequency::Monthly => "automation.schedule.monthly",
+            Frequency::Yearly => "automation.schedule.yearly",
+            Frequency::Interval { .. } => "automation.schedule.interval",
+        }
+    }
+
+    /// 中文标签（逐字取自全表）。
+    pub fn label(&self) -> &'static str {
+        t(self.key())
+    }
+}
+
+/// 一条自动化计划（字段值来自数据源；⛔ 无源不构造）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScheduleEntry {
+    pub frequency: Frequency,
+    /// 执行时间（如 `08:00`）；缺省渲染「待选择」。
+    pub time: Option<String>,
+    /// 单次执行日期。
+    pub date: Option<String>,
+    /// 周几（周/双周频率用）。
+    pub days: Vec<Weekday>,
+    /// 每月几号。
+    pub day_of_month: Option<u32>,
+    /// 每年几月。
+    pub month: Option<u32>,
+}
+
+impl ScheduleEntry {
+    /// 摘要（模板逐字取自 `summary.*` / `intervalValue`，占位符按字段替换）。
+    pub fn summary(&self) -> String {
+        let pending = t("automation.schedule.onceTimeEmpty");
+        let time = self.time.as_deref().unwrap_or(pending);
+        match self.frequency {
+            Frequency::Once => {
+                let parts: Vec<&str> = [self.date.as_deref(), self.time.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                let date_time = if parts.is_empty() {
+                    pending.to_string()
+                } else {
+                    parts.join(" ")
+                };
+                tpl(
+                    "automation.schedule.summary.once",
+                    &[("{dateTime}", date_time.as_str())],
+                )
+            }
+            Frequency::Daily => tpl("automation.schedule.summary.daily", &[("{time}", time)]),
+            Frequency::Weekly | Frequency::Biweekly => {
+                let key = match self.frequency {
+                    Frequency::Weekly => "automation.schedule.summary.weekly",
+                    _ => "automation.schedule.summary.biweekly",
+                };
+                let days = self.days_label();
+                tpl(key, &[("{days}", days.as_str()), ("{time}", time)])
+            }
+            Frequency::Monthly => {
+                let day = self
+                    .day_of_month
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| pending.to_string());
+                tpl(
+                    "automation.schedule.summary.monthly",
+                    &[("{day}", day.as_str()), ("{time}", time)],
+                )
+            }
+            Frequency::Yearly => {
+                let month = self
+                    .month
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| pending.to_string());
+                let day = self
+                    .day_of_month
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| pending.to_string());
+                tpl(
+                    "automation.schedule.summary.yearly",
+                    &[("{month}", month.as_str()), ("{day}", day.as_str()), ("{time}", time)],
+                )
+            }
+            Frequency::Interval { hours } => tpl(
+                "automation.schedule.intervalValue",
+                &[("{count}", hours.to_string().as_str())],
+            ),
+        }
+    }
+
+    /// 周几标签拼接（逐字标签 + 顿号分隔）。
+    fn days_label(&self) -> String {
+        self.days.iter().map(|d| d.label()).collect::<Vec<_>>().join("、")
+    }
+}
+
+/// 模板占位符替换（纯函数）。
+fn tpl(key: &str, subs: &[(&str, &str)]) -> String {
+    let mut out = t(key).to_string();
+    for (placeholder, value) in subs {
+        out = out.replace(placeholder, value);
+    }
+    out
+}
+
+/// 校验（错误文案逐字取自 `validation.*`）。
+pub fn validate(entry: &ScheduleEntry) -> Vec<&'static str> {
+    let mut errors = Vec::new();
+    match entry.frequency {
+        Frequency::Weekly | Frequency::Biweekly if entry.days.is_empty() => {
+            errors.push(t("automation.schedule.validation.weekdayRequired"));
+        }
+        Frequency::Monthly if entry.day_of_month.is_none() => {
+            errors.push(t("automation.schedule.validation.monthdayRequired"));
+        }
+        Frequency::Yearly if entry.month.is_none() => {
+            errors.push(t("automation.schedule.validation.monthRequired"));
+        }
+        Frequency::Yearly if entry.day_of_month.is_none() => {
+            errors.push(t("automation.schedule.validation.monthdayRequired"));
+        }
+        Frequency::Interval { hours } if hours == 0 => {
+            errors.push(t("automation.schedule.validation.intervalHours"));
+        }
+        Frequency::Once if entry.date.is_none() => {
+            errors.push(t("automation.schedule.validation.onceDateRequired"));
+        }
+        _ => {}
+    }
+    errors
+}
 
 /// 浮层/面板状态机（默认 `NotDelivered`：数据未拉取过 ≠ 空集，⛔ 不伪造）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,6 +293,25 @@ pub fn resolve(delivered: Option<bool>) -> State {
         None => State::NotDelivered,
         Some(false) => State::LoadFailed,
         Some(true) => State::Ready,
+    }
+}
+
+/// 渲染视图态：`Ready` + 空输入 ⇒ 空态（⛔ 不是空列表）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View<'a> {
+    NotDelivered,
+    LoadFailed,
+    Empty,
+    Entries(&'a [ScheduleEntry]),
+}
+
+/// 状态 + 条目 → 视图态（纯函数）。
+pub fn view_of<'a>(state: State, entries: &'a [ScheduleEntry]) -> View<'a> {
+    match state {
+        State::NotDelivered => View::NotDelivered,
+        State::LoadFailed => View::LoadFailed,
+        State::Ready if entries.is_empty() => View::Empty,
+        State::Ready => View::Entries(entries),
     }
 }
 
