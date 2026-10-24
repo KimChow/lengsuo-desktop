@@ -4,6 +4,7 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `account.checkin`。
 //! 数据源在运行时侧：当前按纯数据层逐分支呈现，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
@@ -227,17 +228,115 @@ impl State {
 }
 
 // ===== GPUI 层 =====
-/// 主区/浮层呈现入口（无数据源 ⇒ `NotDelivered`，诚实呈现「未下发」）。
+/// 主区/浮层呈现入口（无数据源 ⇒ `NotDelivered` 空态，fail-closed 呈现「未下发」）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = resolve(None);
-    let title = SharedString::from(format!("{} · {}", TITLE, state.card_title()));
+    render(&resolve(None), theme).into_any_element()
+}
+
+/// 整棵树渲染（视图是状态的纯函数；颜色/字号一律 `theme.*` 与语义类，⛔ 不硬编码色值）。
+pub fn render(state: &State, theme: &Theme) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_3()
+        .w_full()
+        .text_sm()
+        .text_color(theme.foreground)
+        // 标题行：视图标题 + 面板标题（均逐字取自文案全表）。
+        .child(div().font_bold().child(SharedString::from(format!(
+            "{} · {}",
+            TITLE,
+            copy(keys::PANEL_TITLE).unwrap_or_default()
+        ))))
+        // 内容节点 1：状态卡（按分支呈现；`NotDelivered` ⇒ 「未下发」空态）。
+        .child(state_card(state, theme))
+        // 内容节点 2：本期大奖信息条（静态文案，逐字；⛔ 不含动态数值）。
+        .child(reward_strip(theme))
+        // 内容节点 3：下线倒计时提示（静态文案，逐字拼接 prefix/date/suffix）。
+        .child(offline_strip(theme))
+        // 内容节点 4：次级动作行（静态文案，逐字）。
+        .child(footer_strip(theme))
+}
+
+/// 状态卡：`NotDelivered` ⇒ 「未下发」空态（⛔ 不是空列表）；其余分支标题/描述/主行动逐字。
+fn state_card(state: &State, theme: &Theme) -> impl IntoElement {
+    let card = div().flex().flex_col().gap_1().w_full().text_sm();
+    if matches!(state, State::NotDelivered) {
+        return card
+            .text_color(theme.muted_foreground)
+            .child(SharedString::from(NOT_DELIVERED));
+    }
+    card.text_color(theme.foreground)
+        .child(
+            div()
+                .font_bold()
+                .child(SharedString::from(state.card_title())),
+        )
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(state.description())),
+        )
+        .child(
+            div()
+                .text_color(theme.accent)
+                .child(SharedString::from(state.primary_label())),
+        )
+}
+
+/// 本期大奖信息条：`reward.description` / `periodTitle` / `periodTag`（逐字）。
+fn reward_strip(theme: &Theme) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
         .text_color(theme.muted_foreground)
-        .child(title)
-        .into_any_element()
+        .child(SharedString::from(
+            copy("account.checkin.reward.description").unwrap_or_default(),
+        ))
+        .child(SharedString::from(
+            copy("account.checkin.periodTitle").unwrap_or_default(),
+        ))
+        .child(SharedString::from(
+            copy("account.checkin.periodTag").unwrap_or_default(),
+        ))
+}
+
+/// 下线倒计时提示：`offlineCountdown` + `offlineCountdownDesc.{prefix,date,suffix}`（逐字拼接）。
+fn offline_strip(theme: &Theme) -> impl IntoElement {
+    let line = format!(
+        "{}{}{}",
+        copy("account.checkin.offlineCountdownDesc.prefix").unwrap_or_default(),
+        copy("account.checkin.offlineCountdownDesc.date").unwrap_or_default(),
+        copy("account.checkin.offlineCountdownDesc.suffix").unwrap_or_default(),
+    );
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(
+            copy("account.checkin.offlineCountdown").unwrap_or_default(),
+        ))
+        .child(SharedString::from(line))
+}
+
+/// 次级动作行：`tomorrow` / `tryExperts`（逐字）。
+fn footer_strip(theme: &Theme) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(
+            copy("account.checkin.tomorrow").unwrap_or_default(),
+        ))
+        .child(SharedString::from(
+            copy("account.checkin.tryExperts").unwrap_or_default(),
+        ))
 }
 
 #[cfg(test)]
