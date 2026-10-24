@@ -285,7 +285,21 @@ pub fn main_area(theme: &Theme) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{template_of, NS_KEY_COUNT, NS_PREFIX, TEXTS, TITLE};
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
+    use super::{
+        main_area, render_feed, resolve, template_of, Feed, NetworkAuditEvent, NetworkAuditKind,
+        State, EMPTY_TEXT, LOADING_TEXT, NOT_DELIVERED, NS_KEY_COUNT, NS_PREFIX, TEXTS, TITLE,
+    };
+    use gpui_kit::component::Theme;
+
+    fn text_of(key: &str) -> &'static str {
+        TEXTS
+            .iter()
+            .find(|(k, _)| *k == key)
+            .expect("键必须在 TEXTS")
+            .1
+    }
 
     #[test]
     fn title_is_verbatim() {
@@ -296,10 +310,226 @@ mod tests {
     fn texts_cover_namespace_verbatim() {
         assert_eq!(TEXTS.len(), NS_KEY_COUNT);
         assert!(TEXTS.iter().all(|(k, _)| k.starts_with(NS_PREFIX)));
+        // 键唯一且模板非空、可解析。
         let mut keys: Vec<_> = TEXTS.iter().map(|(k, _)| *k).collect();
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), NS_KEY_COUNT);
+        assert!(TEXTS.iter().all(|(_, t)| !t.is_empty()));
         assert!(TEXTS.iter().all(|(k, _)| template_of(k).is_some()));
+    }
+
+    #[test]
+    fn templates_verbatim_from_table() {
+        // 逐字断言全部 12 键（含三种 With* 括注形态）。
+        let expect = [
+            (
+                "securityCenter.audit.network.allowMatched",
+                "网络访问命中允许规则：{target}",
+            ),
+            (
+                "securityCenter.audit.network.allowMatchedWithRule",
+                "网络访问命中允许规则：{target}（规则：{matchedRule}）",
+            ),
+            (
+                "securityCenter.audit.network.approved",
+                "用户已批准访问网络：{target}",
+            ),
+            (
+                "securityCenter.audit.network.approvedWithRule",
+                "用户已批准访问网络：{target}（询问规则：{matchedRule}）",
+            ),
+            (
+                "securityCenter.audit.network.askMatched",
+                "网络访问命中询问规则：{target}",
+            ),
+            (
+                "securityCenter.audit.network.askMatchedWithRule",
+                "网络访问命中询问规则：{target}（规则：{matchedRule}）",
+            ),
+            (
+                "securityCenter.audit.network.blocked",
+                "网络访问被网络安全策略阻止：{target}",
+            ),
+            (
+                "securityCenter.audit.network.blockedWithRule",
+                "网络访问命中禁止规则，已阻止：{target}（规则：{matchedRule}）",
+            ),
+            (
+                "securityCenter.audit.network.failed",
+                "网络访问失败：{target}",
+            ),
+            (
+                "securityCenter.audit.network.failedWithReason",
+                "网络访问失败：{target}（原因：{reason}）",
+            ),
+            (
+                "securityCenter.audit.network.maliciousBlocked",
+                "已拦截恶意网站访问：{target}",
+            ),
+            (
+                "securityCenter.audit.network.maliciousBlockedWithRiskType",
+                "已拦截恶意网站访问：{target}（风险类型：{riskType}）",
+            ),
+        ];
+        for (key, text) in expect {
+            assert_eq!(text_of(key), text, "文案必须逐字一致：{key}");
+        }
+    }
+
+    #[test]
+    fn fail_closed_default() {
+        // 初始态 = 加载中（未拉取过 ≠ 空集）；未接入数据源 ⇒ 失败可见，不伪造条目。
+        assert_eq!(State::default(), State::Loading);
+        assert_eq!(Feed::default(), Feed::loading());
+        assert_eq!(Feed::undelivered().state, State::Failed);
+        assert_eq!(Feed::undelivered().events.len(), 0);
+        // 三个分支提示互不相同（加载中/未下发/空态不可互相顶替）。
+        assert_ne!(LOADING_TEXT, NOT_DELIVERED);
+        assert_ne!(NOT_DELIVERED, EMPTY_TEXT);
+        assert_ne!(LOADING_TEXT, EMPTY_TEXT);
+    }
+
+    #[test]
+    fn resolve_four_states() {
+        assert_eq!(resolve(false, 3), State::Failed);
+        assert_eq!(resolve(true, 0), State::Empty);
+        assert_eq!(resolve(true, 2), State::Active);
+        assert_eq!(Feed::loading().state, State::Loading);
+    }
+
+    #[test]
+    fn empty_input_is_empty_state_not_silent_list() {
+        let feed = Feed::delivered(Vec::new());
+        assert_eq!(feed.state, State::Empty);
+        // 空态 ≠ 加载中 ≠ 失败（未拉取过 ≠ 空集），且不是零行列表的沉默渲染。
+        assert_ne!(feed.state, State::Loading);
+        assert_ne!(feed.state, State::Failed);
+        assert_ne!(feed.state, State::Active);
+        assert_eq!(feed.events.len(), 0);
+    }
+
+    #[test]
+    fn copy_key_picks_with_variant_per_field() {
+        // 六族基础键：扩展字段全 None。
+        let base = [
+            (
+                NetworkAuditKind::AllowMatched,
+                "securityCenter.audit.network.allowMatched",
+            ),
+            (
+                NetworkAuditKind::Approved,
+                "securityCenter.audit.network.approved",
+            ),
+            (
+                NetworkAuditKind::AskMatched,
+                "securityCenter.audit.network.askMatched",
+            ),
+            (
+                NetworkAuditKind::Blocked,
+                "securityCenter.audit.network.blocked",
+            ),
+            (
+                NetworkAuditKind::Failed,
+                "securityCenter.audit.network.failed",
+            ),
+            (
+                NetworkAuditKind::MaliciousBlocked,
+                "securityCenter.audit.network.maliciousBlocked",
+            ),
+        ];
+        for (kind, key) in base {
+            assert_eq!(NetworkAuditEvent::new(kind, "example.com").copy_key(), key);
+        }
+        // With* 键只在对应字段为 Some 时取用；其他字段不参与判定。
+        let mut e = NetworkAuditEvent::new(NetworkAuditKind::AllowMatched, "example.com");
+        e.matched_rule = Some("allow-cdn".into());
+        assert_eq!(
+            e.copy_key(),
+            "securityCenter.audit.network.allowMatchedWithRule"
+        );
+        let mut b = NetworkAuditEvent::new(NetworkAuditKind::Blocked, "example.com");
+        b.reason = Some("与规则无关".into());
+        assert_eq!(b.copy_key(), "securityCenter.audit.network.blocked");
+        b.matched_rule = Some("deny-bank".into());
+        assert_eq!(b.copy_key(), "securityCenter.audit.network.blockedWithRule");
+        let mut f = NetworkAuditEvent::new(NetworkAuditKind::Failed, "example.com");
+        f.matched_rule = Some("与原因无关".into());
+        assert_eq!(f.copy_key(), "securityCenter.audit.network.failed");
+        f.reason = Some("超时".into());
+        assert_eq!(
+            f.copy_key(),
+            "securityCenter.audit.network.failedWithReason"
+        );
+        let mut m = NetworkAuditEvent::new(NetworkAuditKind::MaliciousBlocked, "example.com");
+        m.matched_rule = Some("与风险类型无关".into());
+        assert_eq!(
+            m.copy_key(),
+            "securityCenter.audit.network.maliciousBlocked"
+        );
+        m.risk_type = Some("钓鱼".into());
+        assert_eq!(
+            m.copy_key(),
+            "securityCenter.audit.network.maliciousBlockedWithRiskType"
+        );
+    }
+
+    #[test]
+    fn render_text_fills_placeholders() {
+        let mut b = NetworkAuditEvent::new(NetworkAuditKind::Blocked, "bank.example.com");
+        b.matched_rule = Some("deny-bank".into());
+        assert_eq!(
+            b.render_text(),
+            "网络访问命中禁止规则，已阻止：bank.example.com（规则：deny-bank）"
+        );
+        let mut f = NetworkAuditEvent::new(NetworkAuditKind::Failed, "cdn.example.com");
+        f.reason = Some("DNS 解析失败".into());
+        assert_eq!(
+            f.render_text(),
+            "网络访问失败：cdn.example.com（原因：DNS 解析失败）"
+        );
+        let mut m = NetworkAuditEvent::new(NetworkAuditKind::MaliciousBlocked, "evil.example.net");
+        m.risk_type = Some("钓鱼".into());
+        assert_eq!(
+            m.render_text(),
+            "已拦截恶意网站访问：evil.example.net（风险类型：钓鱼）"
+        );
+        let mut a = NetworkAuditEvent::new(NetworkAuditKind::Approved, "update.example.org");
+        a.matched_rule = Some("ask-cdn".into());
+        assert_eq!(
+            a.render_text(),
+            "用户已批准访问网络：update.example.org（询问规则：ask-cdn）"
+        );
+    }
+
+    #[test]
+    fn main_area_constructs_element_tree() {
+        // 只构造元素树，不 panic；无数据源 ⇒ fail-closed 走未下发分支。
+        let _ = main_area(&Theme::default());
+        assert_eq!(TITLE, "安全中心·网络审计");
+    }
+
+    #[test]
+    fn render_branches_all_states_no_panic() {
+        let theme = Theme::default();
+        let loading = Feed::loading();
+        assert_eq!(loading.state, State::Loading);
+        let _ = render_feed(&theme, &loading);
+
+        let failed = Feed::undelivered();
+        assert_eq!(failed.state, State::Failed);
+        let _ = render_feed(&theme, &failed);
+
+        let empty = Feed::delivered(Vec::new());
+        assert_eq!(empty.state, State::Empty);
+        let _ = render_feed(&theme, &empty);
+
+        let events = vec![
+            NetworkAuditEvent::new(NetworkAuditKind::Blocked, "tracker.example.io"),
+            NetworkAuditEvent::new(NetworkAuditKind::AllowMatched, "api.example.com"),
+        ];
+        let active = Feed::delivered(events);
+        assert_eq!(active.state, State::Active);
+        let _ = render_feed(&theme, &active);
     }
 }
