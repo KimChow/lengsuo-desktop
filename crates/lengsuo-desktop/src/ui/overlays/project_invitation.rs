@@ -196,33 +196,195 @@ pub fn pending_waiting_line(approver: Option<&str>) -> String {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 数据源在运行时侧未下发 ⇒ fail-closed 渲染 [`Phase::NotDelivered`]（如实「未下发」）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render_phase(&Phase::NotDelivered, theme)
+}
+
+/// 按状态机分支渲染整层（标题行 + 状态徽标 + 分支主体）。
+fn render_phase(phase: &Phase, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(render_header(phase, theme))
+        .child(render_body(phase, theme))
+}
+
+/// 标题行：状态徽标（描边小徽章）+ 页面标题 + 副标题。
+fn render_header(phase: &Phase, theme: &Theme) -> Div {
+    let chip_border = match phase {
+        Phase::Conflict => theme.danger,
+        Phase::VersionBlocked => theme.warning,
+        _ => theme.border,
+    };
+    div()
+        .px_4()
+        .py_3()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(chip_border)
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(phase.tag()),
+                )
+                .child(
+                    div()
+                        .text_base()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(PAGE_TITLE),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(SUBTITLE),
+        )
+}
+
+fn render_body(phase: &Phase, theme: &Theme) -> Div {
+    match phase {
+        Phase::NotDelivered => centered_line(NOT_DELIVERED, theme),
+        Phase::Detail(detail) => render_detail(detail, theme),
+        _ => render_state_page(phase, theme),
+    }
+}
+
+/// 居中空态（fail-closed：如实「未下发」，⛔ 不渲染空列表）。
+fn centered_line(text: &'static str, theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 详情分支：邀请人行 + 字段清单 + 加入按钮与须知。
+fn render_detail(detail: &InvitationDetail, theme: &Theme) -> Div {
+    if detail.is_empty() {
+        // 空输入 ⇒ 空态，⛔ 不是空列表。
+        return centered_line(NOT_DELIVERED, theme);
+    }
+    let mut list = div().flex().flex_col();
+    for (label, value) in detail.rows() {
+        list = list.child(
+            div()
+                .flex()
+                .justify_between()
+                .gap_4()
+                .px_4()
+                .py_1()
+                .text_sm()
+                .child(div().text_color(theme.muted_foreground).child(label))
+                .child(div().text_color(theme.foreground).child(value)),
+        );
+    }
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .py_2()
         .child(
             div()
                 .px_4()
-                .py_2()
                 .text_sm()
-                .font_bold()
                 .text_color(theme.foreground)
-                .child(BADGE),
+                .child(detail.inviter_line()),
         )
+        .child(list)
         .child(
             div()
-                .flex_1()
+                .px_4()
+                .py_3()
                 .flex()
-                .items_center()
-                .justify_center()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(theme.accent)
+                        .text_color(theme.accent_foreground)
+                        .text_sm()
+                        .child(JOIN_ACTION),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(NOTE),
+                ),
+        )
+}
+
+/// 状态分支（Joining/Pending/Joined/Conflict/VersionBlocked/Failed）：居中主文案 + 副文案 + 分支附加行。
+fn render_state_page(phase: &Phase, theme: &Theme) -> Div {
+    let mut page = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .px_4()
+        .child(
+            div()
+                .text_base()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(phase.headline()),
+        );
+    if let Some(desc) = phase.description() {
+        page = page.child(
+            div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .child(desc),
+        );
+    }
+    match phase {
+        Phase::Pending { approver } => {
+            page = page.child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(pending_waiting_line(approver.as_deref())),
+            );
+        }
+        Phase::Joined => {
+            page = page.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(JOINED_SHORT_DESC),
+            );
+        }
+        _ => {}
+    }
+    page
 }
 
 #[cfg(test)]
