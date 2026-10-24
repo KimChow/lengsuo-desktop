@@ -180,15 +180,72 @@ pub fn render_event(event: &AuditEvent) -> String {
 }
 
 // ===== GPUI 层 =====
-/// 主区/浮层呈现入口（诚实占位：等跨线契约就绪后换源）。
+/// 单条事件行：判定分类标识 + 按模板渲染的逐字文案。
+fn render_event_row(theme: &Theme, event: &AuditEvent) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(format!("[{:?}] {}", verdict_of_key(event.key), render_event(event))))
+}
+
+/// 事件流三分支渲染（fail-closed：未下发 / 空态都不伪造条目）。
+pub fn render_feed(theme: &Theme, feed: &Feed) -> AnyElement {
+    let list = div().flex().flex_col().gap_2();
+    let list = match feed.state {
+        State::NotDelivered => list.child(SharedString::from(NOT_DELIVERED)),
+        State::Empty => list.child(SharedString::from(EMPTY_TEXT)),
+        State::Active => feed
+            .events
+            .iter()
+            .fold(list, |acc, e| acc.child(render_event_row(theme, e))),
+    };
+    list.into_any_element()
+}
+
+/// 审计事件目录：按三组判定分类列出命名空间全量模板（真实参考数据，非伪造条目）。
+/// 组标签用枚举标识符 + 计数（⛔ 不自编中文组名）。
+pub fn render_catalog(theme: &Theme) -> AnyElement {
+    let section = div().flex().flex_col().gap_2().text_color(theme.muted_foreground);
+    let section = section.child(SharedString::from(NS_PREFIX));
+    [Verdict::AutoAllow, Verdict::NeedsApproval, Verdict::Blocked]
+        .into_iter()
+        .fold(section, |acc, verdict| {
+            let rows: Vec<_> = TEXTS
+                .iter()
+                .filter(|(k, _)| verdict_of_key(k) == verdict)
+                .map(|(k, t)| format!("{k} {t}"))
+                .collect();
+            let group = div().flex().flex_col().gap_1().child(SharedString::from(format!(
+                "{verdict:?} · {}",
+                rows.len()
+            )));
+            let group = rows.into_iter().fold(group, |a, line| a.child(SharedString::from(line)));
+            acc.child(group)
+        })
+        .into_any_element()
+}
+
+/// 主区/浮层呈现入口：标题行 + 事件流（无数据源 ⇒ 未下发）+ 事件目录。
+/// 签名固定 `theme: &Theme`；数据源就绪后由运行时侧喂 [`Feed`]。
 pub fn main_area(theme: &Theme) -> AnyElement {
+    let feed = Feed::undelivered();
     div()
         .flex()
         .flex_col()
         .gap_2()
         .text_color(theme.muted_foreground)
-        .child(SharedString::from(TITLE))
-        .child(SharedString::from(NOT_DELIVERED))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_color(theme.foreground)
+                .child(SharedString::from(TITLE)),
+        )
+        .child(render_feed(theme, &feed))
+        .child(render_catalog(theme))
         .into_any_element()
 }
 
