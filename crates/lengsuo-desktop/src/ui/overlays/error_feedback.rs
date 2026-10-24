@@ -1,8 +1,9 @@
 //! 错误反馈/异常提示条（波次 7，卡 `ui-overlay-error-feedback`，条目 A56）。
 //!
 //! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
-//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `errorBanner`。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `errorBanner`
+//! （关闭按钮读屏文案逐字取自全表 `ardotAuth.aria.close`）。
+//! 数据源在运行时侧：无源时如实显示「未下发」，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
@@ -11,6 +12,127 @@ use gpui_kit::*;
 pub const TITLE: &str = "异常提示";
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
+/// 关闭按钮读屏文案（逐字取自全表 `ardotAuth.aria.close`）。
+pub const CLOSE_ARIA: &str = "关闭";
+/// 错误图标字形（图标字符，非文案表条目）。
+pub const ERROR_ICON: &str = "!";
+/// 关闭按钮字形（图标字符，非文案表条目）。
+pub const CLOSE_ICON: &str = "✕";
+
+/// 错误条动作按钮；文案逐字取自 `errorBanner` 命名空间。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    /// 重试（`errorBanner.creditsExhausted.retry`）。
+    Retry,
+    /// 网络诊断（`errorBanner.checkNetwork`）。
+    Diagnose,
+    /// 升级套餐（`errorBanner.creditsExhausted.upgrade`）。
+    Upgrade,
+    /// 购买积分（`errorBanner.creditsExhausted.buyTopUp`）。
+    BuyTopUp,
+}
+
+impl Action {
+    /// 动作按钮中文文案（逐字）。
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Retry => "重试",
+            Self::Diagnose => "网络诊断",
+            Self::Upgrade => "升级套餐",
+            Self::BuyTopUp => "购买积分",
+        }
+    }
+}
+
+/// 错误场景；标题/说明/动作全部逐字取自 `errorBanner` 命名空间。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ErrorKind {
+    /// 连接超时（`errorBanner.connectionTimeout`）。
+    ConnectionTimeout,
+    /// 模型响应超时（`errorBanner.modelResponseTimeout`）。
+    ModelResponseTimeout,
+    /// 积分耗尽（标题 `errorBanner.unexpectedError`，说明 `creditsExhausted.upgradeContent`）。
+    CreditsExhausted,
+}
+
+impl ErrorKind {
+    /// 全部可复现场景（固定 3 项，逐字文案骨架，⛔ 不附带伪造数值/凭据）。
+    pub const ALL: &'static [Self] = &[
+        Self::ConnectionTimeout,
+        Self::ModelResponseTimeout,
+        Self::CreditsExhausted,
+    ];
+
+    /// 标题（逐字）。
+    #[must_use]
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::ConnectionTimeout => "连接超时",
+            Self::ModelResponseTimeout => "模型响应超时",
+            Self::CreditsExhausted => "发生意外错误",
+        }
+    }
+
+    /// 说明段（逐字）。
+    #[must_use]
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::ConnectionTimeout => "如果问题持续存在，请检查您的网络设置或 VPN 状态",
+            Self::ModelResponseTimeout => "请重试或切换模型",
+            Self::CreditsExhausted => "您账户下可用的积分额度已耗尽，升级套餐继续完成任务。",
+        }
+    }
+
+    /// 动作按钮清单（重试/诊断/升级）。
+    #[must_use]
+    pub fn actions(self) -> &'static [Action] {
+        match self {
+            Self::ConnectionTimeout => &[Action::Retry, Action::Diagnose],
+            Self::ModelResponseTimeout => &[Action::Retry],
+            Self::CreditsExhausted => &[Action::Retry, Action::Upgrade, Action::BuyTopUp],
+        }
+    }
+}
+
+/// 错误条目行 = 错误场景。
+#[derive(Debug)]
+pub struct BannerRow {
+    pub kind: ErrorKind,
+}
+
+/// 浮层数据三态：未下发 ≠ 无错误空态 ≠ 错误条清单。
+#[derive(Debug)]
+pub enum OverlayState {
+    /// 数据源未下发（fail-closed）。
+    NotDelivered,
+    /// 已下发且无错误：整条隐藏（空态，不是空清单）。
+    Hidden,
+    /// 错误条清单。
+    Banner(Vec<BannerRow>),
+}
+
+impl OverlayState {
+    /// 按场景清单构造；空输入归一化为无错误空态（⛔ 不是空清单、不是未下发）。
+    #[must_use]
+    pub fn from_kinds(kinds: &[ErrorKind]) -> Self {
+        if kinds.is_empty() {
+            Self::Hidden
+        } else {
+            Self::Banner(kinds.iter().map(|&kind| BannerRow { kind }).collect())
+        }
+    }
+
+    /// 条目数（未下发与空态均为 0）。
+    #[must_use]
+    pub fn row_count(&self) -> usize {
+        match self {
+            Self::Banner(rows) => rows.len(),
+            _ => 0,
+        }
+    }
+}
+
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
