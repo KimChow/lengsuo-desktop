@@ -93,26 +93,108 @@ fn attr_px(value: Option<&str>) -> u32 {
         .map_or(0, |n| n.round().max(0.0) as u32)
 }
 
-/// A14：带载荷渲染。当前仅渲染**诚实占位**（⛔ 不画假图形）。
+/// A14：带载荷渲染——`.svg` 走**真矢量渲染**（`svg().data(..)`，resvg 随 gpui 自带）；
+/// 截断载荷结构已破坏 ⇒ 只如实标注，⛔ 不画不完整图形。
 pub(super) fn render_with_payload(
     path: &str,
     payload: &PreviewPayload,
     theme: &Theme,
 ) -> AnyElement {
-    let line = match payload {
-        PreviewPayload::NotDelivered { reason } => (*reason).to_owned(),
-        PreviewPayload::Failed(err) => err.line(),
-        _ => "图形预览尚未接入（A14）".to_owned(),
-    };
+    let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let col = div().flex().flex_col().gap_2();
+    match payload {
+        PreviewPayload::Image(img) if img.format == "svg" => col
+            .child(meta_row(file_name, &img.format, theme))
+            .child(hint_row(&info_line(img), theme))
+            .child(svg_stage(img, theme))
+            .into_any_element(),
+        PreviewPayload::NotDelivered { reason } => col
+            .child(meta_row(file_name, "diagram", theme))
+            .child(hint_row(reason, theme))
+            .into_any_element(),
+        PreviewPayload::Failed(err) => col
+            .child(meta_row(file_name, "diagram", theme))
+            .child(hint_row(&err.line(), theme))
+            .into_any_element(),
+        // 其他载荷不该分派到图表预览：如实说明，不硬凑内容。
+        _ => col
+            .child(meta_row(file_name, "diagram", theme))
+            .child(hint_row("载荷类型与图表预览不匹配", theme))
+            .into_any_element(),
+    }
+}
+
+/// 元信息行：文件名（`path` 末段，真实值）+ 格式标签。
+fn meta_row(file_name: &str, tag: &str, theme: &Theme) -> Div {
     div()
         .flex()
-        .flex_col()
-        .gap_1()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(file_name.to_owned()),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(tag.to_owned()),
+        )
+}
+
+/// 次级信息 / 提示行（颜色取主题 token，保证对比度）。
+fn hint_row(line: &str, theme: &Theme) -> Div {
+    div()
         .text_xs()
         .text_color(theme.muted_foreground)
-        .child(div().truncate().child(path.to_owned()))
-        .child(line)
-        .into_any_element()
+        .child(line.to_owned())
+}
+
+/// 元信息一行文案：尺寸（解不出如实标「尺寸未知」）+ 字节数与截断标注。
+fn info_line(img: &ImagePayload) -> String {
+    let dims = if img.width > 0 && img.height > 0 {
+        format!("{}×{} 像素", img.width, img.height)
+    } else {
+        "尺寸未知".to_owned()
+    };
+    if img.source_len > img.bytes.len() {
+        format!(
+            "{dims} · 原文件 {} 字节，已按上限截断至 {} 字节",
+            img.source_len,
+            img.bytes.len()
+        )
+    } else {
+        format!("{dims} · {} 字节", img.source_len)
+    }
+}
+
+/// 图形舞台：有界容器内真实渲染矢量；截断 ⇒ 诚实占位说明（⛔ 不伪造图形）。
+fn svg_stage(img: &ImagePayload, theme: &Theme) -> Div {
+    let stage = div()
+        .h_64()
+        .flex()
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .bg_color(theme.muted)
+        .p_2();
+    if img.source_len > img.bytes.len() {
+        stage.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child("内容超过上限被截断，无法完整渲染矢量图"),
+        )
+    } else {
+        stage.child(svg().data(&img.bytes).size_full())
+    }
 }
 
 #[cfg(test)]
