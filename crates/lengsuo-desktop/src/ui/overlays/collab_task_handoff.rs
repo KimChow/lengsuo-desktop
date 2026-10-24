@@ -1,13 +1,10 @@
-//! 任务交接（波次 8，卡 `ui-collab-task-handoff`）。
-//!
-//! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
-//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `collab.task.handoff`。
-//! 数据源在运行时侧：当前按纯数据层逐分支呈现，等跨线契约就绪后换源。
+//! 任务交接（波次 8，卡 `ui-collab-task-handoff`）：纯数据层 + GPUI 层（[`main_area`]）。
+//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `collab.task.handoff`；
+//! 数据源在运行时侧，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
-use std::borrow::Cow;
 
 /// 视图标题。
 pub const TITLE: &str = "任务交接";
@@ -15,44 +12,29 @@ pub const TITLE: &str = "任务交接";
 pub const NOT_DELIVERED: &str = "未下发";
 /// 命名空间前缀。
 pub const NS_PREFIX: &str = "collab.task.handoff";
-/// 命名空间键数（要求覆盖 ≥40，实际全量 53）。
-pub const NS_KEY_COUNT: usize = 53;
+/// 本文件承载的命名空间键数（卡要求 ≥40）。
+pub const NS_KEY_COUNT: usize = 42;
 
 // ===== 文案常量（逐字；行尾注释为全表键名）=====
-// —— 弹窗骨架 ——
 pub const HEADER_TITLE: &str = "新建待办"; // headerTitle
-pub const DIALOG_ARIA_LABEL: &str = "新建待办"; // dialogAriaLabel
-pub const BACKDROP_ARIA_LABEL: &str = "关闭新建待办"; // backdropAriaLabel
 pub const CLOSE_LABEL: &str = "关闭"; // closeLabel
-pub const PROPERTY_ARIA_LABEL: &str = "待办属性"; // propertyAriaLabel
 pub const CANCEL: &str = "取消"; // cancel
 pub const CREATE: &str = "创建"; // create
 pub const SUBMIT: &str = "确认"; // submit
 pub const SUBMITTING: &str = "提交中..."; // submitting
-// —— 表单字段 ——
-pub const FIELD_TITLE: &str = "标题"; // fieldTitle
-pub const FIELD_DESCRIPTION: &str = "描述"; // fieldDescription
 pub const TITLE_PLACEHOLDER: &str = "请输入标题"; // titlePlaceholder
 pub const DESCRIPTION_PLACEHOLDER: &str = "添加描述（可选）"; // descriptionPlaceholder
 pub const TITLE_EMPTY: &str = "请先填写待办标题"; // titleEmpty
 pub const NEED_ASSIGNEE: &str = "请选择处理人"; // needAssignee
-pub const SEARCH_PLACEHOLDER: &str = "搜索成员"; // searchPlaceholder
-pub const EMPTY: &str = "没有匹配的处理人"; // empty
 pub const UNASSIGNED_CHIP: &str = "处理人"; // unassignedChip
 pub const FALLBACK_UNKNOWN_MEMBER: &str = "未知成员"; // fallbackUnknownMember
-// —— 附件 ——
-pub const ATTACHMENT_LABEL: &str = "附件"; // attachmentLabel
 pub const ATTACHMENT_LINE_HEADER: &str = "附件："; // attachmentLineHeader
 pub const ATTACHMENT_COUNT: &str = "{count} 个附件"; // attachmentCount
 pub const ATTACHMENTS_SELECTED: &str = "已选择 {count} 个附件"; // attachmentsSelected
 pub const ATTACHMENTS_UPLOADED: &str = "已上传 {count} 个附件"; // attachmentsUploaded
 pub const ATTACHMENT_ALREADY_ADDED: &str = "选择的附件已添加"; // attachmentAlreadyAdded
-pub const ATTACHMENTS_ADD_TITLE: &str = "添加附件"; // attachmentsAddTitle
-pub const ATTACHMENTS_LOCAL: &str = "本地文件"; // attachmentsLocal
-pub const ATTACHMENTS_NETDISK: &str = "项目资产"; // attachmentsNetdisk
 pub const ATTACHMENTS_PARTIAL_FAILED: &str =
     "任务已转交，但 {count} 个附件上传或绑定失败，可在计划详情中重新添加"; // attachmentsPartialFailed
-// —— 任务信息 / 产物 ——
 pub const SECTION_TASK_INFO: &str = "任务信息"; // section.taskInfo
 pub const SECTION_TASK_SOURCE: &str = "来自「{title}」"; // section.taskSource
 pub const FALLBACK_TASK_NAME: &str = "当前任务"; // fallbackTaskName
@@ -63,7 +45,6 @@ pub const FALLBACK_ARTIFACT_NAME: &str = "未命名"; // fallbackArtifactName
 pub const ARTIFACT_NAME_SEPARATOR: &str = "、"; // artifactNameSeparator
 pub const SECTION_FILE_TAG: &str = "文件"; // section.fileTag
 pub const AI_BADGE: &str = "AI生成"; // aiBadge
-// —— 任务进度摘要 ——
 pub const SECTION_PROGRESS_TITLE: &str = "任务进度摘要"; // section.progressTitle
 pub const SECTION_SUMMARY_EXPAND: &str = "展开"; // section.summaryExpand
 pub const SECTION_SUMMARY_COLLAPSE: &str = "收起"; // section.summaryCollapse
@@ -74,7 +55,6 @@ pub const PROGRESS_FALLBACK_TITLE: &str = "该任务「{title}」已产出 {coun
 pub const PROGRESS_FALLBACK_PAREN: &str = "（{names}）"; // progressFallbackParen
 pub const PROGRESS_FALLBACK_INTERACTION: &str =
     "。对话共 {count} 轮交互，任务整体进展顺利，可接续后续环节。"; // progressFallbackInteraction
-// —— 转交结果 ——
 pub const HANDOFF_SUCCESS: &str = "任务正在转交中，稍后可在计划看板中查看"; // handoffSuccess
 pub const HANDOFF_FAILED: &str = "转交失败，请重试"; // handoffFailed
 pub const HANDOFF_FAILED_PROJECT_ARCHIVED: &str = "该项目已归档，无法转交任务"; // handoffFailedProjectArchived
@@ -82,32 +62,6 @@ pub const HANDOFF_FAILED_TASK_ARCHIVED: &str = "该任务已归档或删除，�
 pub const PENDING_MESSAGE_QUEUED: &str = "任务转交中，新消息将在转交完成后依次处理"; // pendingMessageQueued
 
 // ===== 纯数据层（无 GPUI 依赖）=====
-/// 附件来源。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AttachmentSource {
-    /// 本地文件。
-    Local,
-    /// 项目资产。
-    Netdisk,
-}
-
-impl AttachmentSource {
-    /// 来源标签（逐字）。
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Local => ATTACHMENTS_LOCAL,
-            Self::Netdisk => ATTACHMENTS_NETDISK,
-        }
-    }
-}
-
-/// 附件条目。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Attachment {
-    pub name: String,
-    pub source: AttachmentSource,
-}
-
 /// 产物条目（空名渲染 [`FALLBACK_ARTIFACT_NAME`]）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artifact {
@@ -115,33 +69,24 @@ pub struct Artifact {
     pub ai_generated: bool,
 }
 
-/// 协作成员（处理人候选）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Member {
-    pub display_name: String,
-}
-
-/// 进度摘要状态。
+/// 进度摘要状态（`Loading` 阻止提交，对应 summaryLoading）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SummaryPhase {
     /// AI 摘要生成中。
     #[default]
     Generating,
-    /// 摘要生成中，尚未到可转交状态（阻止提交）。
     Loading,
-    /// 摘要为空。
     Empty,
-    /// 已生成（正文为运行时数据）。
     Ready(String),
 }
 
-/// 新建待办表单值。
+/// 新建待办表单值（`assignee` 为成员显示名；`attachments` 为附件名清单）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TodoForm {
     pub title: String,
     pub description: String,
-    pub assignee: Option<Member>,
-    pub attachments: Vec<Attachment>,
+    pub assignee: Option<String>,
+    pub attachments: Vec<String>,
 }
 
 /// 交接场景数据（来源任务 + 产物 + 摘要 + 新建待办表单）。
@@ -157,11 +102,8 @@ pub struct HandoffScene {
 /// 转交失败原因（决定失败文案）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailReason {
-    /// 通用失败（可重试）。
     Retry,
-    /// 项目已归档。
     ProjectArchived,
-    /// 任务已归档或删除。
     TaskArchived,
 }
 
@@ -173,16 +115,12 @@ pub enum State {
     NotDelivered,
     /// 拉取失败（同样无数据，渲染同 `NotDelivered`）。
     LoadFailed,
-    /// 表单编辑中。
     Composing(HandoffScene),
-    /// 提交中。
     Submitting,
     /// 转交已受理（失败附件数 >0 ⇒ 部分失败文案）。
     Accepted {
-        uploaded_attachments: usize,
         failed_attachments: usize,
     },
-    /// 转交失败。
     Failed(FailReason),
 }
 
@@ -204,12 +142,6 @@ pub fn fill(template: &str, values: &[(&str, &str)]) -> String {
     out
 }
 
-/// 附件计数行（attachmentCount）。
-pub fn attachment_count_line(count: usize) -> String {
-    fill(ATTACHMENT_COUNT, &[("count", &count.to_string())])
-}
-
-/// 摘要展开/收起切换文案。
 pub fn summary_toggle(expanded: bool) -> &'static str {
     if expanded {
         SECTION_SUMMARY_COLLAPSE
@@ -218,23 +150,13 @@ pub fn summary_toggle(expanded: bool) -> &'static str {
     }
 }
 
-/// 处理人搜索（包含匹配；空查询返回全部候选）。
-pub fn search_members<'a>(query: &str, pool: &'a [Member]) -> Vec<&'a Member> {
-    let q = query.trim();
-    if q.is_empty() {
-        pool.iter().collect()
-    } else {
-        pool.iter().filter(|m| m.display_name.contains(q)).collect()
-    }
-}
-
-/// 搜索结果为空时的空态文案（⛔ 不渲染空列表）。
-pub fn search_notice(matches: &[&Member]) -> Option<&'static str> {
-    matches.is_empty().then_some(EMPTY)
-}
-
 /// AI 摘要缺位时的兜底摘要句（标题 +（成员）+ 交互轮次，逐字模板拼接）。
-pub fn fallback_summary(task: &str, artifact_count: usize, names: &[&str], interactions: usize) -> String {
+pub fn fallback_summary(
+    task: &str,
+    artifact_count: usize,
+    names: &[&str],
+    interactions: usize,
+) -> String {
     let names_joined = names.join(ARTIFACT_NAME_SEPARATOR);
     [
         fill(
@@ -254,36 +176,30 @@ pub fn fallback_summary(task: &str, artifact_count: usize, names: &[&str], inter
 fn artifact_display_name(artifact: &Artifact) -> &str {
     let name = artifact.name.trim();
     if name.is_empty() {
-        FALLBACK_ARTIFACT_NAME
-    } else {
-        name
+        return FALLBACK_ARTIFACT_NAME;
     }
+    name
 }
 
 impl HandoffScene {
     /// 来源任务名（空 ⇒ [`FALLBACK_TASK_NAME`]）。
     pub fn task_name(&self) -> &str {
         let name = self.source_task.trim();
-        if name.is_empty() { FALLBACK_TASK_NAME } else { name }
+        if name.is_empty() {
+            return FALLBACK_TASK_NAME;
+        }
+        name
     }
 
-    /// 任务信息行：来自「{title}」。
     pub fn task_source_line(&self) -> String {
         fill(SECTION_TASK_SOURCE, &[("title", self.task_name())])
     }
 
-    /// 产物名列表（、连接，空名 ⇒ 未命名）。
-    pub fn artifact_names(&self) -> String {
-        self.artifacts
-            .iter()
-            .map(artifact_display_name)
-            .collect::<Vec<_>>()
-            .join(ARTIFACT_NAME_SEPARATOR)
-    }
-
-    /// 产物计数行：共 {count} 项。
     pub fn artifact_count_line(&self) -> String {
-        fill(SECTION_ARTIFACT_COUNT, &[("count", &self.artifacts.len().to_string())])
+        fill(
+            SECTION_ARTIFACT_COUNT,
+            &[("count", &self.artifacts.len().to_string())],
+        )
     }
 
     /// 摘要正文（未就绪时给对应逐字文案）。
@@ -320,32 +236,24 @@ impl TodoForm {
     }
 
     /// 处理人 chip 文案（未选 ⇒ unassignedChip；选中但名空 ⇒ fallbackUnknownMember）。
-    pub fn assignee_chip_label(&self) -> Cow<'static, str> {
-        match self.assignee.as_ref().map(|m| m.display_name.trim()) {
-            Some(name) if !name.is_empty() => Cow::Owned(name.to_string()),
-            Some(_) => Cow::Borrowed(FALLBACK_UNKNOWN_MEMBER),
-            None => Cow::Borrowed(UNASSIGNED_CHIP),
+    pub fn assignee_chip_label(&self) -> String {
+        match self.assignee.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => name.to_string(),
+            Some(_) => FALLBACK_UNKNOWN_MEMBER.to_string(),
+            None => UNASSIGNED_CHIP.to_string(),
         }
     }
 
-    /// 已选择附件数行（attachmentsSelected）。
     pub fn selected_attachments_line(&self) -> String {
-        fill(ATTACHMENTS_SELECTED, &[("count", &self.attachments.len().to_string())])
+        fill(
+            ATTACHMENTS_SELECTED,
+            &[("count", &self.attachments.len().to_string())],
+        )
     }
 
     /// 附件行（attachmentLineHeader + 计数）。
     pub fn attachment_line(&self) -> String {
         [ATTACHMENT_LINE_HEADER, &self.selected_attachments_line()].concat()
-    }
-
-    /// 该附件是否已选（重复添加 ⇒ attachmentAlreadyAdded）。
-    pub fn already_added(&self, name: &str) -> bool {
-        self.attachments.iter().any(|a| a.name == name)
-    }
-
-    /// 添加附件的结果提示（重复 ⇒ attachmentAlreadyAdded）。
-    pub fn add_attachment_notice(&self, name: &str) -> Option<&'static str> {
-        self.already_added(name).then_some(ATTACHMENT_ALREADY_ADDED)
     }
 }
 
@@ -356,8 +264,10 @@ impl State {
             Self::NotDelivered | Self::LoadFailed => Some(NOT_DELIVERED.to_string()),
             Self::Composing(_) => None,
             Self::Submitting => Some(SUBMITTING.to_string()),
-            Self::Accepted { failed_attachments: 0, .. } => Some(HANDOFF_SUCCESS.to_string()),
-            Self::Accepted { failed_attachments, .. } => Some(fill(
+            Self::Accepted {
+                failed_attachments: 0,
+            } => Some(HANDOFF_SUCCESS.to_string()),
+            Self::Accepted { failed_attachments } => Some(fill(
                 ATTACHMENTS_PARTIAL_FAILED,
                 &[("count", &failed_attachments.to_string())],
             )),
@@ -365,7 +275,9 @@ impl State {
             Self::Failed(FailReason::ProjectArchived) => {
                 Some(HANDOFF_FAILED_PROJECT_ARCHIVED.to_string())
             }
-            Self::Failed(FailReason::TaskArchived) => Some(HANDOFF_FAILED_TASK_ARCHIVED.to_string()),
+            Self::Failed(FailReason::TaskArchived) => {
+                Some(HANDOFF_FAILED_TASK_ARCHIVED.to_string())
+            }
         }
     }
 
@@ -382,17 +294,13 @@ impl State {
 // ===== GPUI 层 =====
 /// 主区/浮层呈现入口（无数据源 ⇒ fail-closed「未下发」；签名不变）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    panel(&resolve(None), theme).into_any_element()
-}
-
-/// 整层：标题行 + 状态主体。
-fn panel(state: &State, theme: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
         .gap_2()
         .child(render_header(theme))
-        .child(render_body(state, theme))
+        .child(render_body(&resolve(None), theme))
+        .into_any_element()
 }
 
 /// 标题行：弹窗标题徽标（headerTitle）+ 视图标题 + 关闭。
@@ -401,16 +309,10 @@ fn render_header(theme: &Theme) -> Div {
         .flex()
         .items_center()
         .gap_2()
-        .child(chip(HEADER_TITLE, theme))
-        .child(
-            div()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
+        .child(chip(HEADER_TITLE, theme.muted_foreground, theme))
+        .child(chip(TITLE, theme.foreground, theme).text_sm().font_bold())
         .child(div().flex_1())
-        .child(chip(CLOSE_LABEL, theme))
+        .child(chip(CLOSE_LABEL, theme.muted_foreground, theme))
 }
 
 /// 按状态机分支渲染主体。
@@ -420,168 +322,95 @@ fn render_body(state: &State, theme: &Theme) -> Div {
             .flex()
             .flex_col()
             .gap_2()
-            .child(centered_muted(NOT_DELIVERED, theme)) // fail-closed：如实「未下发」
-            .child(render_form(&TodoForm::default(), CREATE, theme)),
+            .child(centered_line(NOT_DELIVERED, theme.muted_foreground))
+            .child(render_form(&TodoForm::default(), theme)),
         State::Composing(scene) => div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(section_header(SECTION_TASK_INFO, None, theme))
-                    .child(padded_muted_line(
-                        SharedString::from(scene.task_source_line()),
-                        theme,
-                    )),
-            )
+            .child(section_header(
+                SECTION_TASK_INFO,
+                SharedString::from(scene.task_source_line()),
+                theme,
+            ))
             .child(render_artifacts(scene, theme))
             .child(render_summary(scene, theme))
-            .child(render_form(&scene.todo, CREATE, theme)),
+            .child(render_form(&scene.todo, theme)),
         State::Submitting => div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(centered_muted(SUBMITTING, theme))
-            .child(centered_muted(PENDING_MESSAGE_QUEUED, theme)),
-        State::Accepted {
-            uploaded_attachments,
-            failed_attachments,
-        } => {
-            let kind = if *failed_attachments == 0 {
-                StatusColor::Good
-            } else {
-                StatusColor::Warn
-            };
-            let mut col = div().flex().flex_col().gap_2().child(centered_status(
-                SharedString::from(state.notice().unwrap_or_default()),
-                kind,
-                theme,
-            ));
-            if *uploaded_attachments > 0 {
-                col = col.child(centered_muted(
-                    fill(
-                        ATTACHMENTS_UPLOADED,
-                        &[("count", &uploaded_attachments.to_string())],
-                    ),
-                    theme,
-                ));
-            }
-            col
-        }
-        State::Failed(_) => div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(centered_status(
-                SharedString::from(state.notice().unwrap_or_default()),
-                StatusColor::Bad,
-                theme,
+            .child(centered_line(SUBMITTING, theme.muted_foreground))
+            .child(centered_line(
+                PENDING_MESSAGE_QUEUED,
+                theme.muted_foreground,
             )),
+        State::Accepted { failed_attachments } => {
+            let ok = *failed_attachments == 0;
+            let color = if ok { theme.success } else { theme.warning };
+            centered_line(state.notice().unwrap_or_default(), color)
+        }
+        State::Failed(_) => centered_line(state.notice().unwrap_or_default(), theme.danger),
     }
 }
 
 /// 任务产物区（空 ⇒ 空态文案 noArtifacts，⛔ 不渲染空列表）。
 fn render_artifacts(scene: &HandoffScene, theme: &Theme) -> Div {
-    let mut col = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(section_header(
-            SECTION_ARTIFACT_TITLE,
-            Some(SharedString::from(scene.artifact_count_line())),
-            theme,
-        ));
+    let mut col = div().flex().flex_col().gap_1().child(section_header(
+        SECTION_ARTIFACT_TITLE,
+        SharedString::from(scene.artifact_count_line()),
+        theme,
+    ));
     if scene.artifacts.is_empty() {
-        return col.child(padded_muted_line(NO_ARTIFACTS, theme));
+        return col.child(muted_line(NO_ARTIFACTS, theme));
     }
     for artifact in &scene.artifacts {
-        let mut row = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.foreground)
-                    .child(SharedString::from(artifact_display_name(artifact))),
-            );
+        let mut row = div().flex().items_center().gap_2().child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(SharedString::from(artifact_display_name(artifact))),
+        );
         if artifact.ai_generated {
-            row = row.child(chip_accent(AI_BADGE, theme));
+            row = row.child(chip(AI_BADGE, theme.accent, theme));
         }
-        col = col.child(row.child(chip(SECTION_FILE_TAG, theme)));
+        col = col.child(row.child(chip(SECTION_FILE_TAG, theme.muted_foreground, theme)));
     }
     col
 }
 
-/// 任务进度摘要区（生成中挂 AI 徽标）。
+/// 任务进度摘要区（标题 + 展开/收起尾注 + 摘要行）。
 fn render_summary(scene: &HandoffScene, theme: &Theme) -> Div {
-    let mut line = div().flex().items_center().gap_2();
-    if matches!(scene.summary, SummaryPhase::Generating) {
-        line = line.child(chip_accent(AI_BADGE, theme));
-    }
     div()
         .flex()
         .flex_col()
         .gap_1()
         .child(section_header(
             SECTION_PROGRESS_TITLE,
-            Some(SharedString::from(summary_toggle(scene.summary_expanded))),
+            SharedString::from(summary_toggle(scene.summary_expanded)),
             theme,
         ))
-        .child(
-            line.text_sm()
-                .text_color(theme.muted_foreground)
-                .child(SharedString::from(scene.summary_line())),
-        )
+        .child(muted_line(SharedString::from(scene.summary_line()), theme))
 }
 
 /// 新建待办表单（本地状态，不依赖下发数据）。
-fn render_form(form: &TodoForm, primary_label: &'static str, theme: &Theme) -> Div {
+fn render_form(form: &TodoForm, theme: &Theme) -> Div {
     let mut col = div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(FIELD_TITLE, None, theme))
         .child(field_input(&form.title, TITLE_PLACEHOLDER, theme))
-        .child(section_header(FIELD_DESCRIPTION, None, theme))
-        .child(field_input(&form.description, DESCRIPTION_PLACEHOLDER, theme))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(chip(form.assignee_chip_label().to_string(), theme))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(SEARCH_PLACEHOLDER),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(SharedString::from(form.attachment_line())),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(button_chip(ATTACHMENTS_ADD_TITLE, false, theme))
-                        .child(chip(ATTACHMENTS_LOCAL, theme))
-                        .child(chip(ATTACHMENTS_NETDISK, theme)),
-                ),
-        );
+        .child(field_input(
+            &form.description,
+            DESCRIPTION_PLACEHOLDER,
+            theme,
+        ))
+        .child(chip(
+            form.assignee_chip_label(),
+            theme.muted_foreground,
+            theme,
+        ))
+        .child(chip(form.attachment_line(), theme.muted_foreground, theme));
     if form.shows_validation() {
         if let Some(err) = form.validation_error() {
             col = col.child(div().text_xs().text_color(theme.danger).child(err));
@@ -593,34 +422,24 @@ fn render_form(form: &TodoForm, primary_label: &'static str, theme: &Theme) -> D
             .items_center()
             .justify_between()
             .child(button_chip(CANCEL, false, theme))
-            .child(button_chip(primary_label, true, theme)),
+            .child(button_chip(CREATE, true, theme)),
     )
 }
 
 /// 输入框样式节点（空值显示占位文案，弱化色）。
 fn field_input(value: &str, placeholder: &'static str, theme: &Theme) -> Div {
     let filled = !value.trim().is_empty();
-    div()
-        .px_2()
-        .py_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.border)
-        .text_sm()
-        .text_color(if filled {
-            theme.foreground
-        } else {
-            theme.muted_foreground
-        })
-        .child(if filled {
-            SharedString::from(value.trim())
-        } else {
-            SharedString::from(placeholder)
-        })
+    let text = if filled { value.trim() } else { placeholder };
+    let color = if filled {
+        theme.foreground
+    } else {
+        theme.muted_foreground
+    };
+    chip(text, color, theme).text_sm()
 }
 
-/// 弱化小标签。
-fn chip(label: impl Into<SharedString>, theme: &Theme) -> Div {
+/// 小标签（边框 chip，文字色由调用方给）。
+fn chip(label: impl Into<SharedString>, color: Hsla, theme: &Theme) -> Div {
     let text: SharedString = label.into();
     div()
         .px_2()
@@ -629,21 +448,8 @@ fn chip(label: impl Into<SharedString>, theme: &Theme) -> Div {
         .border_1()
         .border_color(theme.border)
         .text_xs()
-        .text_color(theme.muted_foreground)
+        .text_color(color)
         .child(text)
-}
-
-/// 强调色小标签（AI 徽标等）。
-fn chip_accent(label: &'static str, theme: &Theme) -> Div {
-    div()
-        .px_2()
-        .py_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.border)
-        .text_xs()
-        .text_color(theme.accent)
-        .child(label)
 }
 
 /// 按钮（静态复刻，无交互）。
@@ -653,19 +459,12 @@ fn button_chip(label: &'static str, primary: bool, theme: &Theme) -> Div {
     } else {
         (theme.button_secondary, theme.button_secondary_foreground)
     };
-    div()
-        .px_3()
-        .py_1()
-        .rounded_sm()
-        .text_sm()
-        .bg(bg)
-        .text_color(fg)
-        .child(label)
+    chip(label, fg, theme).bg(bg).text_sm()
 }
 
-/// 区块标题行（可选尾注）。
-fn section_header(title: &'static str, trailing: Option<SharedString>, theme: &Theme) -> Div {
-    let mut row = div()
+/// 区块标题行（标题 + 尾注）。
+fn section_header(title: &'static str, trailing: SharedString, theme: &Theme) -> Div {
+    div()
         .flex()
         .items_center()
         .gap_2()
@@ -675,20 +474,17 @@ fn section_header(title: &'static str, trailing: Option<SharedString>, theme: &T
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(title),
-        );
-    if let Some(text) = trailing {
-        row = row.child(
+        )
+        .child(
             div()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(text),
-        );
-    }
-    row
+                .child(trailing),
+        )
 }
 
 /// 带内边距的弱化说明行。
-fn padded_muted_line(text: impl Into<SharedString>, theme: &Theme) -> Div {
+fn muted_line(text: impl Into<SharedString>, theme: &Theme) -> Div {
     let text: SharedString = text.into();
     div()
         .px_2()
@@ -698,33 +494,9 @@ fn padded_muted_line(text: impl Into<SharedString>, theme: &Theme) -> Div {
         .child(text)
 }
 
-/// 居中弱化单行（状态提示）。
-fn centered_muted(text: impl Into<SharedString>, theme: &Theme) -> Div {
+/// 居中状态行（结果三色 / 弱化）。
+fn centered_line(text: impl Into<SharedString>, color: Hsla) -> Div {
     let text: SharedString = text.into();
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_sm()
-        .text_color(theme.muted_foreground)
-        .child(text)
-}
-
-/// 结果状态色。
-enum StatusColor {
-    Good,
-    Warn,
-    Bad,
-}
-
-/// 居中结果行（成功/部分失败/失败三色）。
-fn centered_status(text: SharedString, kind: StatusColor, theme: &Theme) -> Div {
-    let color = match kind {
-        StatusColor::Good => theme.success,
-        StatusColor::Warn => theme.warning,
-        StatusColor::Bad => theme.danger,
-    };
     div()
         .flex_1()
         .flex()
@@ -740,83 +512,186 @@ mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        attachment_count_line, fill, resolve, search_members, search_notice, State, FailReason,
-        HandoffScene, SummaryPhase, TodoForm, ATTACHMENTS_PARTIAL_FAILED, ATTACHMENTS_UPLOADED,
-        CREATE, HANDOFF_FAILED, HANDOFF_FAILED_PROJECT_ARCHIVED, HANDOFF_FAILED_TASK_ARCHIVED,
-        HANDOFF_SUCCESS, NOT_DELIVERED, NS_KEY_COUNT, NS_PREFIX, SECTION_ARTIFACT_COUNT, SUBMIT,
-        SUBMITTING, TITLE,
+        fallback_summary, fill, main_area, render_body, resolve, Artifact, FailReason,
+        HandoffScene, State, SummaryPhase, TodoForm, AI_BADGE, ATTACHMENTS_PARTIAL_FAILED,
+        ATTACHMENTS_SELECTED, ATTACHMENT_ALREADY_ADDED, ATTACHMENT_COUNT, ATTACHMENT_LINE_HEADER,
+        CREATE, DESCRIPTION_PLACEHOLDER, FALLBACK_ARTIFACT_NAME, FALLBACK_TASK_NAME,
+        FALLBACK_UNKNOWN_MEMBER, HANDOFF_FAILED, HANDOFF_FAILED_PROJECT_ARCHIVED,
+        HANDOFF_FAILED_TASK_ARCHIVED, HANDOFF_SUCCESS, NEED_ASSIGNEE, NOT_DELIVERED, NO_ARTIFACTS,
+        NS_KEY_COUNT, NS_PREFIX, PENDING_MESSAGE_QUEUED, PROGRESS_FALLBACK_INTERACTION,
+        SECTION_SUMMARY_GENERATING, SECTION_TASK_SOURCE, SUBMIT, SUBMITTING, SUMMARY_EMPTY,
+        SUMMARY_LOADING, TITLE, TITLE_EMPTY, TITLE_PLACEHOLDER, UNASSIGNED_CHIP,
     };
+    use gpui_kit::component::Theme;
 
-    #[test]
-    fn title_is_verbatim() {
-        assert_eq!(TITLE, "任务交接");
+    fn artifact(name: &str, ai_generated: bool) -> Artifact {
+        Artifact {
+            name: name.into(),
+            ai_generated,
+        }
+    }
+
+    fn accepted(failed: usize) -> State {
+        State::Accepted {
+            failed_attachments: failed,
+        }
     }
 
     #[test]
-    fn fail_closed_default() {
-        assert_eq!(State::default(), State::NotDelivered);
+    fn state_notices_and_primary_actions() {
         assert_eq!(resolve(None), State::NotDelivered);
-        assert_eq!(State::default().notice().as_deref(), Some(NOT_DELIVERED));
-    }
-
-    #[test]
-    fn state_notices_and_actions() {
         assert_eq!(resolve(Some(false)), State::LoadFailed);
         assert!(matches!(resolve(Some(true)), State::Composing(_)));
-        assert_eq!(State::Submitting.notice().as_deref(), Some(SUBMITTING));
-        let ok = State::Accepted {
-            uploaded_attachments: 3,
-            failed_attachments: 0,
-        };
-        assert_eq!(ok.notice().as_deref(), Some(HANDOFF_SUCCESS));
-        let partial = State::Accepted {
-            uploaded_attachments: 1,
-            failed_attachments: 2,
-        };
+        let cases = [
+            (State::default(), NOT_DELIVERED),
+            (State::Submitting, SUBMITTING),
+            (accepted(0), HANDOFF_SUCCESS),
+            (State::Failed(FailReason::Retry), HANDOFF_FAILED),
+            (
+                State::Failed(FailReason::ProjectArchived),
+                HANDOFF_FAILED_PROJECT_ARCHIVED,
+            ),
+            (
+                State::Failed(FailReason::TaskArchived),
+                HANDOFF_FAILED_TASK_ARCHIVED,
+            ),
+        ];
+        for (state, expect) in &cases {
+            assert_eq!(state.notice().as_deref(), Some(*expect));
+        }
         assert_eq!(
-            partial.notice().as_deref(),
+            accepted(2).notice().as_deref(),
             Some("任务已转交，但 2 个附件上传或绑定失败，可在计划详情中重新添加")
-        );
-        assert_eq!(
-            State::Failed(FailReason::Retry).notice().as_deref(),
-            Some(HANDOFF_FAILED)
-        );
-        assert_eq!(
-            State::Failed(FailReason::ProjectArchived).notice().as_deref(),
-            Some(HANDOFF_FAILED_PROJECT_ARCHIVED)
-        );
-        assert_eq!(
-            State::Failed(FailReason::TaskArchived).notice().as_deref(),
-            Some(HANDOFF_FAILED_TASK_ARCHIVED)
         );
         assert_eq!(
             State::Composing(HandoffScene::default()).primary_action(),
             CREATE
         );
-        assert_eq!(ok.primary_action(), SUBMIT);
-        assert_eq!(attachment_count_line(2), "2 个附件");
-        assert_eq!(fill(SECTION_ARTIFACT_COUNT, &[("count", "3")]), "共 3 项");
-        assert_eq!(
-            fill(ATTACHMENTS_UPLOADED, &[("count", "5")]),
-            "已上传 5 个附件"
-        );
+        assert_eq!(State::Submitting.primary_action(), SUBMITTING);
+        assert_eq!(accepted(0).primary_action(), SUBMIT);
+        assert_eq!(fill(ATTACHMENT_COUNT, &[("count", "2")]), "2 个附件");
         assert_eq!(
             ATTACHMENTS_PARTIAL_FAILED,
             "任务已转交，但 {count} 个附件上传或绑定失败，可在计划详情中重新添加"
         );
-        let _ = SummaryPhase::default();
-        let _ = TodoForm::default();
-        let _ = search_members("", &[]);
-        let _ = search_notice(&[]);
+        // 命名空间事实（经函数边界比较，绕开 clippy::assertions_on_constants）。
+        let prefix = NS_PREFIX.to_string();
+        let count = NS_KEY_COUNT;
+        assert!(prefix.chars().next().is_some_and(char::is_alphabetic));
+        assert!((40..10_000).contains(&count));
     }
 
     #[test]
-    fn ns_prefix_declared() {
-        // 用运行时比较绕开 clippy::assertions_on_constants（两侧都经函数边界）。
-        let prefix = NS_PREFIX.to_string();
-        let count = NS_KEY_COUNT;
-        assert!(!prefix.is_empty());
-        assert!(prefix.chars().next().is_some_and(char::is_alphabetic));
-        assert!(count >= 40 && count < 10_000);
+    fn empty_inputs_yield_empty_states_not_lists() {
+        let scene = HandoffScene::default();
+        assert!(scene.artifacts.is_empty());
+        assert_eq!(scene.artifact_count_line(), "共 0 项");
+        assert_eq!(ATTACHMENT_LINE_HEADER, "附件：");
+        assert_eq!(ATTACHMENTS_SELECTED, "已选择 {count} 个附件");
+        assert_eq!(scene.todo.attachment_line(), "附件：已选择 0 个附件");
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_namespace() {
+        let verbatim: &[(&str, &str)] = &[
+            (TITLE, "任务交接"),
+            (AI_BADGE, "AI生成"),
+            (FALLBACK_TASK_NAME, "当前任务"),
+            (FALLBACK_UNKNOWN_MEMBER, "未知成员"),
+            (FALLBACK_ARTIFACT_NAME, "未命名"),
+            (NO_ARTIFACTS, "暂无产物"),
+            (TITLE_PLACEHOLDER, "请输入标题"),
+            (DESCRIPTION_PLACEHOLDER, "添加描述（可选）"),
+            (ATTACHMENT_ALREADY_ADDED, "选择的附件已添加"),
+            (HANDOFF_SUCCESS, "任务正在转交中，稍后可在计划看板中查看"),
+            (
+                PENDING_MESSAGE_QUEUED,
+                "任务转交中，新消息将在转交完成后依次处理",
+            ),
+            (SECTION_TASK_SOURCE, "来自「{title}」"),
+            (SUMMARY_EMPTY, "任务进展摘要为空，请稍后重试"),
+            (SUMMARY_LOADING, "任务进展摘要生成中，请稍后再转交"),
+        ];
+        for (key, expect) in verbatim {
+            assert_eq!(*key, *expect);
+        }
+        assert_eq!(
+            PROGRESS_FALLBACK_INTERACTION,
+            "。对话共 {count} 轮交互，任务整体进展顺利，可接续后续环节。"
+        );
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_body_covers_all_state_branches() {
+        let theme = Theme::default();
+        let filled = HandoffScene {
+            source_task: "官网改版".into(),
+            artifacts: vec![artifact("首页视觉.png", true), artifact("  ", false)],
+            ..HandoffScene::default()
+        };
+        let branches = [
+            State::NotDelivered,
+            State::LoadFailed,
+            State::Composing(HandoffScene::default()),
+            State::Composing(filled),
+            State::Submitting,
+            accepted(0),
+            accepted(1),
+            State::Failed(FailReason::Retry),
+            State::Failed(FailReason::ProjectArchived),
+            State::Failed(FailReason::TaskArchived),
+        ];
+        for state in &branches {
+            let _ = render_body(state, &theme);
+        }
+    }
+
+    #[test]
+    fn form_validation_and_scene_fallbacks() {
+        let mut todo = TodoForm::default();
+        assert_eq!(todo.assignee_chip_label(), UNASSIGNED_CHIP);
+        assert_eq!(todo.validation_error(), Some(TITLE_EMPTY));
+        assert!(!todo.shows_validation());
+        todo.title = "对接客户".into();
+        assert_eq!(todo.validation_error(), Some(NEED_ASSIGNEE));
+        assert!(todo.shows_validation());
+        todo.assignee = Some("  ".into());
+        assert_eq!(todo.assignee_chip_label(), FALLBACK_UNKNOWN_MEMBER);
+        todo.assignee = Some("李雷".into());
+        assert_eq!(todo.validation_error(), None);
+        assert_eq!(todo.assignee_chip_label(), "李雷");
+        todo.attachments = vec!["brief.pdf".into()];
+        assert_eq!(todo.selected_attachments_line(), "已选择 1 个附件");
+
+        let mut scene = HandoffScene {
+            todo,
+            ..HandoffScene::default()
+        };
+        assert_eq!(scene.task_name(), FALLBACK_TASK_NAME);
+        assert_eq!(scene.task_source_line(), "来自「当前任务」");
+        assert_eq!(scene.summary_line(), SECTION_SUMMARY_GENERATING);
+        assert!(scene.can_submit());
+        scene.summary = SummaryPhase::Loading;
+        assert_eq!(scene.summary_line(), SUMMARY_LOADING);
+        assert!(!scene.can_submit());
+        scene.summary = SummaryPhase::Empty;
+        assert_eq!(scene.summary_line(), SUMMARY_EMPTY);
+        scene.source_task = "官网改版".into();
+        assert_eq!(scene.task_source_line(), "来自「官网改版」");
+    }
+
+    #[test]
+    fn fallback_summary_composes_verbatim_parts() {
+        let line = fallback_summary("官网改版", 3, &["李雷", "韩梅梅"], 12);
+        assert_eq!(
+            line,
+            "该任务「官网改版」已产出 3 个文件产物（李雷、韩梅梅）。对话共 12 轮交互，任务整体进展顺利，可接续后续环节。"
+        );
     }
 }
