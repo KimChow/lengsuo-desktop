@@ -201,10 +201,17 @@ pub fn total_count_line(count: usize) -> String {
     TOTAL_COUNT_TEMPLATE.replace("{count}", &count.to_string())
 }
 
+// ==================== GPUI 层 ====================
+
+/// 绑定列最小宽度（px）：键位组合列对齐；无数据时保留空槽位。
+const BINDING_MIN_WIDTH: f32 = 96.0;
+
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+/// 数据驱动：默认空查询 ⇒ 全量目录；键位绑定未下发 ⇒ 计数行下如实提示「未下发」。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    let outcome = search(CATALOG, "");
+    let sheet = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
@@ -220,6 +227,62 @@ pub fn main_area(theme: &Theme) -> Div {
                 .child(TITLE),
         )
         .child(
+            div().px_4().py_2().flex().child(
+                div()
+                    .flex_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.muted)
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(SEARCH_PLACEHOLDER),
+            ),
+        )
+        .child(
+            div()
+                .px_4()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(total_count_line(outcome.total)),
+        )
+        .child(render_banner_area(theme));
+    sheet.child(render_list(theme, &outcome))
+}
+
+/// 提示区（数据驱动分支）：绑定未下发 ⇒ 「未下发」一行；检测到冲突 ⇒ 逐行冲突提示。
+fn render_banner_area(theme: &Theme) -> Div {
+    let mut area = div().flex().flex_col();
+    if binding_state(CATALOG) == BindingState::NotDelivered {
+        area = area.child(
+            div()
+                .px_4()
+                .py_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(NOT_DELIVERED),
+        );
+    }
+    for line in detect_conflicts(CATALOG) {
+        area = area.child(
+            div()
+                .px_4()
+                .py_1()
+                .text_xs()
+                .text_color(theme.accent)
+                .child(line),
+        );
+    }
+    area
+}
+
+/// 清单区：空态（noResults）或「命令/按键绑定」列头 + 分组标题 + 清单行。
+fn render_list(theme: &Theme, outcome: &SearchOutcome<'_>) -> Div {
+    let mut list = div().flex_1().flex().flex_col();
+    if outcome.no_match {
+        return list.child(
             div()
                 .flex_1()
                 .flex()
@@ -227,7 +290,64 @@ pub fn main_area(theme: &Theme) -> Div {
                 .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(NO_RESULTS),
+        );
+    }
+    list = list.child(
+        div()
+            .px_4()
+            .py_1()
+            .flex()
+            .gap_3()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(div().flex_1().child(COLUMN_COMMAND))
+            .child(div().min_w(px(BINDING_MIN_WIDTH)).child(COLUMN_BINDING)),
+    );
+    for (title, entries) in &outcome.groups {
+        list = list.child(
+            div()
+                .px_4()
+                .py_1()
+                .text_xs()
+                .font_medium()
+                .text_color(theme.muted_foreground)
+                .child(*title),
+        );
+        for e in entries {
+            list = list.child(render_row(theme, e));
+        }
+    }
+    list
+}
+
+/// 清单行：动作名（命令列）+ 键位组合槽（未下发 ⇒ 空槽，⛔ 不伪造键位）。
+fn render_row(theme: &Theme, e: &ShortcutEntry) -> Div {
+    div()
+        .px_4()
+        .py_1()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(e.action),
+        )
+        .child(
+            div()
+                .min_w(px(BINDING_MIN_WIDTH))
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.muted)
+                .text_xs()
+                .text_color(theme.foreground)
+                .child(e.combo.unwrap_or("")),
         )
 }
 #[cfg(test)]
