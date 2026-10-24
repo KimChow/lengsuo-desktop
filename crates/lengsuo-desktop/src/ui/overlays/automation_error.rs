@@ -4,6 +4,10 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `automation.error`。
 //! 全表计 56 键（docs/ui-parity-spec.md 计数行）；本卡随任务书逐字摘录 12 键，
 //! 其余键未随卡下发 ⇒ 不收录（⛔ 禁止自编，待全表下发后补齐）。
+#![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 视图标题（逐字；沿用波次 9 脚手架占位值，出处文案全表）。
 pub const TITLE: &str = "自动化·错误";
@@ -110,4 +114,77 @@ impl AutomationErrorState {
             _ => None,
         }
     }
+}
+
+// ── GPUI 层（颜色一律 theme token，⛔ 不硬编码色值） ──────────────────
+
+/// 浮层渲染（波次 9：浮层不占主区，返回整层容器由调用方叠加）。
+/// 数据源在运行时侧：`main_area` 以默认态（加载中）渲染，等跨线契约就绪后换源。
+#[must_use]
+pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &AutomationErrorState::default())
+}
+
+/// 按视图态渲染整层：标题行 + 状态分支主体（加载/失败/空态/正常）。
+#[must_use]
+pub fn render(theme: &Theme, state: &AutomationErrorState) -> Div {
+    let body = match state {
+        AutomationErrorState::Loading => centered_line(theme, TEXT_LOADING),
+        AutomationErrorState::LoadFailed => centered_line(theme, NOT_DELIVERED),
+        AutomationErrorState::Empty => centered_line(theme, TEXT_EMPTY),
+        AutomationErrorState::Ready { .. } => error_body(theme, state),
+    };
+    div()
+        .flex_1()
+        .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
+        .h_full()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px_4()
+                .py_2()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(TITLE),
+        )
+        .child(body)
+}
+
+/// 居中单行（加载 / 失败 fail-closed / 空态共用）。
+fn centered_line(theme: &Theme, text: &str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text.to_string())
+}
+
+/// 正常态主体：错误文案（逐字）+ 原始错误码 chip（服务端数据，如实展示）。
+fn error_body(theme: &Theme, state: &AutomationErrorState) -> Div {
+    let message = state.message().unwrap_or(NOT_DELIVERED);
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .px_4()
+        .py_3()
+        .child(div().text_sm().text_color(theme.foreground).child(message))
+        .child(
+            div()
+                .self_start()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(state.code().unwrap_or_default().to_string()),
+        )
 }
