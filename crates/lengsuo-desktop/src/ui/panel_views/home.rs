@@ -267,7 +267,13 @@ fn footer_disclaimer(theme: &Theme) -> Div {
 #[cfg(test)]
 mod tests {
     // ⛔ 不用 `use super::*`：父模块 `use gpui_kit::*` 的 `test` 属性宏会遮蔽 `#[test]`。
-    use super::{main_area, Scene, SCENES, SUBTITLE, SUBTITLE_CODING, SUBTITLE_DESIGN, TITLE};
+    use super::{
+        badge_intent, main_area, main_area_with_intents, HomeIntent, Scene, AI_DISCLAIMER,
+        NOT_DELIVERED, PRACTICE_CASES_HEADING, PRACTICE_CASES_MORE, SCENES, SUBTITLE,
+        SUBTITLE_CODING, SUBTITLE_DESIGN, TITLE,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn title_verbatim() {
@@ -285,6 +291,14 @@ mod tests {
     }
 
     #[test]
+    fn practice_copy_verbatim() {
+        assert_eq!(PRACTICE_CASES_HEADING, "不知道做什么，试试最佳实践案例");
+        assert_eq!(PRACTICE_CASES_MORE, "更多");
+        assert_eq!(AI_DISCLAIMER, "内容由 AI 生成，请核实重要信息");
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    #[test]
     fn badge_order_and_labels() {
         assert_eq!(SCENES.len(), 3);
         let labels: Vec<&str> = SCENES.iter().map(|s| s.badge_label()).collect();
@@ -292,10 +306,36 @@ mod tests {
     }
 
     #[test]
+    fn badge_intent_reports_selection_only() {
+        assert_eq!(
+            badge_intent(Scene::Design),
+            HomeIntent::SelectScene(Scene::Design)
+        );
+        assert_eq!(
+            badge_intent(Scene::Working),
+            HomeIntent::SelectScene(Scene::Working)
+        );
+    }
+
+    #[test]
     fn not_delivered_is_fail_closed() {
-        // None ⇒ 仍渲染标题/徽章（不空白）；构建不 panic 即可。
+        // None ⇒ 仍渲染标题/徽章（不空白），推荐区如实「未下发」；构建不 panic 即可。
         let theme = gpui_kit::component::Theme::default();
         let _ = main_area(&theme, Scene::Working, None);
         let _ = main_area(&theme, Scene::Design, None);
+    }
+
+    #[test]
+    fn delivered_branch_builds_with_intent_sink() {
+        let theme = gpui_kit::component::Theme::default();
+        let reported = Rc::new(RefCell::new(Vec::new()));
+        let sink = {
+            let reported = reported.clone();
+            Rc::new(move |intent: HomeIntent| reported.borrow_mut().push(intent))
+        };
+        let items = [SUBTITLE, SUBTITLE_CODING, SUBTITLE_DESIGN];
+        let _ = main_area_with_intents(&theme, Scene::Coding, Some(&items), sink);
+        // 构建是纯函数：只搭树，不上报（点击才经 sink 上报）。
+        assert!(reported.borrow().is_empty());
     }
 }
