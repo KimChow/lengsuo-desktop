@@ -407,3 +407,179 @@ pub fn remove_confirm_card(theme: &Theme, name: &str) -> AnyElement {
         )
         .into_any_element()
 }
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 test
+    // 属性宏带进来遮蔽 `#[test]`。显式列符号。
+    use super::{
+        body_label, display_name, main_area, member_count, members_panel, popover_title,
+        remove_confirm_card, remove_confirm_content, CollabMember, InviteError, InviteState,
+        JoinMode, Role, State, EMPTY, LOADING, LOAD_FAILED, NS_KEY_COUNT, TEXTS, TITLE,
+    };
+
+    #[test]
+    fn texts_verbatim_all() {
+        // 全表 29 键逐字锁定（任务书摘录 12 条 + 其余键，均与文案全表一致）。
+        let expected: &[(&str, &str)] = &[
+            ("collab.members.actions.cancel", "取消"),
+            ("collab.members.actions.remove", "移除成员"),
+            (
+                "collab.members.actions.removeConfirmContent",
+                "确定将「{name}」从协作中移除吗？移除后对方将无法继续参与协作。",
+            ),
+            ("collab.members.actions.removeConfirmTitle", "移除成员"),
+            ("collab.members.invite.copied", "已复制邀请链接"),
+            ("collab.members.invite.copying", "正在生成邀请链接..."),
+            ("collab.members.invite.copyLink", "复制链接"),
+            (
+                "collab.members.invite.errors.copyFailed",
+                "邀请链接已生成，但复制失败，请手动重试",
+            ),
+            ("collab.members.invite.errors.createFailed", "创建邀请链接失败"),
+            (
+                "collab.members.invite.errors.missingProject",
+                "项目信息缺失，暂时无法创建邀请链接",
+            ),
+            (
+                "collab.members.invite.errors.notSupported",
+                "当前环境暂未接入邀请链接能力",
+            ),
+            ("collab.members.invite.joinRoleLabel", "申请加入后的角色"),
+            (
+                "collab.members.invite.note",
+                "非项目成员需申请加入后方可进入协作",
+            ),
+            (
+                "collab.members.invite.warning",
+                "被邀请人加入后，将可使用项目配置的 Skill / 专家，其中可能包含其无权限使用的资源。请确认后再邀请。",
+            ),
+            ("collab.members.joinMode.applyThenJoin", "申请后加入"),
+            ("collab.members.joinMode.directJoin", "直接加入"),
+            ("collab.members.joinMode.label", "获得链接的人"),
+            ("collab.members.joinMode.updateFailed", "加入方式更新失败"),
+            ("collab.members.ownerTag", "所有者"),
+            ("collab.members.popover.title", "项目团队成员 · {count}"),
+            (
+                "collab.members.popover.tooltip",
+                "请勿未经允许分享个人信息或第三方内容，详情请查阅我们的服务条款。",
+            ),
+            ("collab.members.popover.tooltipAria", "使用说明"),
+            ("collab.members.popover.unknownMember", "未知"),
+            ("collab.members.role.admin", "所有者"),
+            ("collab.members.role.editor", "管理员"),
+            ("collab.members.role.viewer", "成员"),
+            ("collab.members.toast.removed", "已移除成员"),
+            ("collab.members.toast.removeFailed", "移除成员失败"),
+            ("collab.members.toast.roleChangeFailed", "修改角色失败"),
+        ];
+        assert_eq!(expected.len(), NS_KEY_COUNT);
+        assert_eq!(TEXTS, expected, "文案表与逐字基准漂移");
+    }
+
+    #[test]
+    fn texts_complete_unique_prefixed() {
+        let mut seen = std::collections::HashSet::new();
+        for (key, value) in TEXTS {
+            assert!(key.starts_with("collab.members."), "越界键: {key}");
+            assert!(!value.is_empty(), "空文案: {key}");
+            assert!(seen.insert(*key), "重复键: {key}");
+        }
+    }
+
+    #[test]
+    fn default_is_loading_not_empty() {
+        // 未拉取过 ≠ 空集：默认态必须 Loading（fail-closed 契约）。
+        assert_eq!(State::default(), State::Loading);
+        assert_eq!(body_label(&State::default()), Some(LOADING));
+        assert_ne!(body_label(&State::default()), Some(EMPTY));
+        assert_eq!(TITLE, "协作·成员");
+    }
+
+    #[test]
+    fn body_label_branches() {
+        assert_eq!(body_label(&State::Loading), Some(LOADING));
+        assert_eq!(body_label(&State::Failed), Some(LOAD_FAILED));
+        assert_eq!(body_label(&State::Empty), Some(EMPTY));
+        assert_eq!(body_label(&State::Ready(vec![])), None);
+        // fail-closed：失败 ≠ 空态，二者文案不得混同。
+        assert_ne!(body_label(&State::Failed), body_label(&State::Empty));
+    }
+
+    #[test]
+    fn popover_title_fill() {
+        assert_eq!(popover_title(&State::default()), "项目团队成员 · 0");
+        let two = State::Ready(vec![
+            member("张三", Role::Admin),
+            member("李四", Role::Viewer),
+        ]);
+        assert_eq!(member_count(&two), 2);
+        assert_eq!(popover_title(&two), "项目团队成员 · 2");
+    }
+
+    #[test]
+    fn remove_confirm_fill() {
+        assert_eq!(
+            remove_confirm_content("李四"),
+            "确定将「李四」从协作中移除吗？移除后对方将无法继续参与协作。"
+        );
+    }
+
+    #[test]
+    fn invite_flow_labels() {
+        assert_eq!(InviteState::Idle.label(), "复制链接");
+        assert_eq!(InviteState::Copying.label(), "正在生成邀请链接...");
+        assert_eq!(InviteState::Copied.label(), "已复制邀请链接");
+        assert_eq!(
+            InviteState::Failed(InviteError::CreateFailed).label(),
+            "创建邀请链接失败"
+        );
+        assert_eq!(
+            InviteState::Failed(InviteError::MissingProject).label(),
+            "项目信息缺失，暂时无法创建邀请链接"
+        );
+        assert_eq!(
+            InviteState::Failed(InviteError::NotSupported).label(),
+            "当前环境暂未接入邀请链接能力"
+        );
+        assert_eq!(
+            InviteState::Failed(InviteError::CopyFailed).label(),
+            "邀请链接已生成，但复制失败，请手动重试"
+        );
+    }
+
+    #[test]
+    fn role_joinmode_labels_and_unknown_member() {
+        assert_eq!(Role::Admin.label(), "所有者");
+        assert_eq!(Role::Editor.label(), "管理员");
+        assert_eq!(Role::Viewer.label(), "成员");
+        assert_eq!(JoinMode::ApplyThenJoin.label(), "申请后加入");
+        assert_eq!(JoinMode::DirectJoin.label(), "直接加入");
+        assert_eq!(display_name(&member("", Role::Editor)), "未知");
+        assert_eq!(display_name(&member("王五", Role::Viewer)), "王五");
+    }
+
+    #[test]
+    fn render_smoke_all_branches_no_panic() {
+        // 只构造元素树（不 draw）：四态 × 邀请流 + 确认卡，全部不得 panic。
+        let theme = gpui_kit::component::Theme::default();
+        let _ = main_area(&theme);
+        let _ = members_panel(&theme, &State::Loading, &InviteState::Idle);
+        let _ = members_panel(
+            &theme,
+            &State::Failed,
+            &InviteState::Failed(InviteError::CreateFailed),
+        );
+        let _ = members_panel(&theme, &State::Empty, &InviteState::Copied);
+        let ready = State::Ready(vec![member("张三", Role::Admin), member("", Role::Viewer)]);
+        let _ = members_panel(&theme, &ready, &InviteState::Copying);
+        let _ = remove_confirm_card(&theme, "李四");
+    }
+
+    fn member(name: &str, role: Role) -> CollabMember {
+        CollabMember {
+            name: name.into(),
+            role,
+        }
+    }
+}
