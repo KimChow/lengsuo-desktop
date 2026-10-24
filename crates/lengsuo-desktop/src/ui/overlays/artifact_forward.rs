@@ -4,6 +4,7 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `artifactForward`。
 //! 数据源在运行时侧：无源时如实显示「未下发」，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 /// 视图标题（逐字取自 `artifactForward.title`）。
@@ -176,18 +177,120 @@ impl State {
         }
     }
 }
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；本卡负责补全真实视图）。
+/// 主区渲染（无数据源时的 fail-closed 默认态：标题 + 「未下发」）。
 pub fn main_area(theme: &Theme) -> Div {
+    render_overlay(theme, &State::default())
+}
+
+/// 按纯数据层状态渲染整层：标题行 + 状态卡（消息行 + 计数行）+ 空态/未下发分支。
+fn render_overlay(theme: &Theme, state: &State) -> Div {
     div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .flex_col()
+        .child(header_row(theme))
+        .child(body(theme, state))
+}
+
+/// 标题行：视图标题。
+fn header_row(theme: &Theme) -> Div {
+    div().flex().items_center().px_4().py_2().child(
+        div()
+            .text_sm()
+            .font_bold()
+            .text_color(theme.foreground)
+            .child(TITLE),
+    )
+}
+
+/// 内容区分支：未下发（fail-closed）/ 空态（不渲染清单）/ 状态卡。
+fn body(theme: &Theme, state: &State) -> Div {
+    match state {
+        State::NotDelivered => centered_note(theme, NOT_DELIVERED),
+        State::Empty => div().flex_1(),
+        _ => status_card(theme, state),
+    }
+}
+
+/// 居中说明（未下发）。
+fn centered_note(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 状态卡：状态点 + 主文案行 +（结果态）目标计数行。
+fn status_card(theme: &Theme, state: &State) -> Div {
+    let mut card = div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
+        .px_4()
+        .pb_4()
+        .child(status_row(theme, state.message(), state.tone()));
+    if let Some((success_count, failed_count)) = state.target_counts() {
+        card = card.child(counts_row(theme, success_count, failed_count));
+    }
+    card
+}
+
+/// 状态点 + 主文案行（主文案 = 逐字模板填充计数）。
+fn status_row(theme: &Theme, message: String, tone: Tone) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(status_dot(theme, tone))
         .child(
             div()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(SharedString::from(message)),
         )
+}
+
+/// 状态点（颜色按语义取主题 token，⛔ 不硬编码色值）。
+fn status_dot(theme: &Theme, tone: Tone) -> Div {
+    let color = match tone {
+        Tone::Muted => theme.muted_foreground,
+        Tone::Ok => theme.accent,
+        Tone::Danger => theme.danger,
+    };
+    div().w_2().h_2().rounded_full().bg(color)
+}
+
+/// 目标计数行：成功 / 失败两枚计数 chip（纯数值，语义色取主题 token）。
+fn counts_row(theme: &Theme, success_count: usize, failed_count: usize) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(count_chip(theme, success_count, Tone::Ok))
+        .child(count_chip(theme, failed_count, Tone::Danger))
+}
+
+/// 单枚计数 chip（纯数值；⛔ 不伪造条目名/数值，数值全部来自纯数据层计数）。
+fn count_chip(theme: &Theme, value: usize, tone: Tone) -> Div {
+    let color = match tone {
+        Tone::Muted => theme.muted_foreground,
+        Tone::Ok => theme.accent,
+        Tone::Danger => theme.danger,
+    };
+    div()
+        .px_2()
+        .py_1()
+        .border_1()
+        .border_color(color)
+        .rounded_sm()
+        .text_xs()
+        .text_color(color)
+        .child(SharedString::from(value.to_string()))
 }
 #[cfg(test)]
 mod tests {
