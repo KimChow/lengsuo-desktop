@@ -308,3 +308,207 @@ pub fn main_area(theme: &Theme) -> AnyElement {
         .child(render_catalog(theme))
         .into_any_element()
 }
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
+    use super::{
+        action_feedback, audit_config_copy, format_copy, main_area, render_catalog, render_state,
+        resolve, AuditConfigSummary, CopyParams, Feed, ViewState, EMPTY_TEXT, NOT_DELIVERED,
+        NS_KEY_COUNT, NS_PREFIX, NS_QUOTED_COUNT, PANEL_TITLE, TEXTS,
+    };
+    use gpui_kit::component::Theme;
+
+    /// 任务书逐字摘录（与本表逐字节相等）。
+    const QUOTED: &[(&str, &str)] = &[
+        (
+            "securityCenter.audit.config.allowedDomainsUpdated",
+            "网络访问允许域名已更新",
+        ),
+        (
+            "securityCenter.audit.config.auditExported",
+            "审计日志已导出",
+        ),
+        (
+            "securityCenter.audit.config.auditRetentionPruned",
+            "审计日志清理完成：删除 {count} 个历史分片",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAllow.cleared",
+            "{listLabel}已清空",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAllow.reset",
+            "{listLabel}已重置为默认",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAllow.updatedNoCount",
+            "{listLabel}已更新",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAllow.updatedWithCount",
+            "{listLabel}已更新：{count} 条规则",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAsk.cleared",
+            "{listLabel}已清空",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAsk.reset",
+            "{listLabel}已重置为默认",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAsk.updatedNoCount",
+            "{listLabel}已更新",
+        ),
+        (
+            "securityCenter.audit.config.commandSafetyAsk.updatedWithCount",
+            "{listLabel}已更新：{count} 条规则",
+        ),
+        (
+            "securityCenter.audit.config.deniedDomainsUpdated",
+            "网络访问禁止域名已更新",
+        ),
+    ];
+
+    #[test]
+    fn texts_match_taskbook_verbatim() {
+        assert_eq!(TEXTS, QUOTED);
+        assert_eq!(TEXTS.len(), NS_QUOTED_COUNT);
+        assert!(TEXTS.iter().all(|(k, _)| k.starts_with(NS_PREFIX)));
+        // 键唯一且模板非空。
+        let mut keys: Vec<_> = TEXTS.iter().map(|(k, _)| *k).collect();
+        keys.sort_unstable();
+        let total = keys.len();
+        keys.dedup();
+        assert_eq!(keys.len(), total);
+        assert!(TEXTS.iter().all(|(_, t)| !t.is_empty()));
+    }
+
+    #[test]
+    fn copy_lookup_unknown_key_returns_none() {
+        assert_eq!(
+            audit_config_copy("securityCenter.audit.config.allowedDomainsUpdated"),
+            Some("网络访问允许域名已更新")
+        );
+        assert_eq!(
+            audit_config_copy("securityCenter.audit.config.noSuchKey"),
+            None
+        );
+        // 严格前缀：兄弟命名空间不命中本表。
+        assert_eq!(
+            audit_config_copy("securityCenter.audit.network.allowedDomainsUpdated"),
+            None
+        );
+    }
+
+    #[test]
+    fn fail_closed_default_is_loading_not_empty() {
+        // 未拉取过 ≠ 空集：默认加载中，绝不落到空态/正常。
+        assert_eq!(ViewState::default(), ViewState::Loading);
+        assert_eq!(Feed::default(), Feed::undelivered());
+        assert_ne!(ViewState::default(), ViewState::Empty);
+    }
+
+    #[test]
+    fn resolve_four_branches() {
+        assert_eq!(resolve(None), ViewState::Loading);
+        assert_eq!(
+            resolve(Some(Err("源不可用".into()))),
+            ViewState::Failed {
+                message: "源不可用".into()
+            }
+        );
+        assert_eq!(
+            resolve(Some(Ok(AuditConfigSummary::default()))),
+            ViewState::Empty
+        );
+        let summary = AuditConfigSummary {
+            allowed_domains: vec!["example.com".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve(Some(Ok(summary.clone()))),
+            ViewState::Active { summary }
+        );
+    }
+
+    #[test]
+    fn empty_state_is_visible_not_silent_list() {
+        let feed = Feed::delivered(AuditConfigSummary::default());
+        assert_eq!(feed.state, ViewState::Empty);
+        assert_ne!(feed.state, ViewState::Loading);
+        // 空态与失败各有可见文案且互不相同（空态不是沉默的零行列表）。
+        assert!(!EMPTY_TEXT.is_empty());
+        assert_ne!(EMPTY_TEXT, NOT_DELIVERED);
+    }
+
+    #[test]
+    fn action_feedback_fills_placeholders() {
+        assert_eq!(
+            action_feedback(
+                "securityCenter.audit.config.auditRetentionPruned",
+                CopyParams {
+                    count: Some(3),
+                    list_label: None
+                }
+            ),
+            Some("审计日志清理完成：删除 3 个历史分片".into())
+        );
+        assert_eq!(
+            action_feedback(
+                "securityCenter.audit.config.commandSafetyAllow.updatedWithCount",
+                CopyParams {
+                    count: Some(5),
+                    list_label: Some("允许清单")
+                }
+            ),
+            Some("允许清单已更新：5 条规则".into())
+        );
+        assert_eq!(
+            action_feedback(
+                "securityCenter.audit.config.commandSafetyAsk.cleared",
+                CopyParams {
+                    count: None,
+                    list_label: Some("询问清单")
+                }
+            ),
+            Some("询问清单已清空".into())
+        );
+        // 未提供的占位原样保留；未知键 None（不自编文案）。
+        assert_eq!(
+            format_copy("{count} {listLabel}", CopyParams::default()),
+            "{count} {listLabel}"
+        );
+        assert_eq!(action_feedback("no.such.key", CopyParams::default()), None);
+    }
+
+    #[test]
+    fn render_branches_build_without_panic() {
+        let theme = Theme::default();
+        // 生产入口（无数据源 ⇒ 加载中分支）。
+        let _ = main_area(&theme);
+        let _ = render_state(&theme, &Feed::undelivered());
+        let _ = render_state(&theme, &Feed::failed("源不可用"));
+        let _ = render_state(&theme, &Feed::delivered(AuditConfigSummary::default()));
+        let summary = AuditConfigSummary {
+            allowed_domains: vec!["example.com".into()],
+            denied_domains: vec!["evil.example".into()],
+            command_safety_allow: vec!["git status".into()],
+            command_safety_ask: vec!["rm -rf".into()],
+            retention_shards: 7,
+        };
+        let _ = render_state(&theme, &Feed::delivered(summary));
+        let _ = render_catalog(&theme);
+    }
+
+    #[test]
+    fn title_and_namespace_counts_verbatim() {
+        assert_eq!(PANEL_TITLE, "安全中心·审计配置");
+        assert_eq!(NOT_DELIVERED, "数据未接入（fail-closed）");
+        // 命名空间计数与 `docs/ui-parity-spec.md` 一致（47），本表为逐字摘录子集。
+        assert_eq!(NS_KEY_COUNT, 47);
+        assert_eq!(NS_QUOTED_COUNT, 12);
+    }
+}
