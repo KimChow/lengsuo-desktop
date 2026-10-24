@@ -140,7 +140,7 @@ impl FailureReason {
 }
 
 /// 复制链接反馈（copyLinkBtn 按下后的三态）。
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CopyFeedback {
     /// 未复制（无反馈行）。
     #[default]
@@ -360,20 +360,14 @@ fn render_content(content: &ShareContent, theme: &Theme) -> Div {
         // 空输入 ⇒ 空态，⛔ 不是空列表。
         return centered_line(NO_CONTENT, theme);
     }
-    let mut body = div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .py_2()
-        .child(
-            div()
-                .px_4()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(content.artifact_header()),
-        );
+    let mut body = div().flex_1().flex().flex_col().gap_2().py_2().child(
+        div()
+            .px_4()
+            .text_sm()
+            .font_bold()
+            .text_color(theme.foreground)
+            .child(content.artifact_header()),
+    );
     if content.artifacts.is_empty() {
         body = body.child(padded_muted_line(NO_ARTIFACTS, theme));
     } else {
@@ -417,52 +411,242 @@ fn render_content(content: &ShareContent, theme: &Theme) -> Div {
 
 /// 复制链接按钮 + 复制反馈行（无反馈则只有按钮）。
 fn render_copy_area(content: &ShareContent, theme: &Theme) -> Div {
-    let mut area = div()
-        .px_4()
-        .py_2()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .self_start()
-                .px_3()
-                .py_2()
-                .rounded_md()
-                .bg(theme.accent)
-                .text_color(theme.accent_foreground)
-                .text_sm()
-                .child(COPY_LINK_BTN),
-        );
+    let mut area = div().px_4().py_2().flex().flex_col().gap_1().child(
+        div()
+            .self_start()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .bg(theme.accent)
+            .text_color(theme.accent_foreground)
+            .text_sm()
+            .child(COPY_LINK_BTN),
+    );
     if let Some(feedback) = content.copy_feedback.text() {
         let color = match content.copy_feedback {
             CopyFeedback::Failed => theme.danger,
             _ => theme.accent,
         };
-        area = area.child(
-            div()
-                .text_xs()
-                .text_color(color)
-                .child(feedback),
-        );
+        area = area.child(div().text_xs().text_color(color).child(feedback));
     }
     area
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, render_phase, CopyFeedback, FailureReason, Phase, ShareContent, UploadStage,
+        ARTIFACT_LIST, COPY_LINK_BTN, COPY_LINK_FAILED, COPY_LINK_SUCCESS, DIALOG_TITLE,
+        GENERATING, LOADING, LOAD_ERROR, MESSAGE_COUNT, NOT_DELIVERED, NO_ARTIFACTS, NO_CONTENT,
+        SHARE_FAILED, SHARE_SUCCESS, TITLE,
+    };
     use gpui_kit::component::Theme;
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+
+    fn sample_content() -> ShareContent {
+        ShareContent {
+            artifacts: vec!["迁移清单.md".into(), "架构图.png".into()],
+            message_count: Some(12),
+            link: Some("https://example.invalid/s/t1".into()),
+            copy_feedback: CopyFeedback::Idle,
+        }
     }
+
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn copy_is_verbatim_from_table() {
+        assert_eq!(TITLE, "分享任务");
+        assert_eq!(DIALOG_TITLE, "分享");
+        assert_eq!(ARTIFACT_LIST, "本次任务包含以下产物（{count}）");
+        assert_eq!(NO_ARTIFACTS, "暂无产物");
+        assert_eq!(MESSAGE_COUNT, "消息数量");
+        assert_eq!(COPY_LINK_BTN, "复制链接");
+        assert_eq!(COPY_LINK_SUCCESS, "已复制链接");
+        assert_eq!(COPY_LINK_FAILED, "复制链接失败");
+        assert_eq!(GENERATING, "正在生成分享链接...");
+        assert_eq!(LOADING, "分享中...");
+        assert_eq!(SHARE_SUCCESS, "分享成功");
+        assert_eq!(SHARE_FAILED, "分享失败");
+        assert_eq!(LOAD_ERROR, "加载失败");
+        assert_eq!(NO_CONTENT, "没有可分享的内容");
         assert_eq!(NOT_DELIVERED, "未下发");
     }
+
+    #[test]
+    fn failure_reasons_are_verbatim() {
+        let cases = [
+            (FailureReason::LoadError, "加载失败"),
+            (
+                FailureReason::BuildTemplateFailed,
+                "构建分享内容失败，请稍后重试",
+            ),
+            (
+                FailureReason::CollectArtifactsFailed,
+                "获取分享内容失败，请稍后重试",
+            ),
+            (FailureReason::ConfirmFailed, "分享确认失败，请稍后重试"),
+            (
+                FailureReason::ContentSecurityReviewFailed,
+                "分享任务内容安全审核失败",
+            ),
+            (
+                FailureReason::FileTooLarge,
+                "分享任务中文件超过 20MB，无法分享",
+            ),
+            (FailureReason::PrepareFailed, "分享准备失败，请稍后重试"),
+            (
+                FailureReason::ShareServiceUnavailable,
+                "分享服务不可用，请稍后重试",
+            ),
+            (
+                FailureReason::UploadArtifactsFailed,
+                "产物上传失败，请稍后重试",
+            ),
+            (
+                FailureReason::UploadTemplateFailed,
+                "上传分享模板失败，请稍后重试",
+            ),
+            (FailureReason::CsvTooManyRows, "表格行数超过限制，无法分享"),
+            (
+                FailureReason::FormatUnsupported,
+                "文件格式暂不支持，无法分享",
+            ),
+            (
+                FailureReason::ModerationBlocked,
+                "任务名称或产物标题包含敏感内容，无法分享",
+            ),
+            (
+                FailureReason::SecurityBlocked,
+                "内容涉及违规，已被安全策略拦截，无法分享",
+            ),
+            (FailureReason::TitleTooLong, "任务标题过长，请重命名后再试"),
+            (FailureReason::UploadFailed, "上传失败，请重试"),
+        ];
+        for (reason, text) in cases {
+            assert_eq!(reason.text(), text);
+        }
+    }
+
+    #[test]
+    fn upload_stage_reasons_are_verbatim() {
+        let cases = [
+            (UploadStage::AuthExpired, "登录状态已失效，请重新登录后再试"),
+            (
+                UploadStage::ConfigInvalid,
+                "服务配置异常，请重启客户端后再试",
+            ),
+            (UploadStage::CosPutFailed, "文件上传中断，请重试"),
+            (
+                UploadStage::CredentialFailed,
+                "无法获取上传凭证，请检查网络后重试",
+            ),
+            (UploadStage::ImportFailed, "导入资料库失败，请重试"),
+            (UploadStage::PollFailed, "资料库处理失败，请重试或联系客服"),
+            (
+                UploadStage::Timeout,
+                "处理超时，文件可能仍在后台处理，请稍后到资料库查看",
+            ),
+        ];
+        for (stage, text) in cases {
+            assert_eq!(FailureReason::Stage(stage).text(), text);
+        }
+    }
+
+    #[test]
+    fn artifact_header_fills_count_template_verbatim() {
+        assert_eq!(
+            sample_content().artifact_header(),
+            "本次任务包含以下产物（2）"
+        );
+        assert_eq!(
+            ShareContent::default().artifact_header(),
+            "本次任务包含以下产物（0）"
+        );
+    }
+
+    #[test]
+    fn empty_input_yields_empty_state_not_empty_list() {
+        let empty = ShareContent::default();
+        assert!(empty.is_empty());
+        assert!(empty.artifacts.is_empty());
+        assert!(empty.count_rows().is_empty());
+        assert!(!empty.can_copy());
+        // 只有消息数量、无产物无链接：不是空态，也不渲染空清单。
+        let count_only = ShareContent {
+            message_count: Some(3),
+            ..ShareContent::default()
+        };
+        assert!(!count_only.is_empty());
+        assert_eq!(
+            count_only.count_rows(),
+            vec![(MESSAGE_COUNT, "3".to_string())]
+        );
+        assert_eq!(count_only.artifact_header(), "本次任务包含以下产物（0）");
+        // 只有链接：可复制，但产物清单仍如实为空计数。
+        let link_only = ShareContent {
+            link: Some("https://example.invalid/s/t2".into()),
+            ..ShareContent::default()
+        };
+        assert!(!link_only.is_empty());
+        assert!(link_only.can_copy());
+    }
+
+    #[test]
+    fn copy_feedback_text_mapping() {
+        assert_eq!(CopyFeedback::Idle.text(), None);
+        assert_eq!(CopyFeedback::Copied.text(), Some(COPY_LINK_SUCCESS));
+        assert_eq!(CopyFeedback::Failed.text(), Some(COPY_LINK_FAILED));
+        assert_eq!(sample_content().copy_feedback, CopyFeedback::Idle);
+    }
+
+    #[test]
+    fn phase_headline_description_and_success_mapping() {
+        assert_eq!(Phase::NotDelivered.headline(), Some(NOT_DELIVERED));
+        assert_eq!(Phase::Generating.headline(), Some(GENERATING));
+        assert_eq!(Phase::Loading.headline(), Some(LOADING));
+        assert_eq!(Phase::Ready(Box::default()).headline(), None);
+        assert_eq!(Phase::Succeeded.headline(), Some(SHARE_SUCCESS));
+        assert!(Phase::Succeeded.is_succeeded());
+        assert_eq!(
+            Phase::Failed(FailureReason::FileTooLarge).headline(),
+            Some(SHARE_FAILED)
+        );
+        assert_eq!(
+            Phase::Failed(FailureReason::FileTooLarge).description(),
+            Some("分享任务中文件超过 20MB，无法分享")
+        );
+        assert_eq!(Phase::Succeeded.description(), None);
+        assert!(!Phase::Failed(FailureReason::LoadError).is_succeeded());
+    }
+
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_phase_covers_all_branches_without_panic() {
+        let theme = Theme::default();
+        let branches = [
+            Phase::NotDelivered,
+            Phase::Generating,
+            Phase::Loading,
+            Phase::Ready(Box::new(sample_content())),
+            Phase::Ready(Box::default()),
+            Phase::Ready(Box::new(ShareContent {
+                message_count: Some(3),
+                copy_feedback: CopyFeedback::Copied,
+                ..ShareContent::default()
+            })),
+            Phase::Ready(Box::new(ShareContent {
+                artifacts: vec!["仅产物".into()],
+                copy_feedback: CopyFeedback::Failed,
+                ..ShareContent::default()
+            })),
+            Phase::Succeeded,
+            Phase::Failed(FailureReason::LoadError),
+            Phase::Failed(FailureReason::Stage(UploadStage::PollFailed)),
+        ];
+        for phase in &branches {
+            let _ = render_phase(phase, &theme);
+        }
     }
 }
