@@ -266,33 +266,235 @@ impl FileVersionOverlay {
 }
 
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 无数据源 ⇒ 按未下发如实渲染（fail-closed）；数据源就绪后由运行时侧喂真实状态。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render(&FileVersionOverlay::not_delivered(), theme)
+}
+
+/// 按纯数据层渲染整层：标题行 + 状态分支（未下发/加载/失败/空态/双栏主体）。
+fn render(overlay: &FileVersionOverlay, theme: &Theme) -> Div {
+    let shell = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
-        .flex_col()
+        .flex_col();
+    let body = match overlay.state {
+        OverlayState::NotDelivered => centered_note(theme, NOT_DELIVERED),
+        OverlayState::Loading => centered_note(theme, text::LOADING),
+        OverlayState::Failed => centered_note(theme, &overlay.failure_label()),
+        OverlayState::Normal if overlay.is_empty() => centered_note(theme, text::EMPTY),
+        OverlayState::Normal => div()
+            .flex_1()
+            .flex()
+            .min_h_0()
+            .child(timeline(overlay, theme))
+            .child(detail(overlay, theme)),
+    };
+    shell.child(header_row(theme)).child(body)
+}
+
+/// 居中提示（未下发/加载中/失败/空态共用）。
+fn centered_note(theme: &Theme, note: &str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(note.to_owned())
+}
+
+/// 标题行：标题 + 刷新动作。
+fn header_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
+        .child(pill(text::REFRESH, false, theme))
+}
+
+/// 左栏：版本时间线（清单行）。
+fn timeline(overlay: &FileVersionOverlay, theme: &Theme) -> Div {
+    let rows = overlay.versions.iter().enumerate().fold(
+        div().flex().flex_col().gap_1().p_2(),
+        |list, (idx, entry)| list.child(version_row(entry, overlay.selected == Some(idx), theme)),
+    );
+    div()
+        .w(px(288.))
+        .h_full()
+        .flex()
+        .flex_col()
+        .border_r_1()
+        .border_color(theme.border)
+        .child(rows)
+}
+
+/// 单条版本行：「当前版本」徽标 + 变更类型 + 文件变更数。
+fn version_row(entry: &VersionEntry, selected: bool, theme: &Theme) -> Div {
+    let mut first_line = div().flex().items_center().gap_1();
+    if entry.is_head {
+        first_line = first_line.child(head_badge(theme));
+    }
+    first_line = first_line.child(
+        div()
+            .text_sm()
+            .font_bold()
+            .text_color(theme.foreground)
+            .child(entry.change_type.label()),
+    );
+    let mut row = div().flex().flex_col().gap_1().px_2().py_1().rounded_sm();
+    if selected {
+        row = row.bg(theme.muted);
+    } else {
+        row = row.border_1().border_color(theme.border);
+    }
+    row.child(first_line).child(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(text::files_changed(entry.files_changed)),
+    )
+}
+
+/// 「当前版本」徽标。
+fn head_badge(theme: &Theme) -> Div {
+    div()
+        .px_1()
+        .rounded_sm()
+        .bg(theme.accent)
+        .text_xs()
+        .text_color(theme.accent_foreground)
+        .child(text::HEAD_BADGE)
+}
+
+/// 右栏：结果反馈 + 明细/对比占位 + 恢复动作 + 重置确认面板。
+fn detail(overlay: &FileVersionOverlay, theme: &Theme) -> Div {
+    let mut pane = div().flex_1().flex().flex_col().gap_2().p_3().min_w_0();
+    if let Some(label) = overlay.feedback.label() {
+        pane = pane.child(div().text_sm().text_color(theme.success).child(label));
+    }
+    pane = pane.child(
+        div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(overlay.diff_note()),
+    );
+    if overlay.selected_entry().is_some() {
+        pane = pane.child(actions(theme));
+    }
+    if overlay.pending_reset.is_some() {
+        pane = pane.child(reset_confirm(theme));
+    }
+    pane
+}
+
+/// 恢复动作组：回滚（保留后续提交）/ 重置（丢弃后续提交）。
+fn actions(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(action(text::REVERT, text::REVERT_TIP, false, theme))
+        .child(action(text::RESET, text::RESET_TIP, true, theme))
+}
+
+/// 单个动作：按钮 + 说明。
+fn action(label: &'static str, tip: &'static str, danger: bool, theme: &Theme) -> Div {
+    let mut button = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(px(160.))
+        .px_3()
+        .py_1()
+        .rounded_sm()
+        .text_sm();
+    if danger {
+        button = button
+            .bg(theme.button_danger)
+            .text_color(theme.button_danger_foreground);
+    } else {
+        button = button.bg(theme.accent).text_color(theme.accent_foreground);
+    }
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(button.child(label))
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
+                .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(tip),
         )
+}
+
+/// 「重置到此版本」确认面板：标题 + 后果说明 + 确认/取消。
+fn reset_confirm(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_3()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(text::RESET_CONFIRM_TITLE),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(text::RESET_CONFIRM_BODY),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .child(pill(text::CONFIRM_RESET, true, theme))
+                .child(pill(text::CANCEL, false, theme)),
+        )
+}
+
+/// 小按钮（刷新/确认/取消）：纯文案胶囊。
+fn pill(label: &'static str, danger: bool, theme: &Theme) -> Div {
+    let mut p = div()
+        .px_3()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm();
+    if danger {
+        p = p.text_color(theme.danger);
+    } else {
+        p = p.text_color(theme.muted_foreground);
+    }
+    p.child(label)
 }
 #[cfg(test)]
 mod tests {
