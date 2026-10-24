@@ -284,3 +284,228 @@ fn action_row(theme: &Theme, content: &CollabQuotaContent) -> Div {
     }
     row
 }
+
+/// 纯数据层断言 + 分支渲染不 panic。
+///
+/// ⛔ 不写 `use super::*`：父模块的 gpui 通配导入会带进 GPUI 的 `test` 属性宏并遮蔽
+/// 标准库 `#[test]`；这里显式列出用到的符号。
+#[cfg(test)]
+mod tests {
+    use super::copy;
+    use super::{
+        fill_quotas, main_area, render, CollabQuotaContent, CollabQuotaState, PlanTier, TITLE,
+    };
+    use gpui_kit::component::Theme;
+
+    fn member_limit(tier: PlanTier, is_owner: bool, reach: &str) -> CollabQuotaContent {
+        CollabQuotaContent::MemberLimit {
+            tier,
+            is_owner,
+            member_limit: 5,
+            owner_name: "张三".to_owned(),
+            reach: reach.to_owned(),
+        }
+    }
+
+    #[test]
+    fn default_state_is_loading_not_empty() {
+        assert_eq!(CollabQuotaState::default(), CollabQuotaState::Loading);
+        assert_ne!(
+            CollabQuotaState::default(),
+            CollabQuotaState::Empty,
+            "未拉取过 ≠ 空态（三态契约）"
+        );
+    }
+
+    #[test]
+    fn copy_keys_verbatim() {
+        assert_eq!(
+            copy::ACTION_DISMISS,
+            ("collab.quota.action.dismiss", "我知道了")
+        );
+        assert_eq!(
+            copy::ACTION_EXPLORE_ENTERPRISE,
+            ("collab.quota.action.exploreEnterprise", "了解企业版")
+        );
+        assert_eq!(
+            copy::ACTION_UPGRADE,
+            ("collab.quota.action.upgrade", "去升级")
+        );
+        assert_eq!(
+            copy::EXCLUSIVE_BLOCKED,
+            (
+                "collab.quota.exclusive.blocked",
+                "当前账号版本不支持团队协作功能，请联系企业管理员"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BANNER_ENTERPRISE_OWNER,
+            (
+                "collab.quota.member.banner.enterpriseOwner",
+                "企业版每个项目最多 {memberLimit} 位成员，移除部分成员后可继续邀请"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BANNER_EXPERIENCE_OWNER,
+            (
+                "collab.quota.member.banner.experienceOwner",
+                "体验版每个项目最多 {memberLimit} 位成员，移除部分成员后可继续邀请"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BANNER_NON_OWNER,
+            (
+                "collab.quota.member.banner.nonOwner",
+                "项目成员已达所有者「{ownerName}」账号版本的上限"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BANNER_PRO_OWNER,
+            (
+                "collab.quota.member.banner.proOwner",
+                "专业版每个项目最多 {memberLimit} 位成员，移除部分成员后可继续邀请"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BODY_ENTERPRISE_OWNER,
+            (
+                "collab.quota.member.body.enterpriseOwner",
+                "当前项目已达到企业版成员上限（{memberLimit} 人）。请移除不再参与的成员后再邀请。"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BODY_EXPERIENCE_OWNER,
+            (
+                "collab.quota.member.body.experienceOwner",
+                "当前项目已达到体验版成员上限（{memberLimit} 人）。升级后单个项目最多可容纳 100 人协作，也可以先移除不再参与的成员。"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BODY_NON_OWNER,
+            (
+                "collab.quota.member.body.nonOwner",
+                "该项目的成员上限由项目所有者「{ownerName}」的账号版本决定。当前{reach}上限，请联系所有者升级或移除成员后再邀请。"
+            )
+        );
+        assert_eq!(
+            copy::MEMBER_BODY_PRO_OWNER,
+            (
+                "collab.quota.member.body.proOwner",
+                "当前项目已达到专业版成员上限（{memberLimit} 人）。如需更大团队协作，请升级企业版或联系销售。"
+            )
+        );
+        assert!(!TITLE.is_empty());
+    }
+
+    #[test]
+    fn banner_branches_fill_limit_and_owner_name() {
+        assert_eq!(
+            member_limit(PlanTier::Experience, true, "")
+                .banner_text()
+                .as_deref(),
+            Some("体验版每个项目最多 5 位成员，移除部分成员后可继续邀请")
+        );
+        assert_eq!(
+            member_limit(PlanTier::Pro, true, "")
+                .banner_text()
+                .as_deref(),
+            Some("专业版每个项目最多 5 位成员，移除部分成员后可继续邀请")
+        );
+        assert_eq!(
+            member_limit(PlanTier::Enterprise, true, "")
+                .banner_text()
+                .as_deref(),
+            Some("企业版每个项目最多 5 位成员，移除部分成员后可继续邀请")
+        );
+        assert_eq!(
+            member_limit(PlanTier::Pro, false, "")
+                .banner_text()
+                .as_deref(),
+            Some("项目成员已达所有者「张三」账号版本的上限")
+        );
+        assert_eq!(CollabQuotaContent::ExclusiveBlocked.banner_text(), None);
+    }
+
+    #[test]
+    fn body_branches_fill_limit_and_reach() {
+        assert_eq!(
+            member_limit(PlanTier::Experience, true, "").body_text(),
+            "当前项目已达到体验版成员上限（5 人）。升级后单个项目最多可容纳 100 人协作，也可以先移除不再参与的成员。"
+        );
+        assert_eq!(
+            member_limit(PlanTier::Pro, true, "").body_text(),
+            "当前项目已达到专业版成员上限（5 人）。如需更大团队协作，请升级企业版或联系销售。"
+        );
+        assert_eq!(
+            member_limit(PlanTier::Enterprise, true, "").body_text(),
+            "当前项目已达到企业版成员上限（5 人）。请移除不再参与的成员后再邀请。"
+        );
+        assert_eq!(
+            member_limit(PlanTier::Pro, false, "已达").body_text(),
+            "该项目的成员上限由项目所有者「张三」的账号版本决定。当前已达上限，请联系所有者升级或移除成员后再邀请。"
+        );
+    }
+
+    #[test]
+    fn exclusive_blocked_body_is_verbatim() {
+        assert_eq!(
+            CollabQuotaContent::ExclusiveBlocked.body_text(),
+            "当前账号版本不支持团队协作功能，请联系企业管理员"
+        );
+    }
+
+    #[test]
+    fn actions_by_branch() {
+        let blocked: &[(&str, &str)] = &[
+            ("collab.quota.action.dismiss", "我知道了"),
+            ("collab.quota.action.exploreEnterprise", "了解企业版"),
+        ];
+        assert_eq!(CollabQuotaContent::ExclusiveBlocked.actions(), blocked);
+        let owner: &[(&str, &str)] = &[
+            ("collab.quota.action.upgrade", "去升级"),
+            ("collab.quota.action.dismiss", "我知道了"),
+        ];
+        assert_eq!(
+            member_limit(PlanTier::Experience, true, "").actions(),
+            owner
+        );
+        let non_owner: &[(&str, &str)] = &[("collab.quota.action.dismiss", "我知道了")];
+        assert_eq!(
+            member_limit(PlanTier::Enterprise, false, "").actions(),
+            non_owner
+        );
+    }
+
+    #[test]
+    fn fill_only_replaces_present_placeholders() {
+        assert_eq!(
+            fill_quotas("最多 {memberLimit} 位", 3, "甲", "已达"),
+            "最多 3 位"
+        );
+        assert_eq!(
+            fill_quotas("所有者「{ownerName}」", 9, "李四", ""),
+            "所有者「李四」"
+        );
+    }
+
+    #[test]
+    fn main_area_renders_without_panic() {
+        let _ = main_area(&Theme::default());
+    }
+
+    #[test]
+    fn every_state_branch_renders_without_panic() {
+        let theme = Theme::default();
+        let states = vec![
+            CollabQuotaState::Loading,
+            CollabQuotaState::Failed,
+            CollabQuotaState::Empty,
+            CollabQuotaState::Ready(CollabQuotaContent::ExclusiveBlocked),
+            CollabQuotaState::Ready(member_limit(PlanTier::Experience, true, "")),
+            CollabQuotaState::Ready(member_limit(PlanTier::Pro, false, "已达")),
+        ];
+        for state in &states {
+            let _ = render(&theme, state);
+        }
+    }
+}
