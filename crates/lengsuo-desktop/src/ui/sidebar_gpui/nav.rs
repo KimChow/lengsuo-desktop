@@ -370,12 +370,65 @@ mod tests {
     use gpui_kit::component::Theme;
     use gpui_kit::{AppContext as _, IntoElement as _};
 
+    use crate::ui::panel_views::home::NOT_DELIVERED;
     use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
     use crate::ui::sidebar::nav::{agents_entry, channels_entry, nav_entries, NavKind};
     use crate::ui::sidebar_gpui::render::HostedElement;
     use crate::ui::sidebar_gpui::SidebarViewGpui;
 
-    use super::{render_nav, render_nav_entry, set_more_open};
+    use super::{
+        more_open, render_nav, render_nav_entry, set_more_open, MAIN_ENTRY_LABELS, MORE_LABEL,
+        SPACES_GROUP_LABEL, TASKS_GROUP_LABEL,
+    };
+
+    /// ① 主入口 6 项标签逐字（实拍 D1）。
+    #[test]
+    fn main_entry_labels_are_verbatim() {
+        assert_eq!(MAIN_ENTRY_LABELS.len(), 6, "主入口必须正好 6 项");
+        assert_eq!(MAIN_ENTRY_LABELS[0], "新建任务");
+        assert_eq!(MAIN_ENTRY_LABELS[1], "助理(BETA)");
+        assert_eq!(MAIN_ENTRY_LABELS[2], "专家·技能·连接器");
+        assert_eq!(MAIN_ENTRY_LABELS[3], "定时任务");
+        assert_eq!(MAIN_ENTRY_LABELS[4], "资料库");
+        assert_eq!(MAIN_ENTRY_LABELS[5], MORE_LABEL, "第 6 项是「更多」入口");
+        assert_eq!(
+            MORE_LABEL, "更多",
+            "「更多」逐字（home.practiceCases.more）"
+        );
+    }
+
+    /// ① 分组名逐字（实拍 D2）+ fail-closed 文案复用「未下发」。
+    #[test]
+    fn group_labels_are_verbatim_and_fail_closed() {
+        assert_eq!(TASKS_GROUP_LABEL, "任务");
+        assert_eq!(SPACES_GROUP_LABEL, "空间");
+        assert_eq!(NOT_DELIVERED, "未下发", "fail-closed 文案必须复用全表常量");
+    }
+
+    /// ③「更多」收纳全部 14 项旧入口，且展开 / 收起两态布局可分辨
+    /// （展开必须显著高于收起 —— 14 行没画出来就过不了）。
+    #[test]
+    fn more_group_expansion_changes_height() {
+        let entries = nav_entries(2, 3, 0, 0, None);
+        assert_eq!(entries.len(), 14, "「更多」必须收纳全部 14 项旧入口");
+        let draw = |open: bool| {
+            set_more_open(open);
+            draw_probe(|ctx| {
+                let entity = ctx.new(|_| SidebarViewGpui::demo());
+                let nav = render_nav(&entries, &entity, &Theme::default()).into_any_element();
+                ctx.new(|_| HostedElement(nav)).into_any_element()
+            })
+        };
+        let collapsed = assert_rendered(draw(false), "更多组（收起）");
+        assert!(!more_open(), "收起态读回应为 false");
+        let expanded = assert_rendered(draw(true), "更多组（展开，14 项）");
+        assert!(
+            expanded.size.height > collapsed.size.height,
+            "展开态必须高于收起态（14 项没画出来）：{:?} vs {:?}",
+            expanded.size.height,
+            collapsed.size.height
+        );
+    }
 
     /// ①（元素级）整列导航画得出来且布局非零（主入口 + 两组 + 更多 + 底部）。
     #[test]
@@ -387,7 +440,7 @@ mod tests {
             let nav = render_nav(&entries, &entity, &Theme::default()).into_any_element();
             ctx.new(|_| HostedElement(nav)).into_any_element()
         });
-        assert_rendered(bounds, "左栏分组导航（收起态）");
+        assert_rendered(bounds, "左栏分组导航（展开态）");
     }
 
     /// ① 标题可定位（A15 回归）：频道 / 智能体管理入口，标题逐字取自描述层。
