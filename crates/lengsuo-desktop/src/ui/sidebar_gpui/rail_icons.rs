@@ -129,3 +129,130 @@ impl RailItem {
         self.label.unwrap_or(NOT_DELIVERED)
     }
 }
+
+// === 渲染层：GPUI 元素树（feature = "ui"） ===
+
+#[cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+#[cfg(feature = "ui")]
+use gpui_kit::*;
+
+/// 图标边长（参照形态：16~18px 单色，取下限 16）。
+#[cfg(feature = "ui")]
+const ICON_SIZE: f32 = 16.;
+/// 行高：触摸目标 ≥48dp（设计方法论固定段）。
+#[cfg(feature = "ui")]
+const ROW_HEIGHT: f32 = 48.;
+
+/// 绝对定位的几何单元（图标的每一笔）。
+#[cfg(feature = "ui")]
+fn cell(left: f32, top: f32, w: f32, h: f32) -> Div {
+    div()
+        .absolute()
+        .left(px(left))
+        .top(px(top))
+        .w(px(w))
+        .h(px(h))
+}
+
+/// 一枚 16px 单色图标：全部用 div 几何画，墨色 = 主题前景色。
+#[cfg(feature = "ui")]
+fn rail_icon(intent: RailIntent, theme: &Theme) -> Div {
+    let ink = theme.sidebar_foreground;
+    let icon = div().relative().w(px(ICON_SIZE)).h(px(ICON_SIZE));
+    match intent {
+        // 加号：横竖两根 2px 短棒。
+        RailIntent::NewTask => icon
+            .child(cell(0., 7., 16., 2.).bg(ink))
+            .child(cell(7., 0., 2., 16.).bg(ink)),
+        // 机器人：圆角方头 + 双眼 + 天线。
+        RailIntent::Assistant => icon
+            .child(
+                cell(2., 4., 12., 10.)
+                    .border_2()
+                    .border_color(ink)
+                    .rounded(px(3.)),
+            )
+            .child(cell(5., 8., 2., 2.).bg(ink))
+            .child(cell(9., 8., 2., 2.).bg(ink))
+            .child(cell(7., 1., 2., 2.).bg(ink).rounded_full()),
+        // 组合件：两只错位描边小方（拼合感）。
+        RailIntent::Experts => icon
+            .child(cell(4., 2., 10., 10.).border_2().border_color(ink))
+            .child(cell(2., 4., 10., 10.).border_2().border_color(ink)),
+        // 时钟：描边圆环 + 12 点 / 3 点两根指针。
+        RailIntent::Automation => icon
+            .child(
+                cell(1., 1., 14., 14.)
+                    .border_2()
+                    .border_color(ink)
+                    .rounded_full(),
+            )
+            .child(cell(7., 3., 2., 6.).bg(ink))
+            .child(cell(8., 7., 5., 2.).bg(ink)),
+        // 书：描边封面 + 一根书脊。
+        RailIntent::Library => icon
+            .child(
+                cell(2., 2., 12., 12.)
+                    .border_2()
+                    .border_color(ink)
+                    .rounded(px(2.)),
+            )
+            .child(cell(5., 2., 2., 12.).bg(ink)),
+        // 省略号：三颗 2px 圆点。
+        RailIntent::More => icon
+            .child(cell(2., 7., 2., 2.).bg(ink).rounded_full())
+            .child(cell(7., 7., 2., 2.).bg(ink).rounded_full())
+            .child(cell(12., 7., 2., 2.).bg(ink).rounded_full()),
+    }
+}
+
+/// 一行主入口：水平 icon+text，选中态画左缘高亮条。
+///
+/// 点击只上报 `on_intent(意图)`，⛔ 不实现行为。
+#[cfg(feature = "ui")]
+pub fn rail_row<F>(theme: &Theme, item: &RailItem, on_intent: F) -> impl IntoElement
+where
+    F: Fn(RailIntent) + 'static,
+{
+    let mut row = div()
+        .id(item.intent.as_id())
+        .relative()
+        .flex()
+        .items_center()
+        .gap_2()
+        .w_full()
+        .h(px(ROW_HEIGHT))
+        .px_2()
+        .text_color(theme.sidebar_foreground)
+        .on_click(move |_| on_intent(item.intent));
+    if item.selected {
+        row = row
+            .bg(theme.sidebar_border)
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(3.))
+                    .bg(theme.sidebar_foreground),
+            );
+    }
+    row.child(rail_icon(item.intent, theme))
+        .child(div().text_sm().child(item.display_label()))
+}
+
+/// 主入口列：六行垂直排布（纯构建）。
+#[cfg(feature = "ui")]
+pub fn rail<F>(theme: &Theme, items: &[RailItem], on_intent: F) -> Div
+where
+    F: Fn(RailIntent) + Clone + 'static,
+{
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_1()
+        .children(items.iter().map(|item| rail_row(theme, item, on_intent.clone())))
+}
