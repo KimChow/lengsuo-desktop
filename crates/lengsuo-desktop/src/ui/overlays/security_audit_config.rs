@@ -3,6 +3,11 @@
 //! 纯数据层：`securityCenter.audit.config` 逐字文案表 + 视图态状态机。
 //! 硬约束：文案与本卡任务书逐字摘录一致（禁止自编中文，其余键待全表入库后补齐）；
 //! 未拉取过 ≠ 空集（默认加载中）；失败 fail-closed 不退化成空列表。
+//! GPUI 层只做四分支映射，颜色一律取 theme token。
+#![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 面板标题（逐字取自文案全表）。
 pub const PANEL_TITLE: &str = "安全中心·审计配置";
@@ -177,4 +182,129 @@ pub fn format_copy(text: &str, params: CopyParams<'_>) -> String {
 /// 按键取模板并填占位（纯函数；未知键返回 None，调用方回显键名，不自编文案）。
 pub fn action_feedback(key: &str, params: CopyParams<'_>) -> Option<String> {
     audit_config_copy(key).map(|t| format_copy(t, params))
+}
+
+// ===== GPUI 层 =====
+/// 数据未接入时的可见说明（fail-closed；沿用占位期措辞，⛔ 不退化成空列表）。
+pub const NOT_DELIVERED: &str = "数据未接入（fail-closed）";
+
+/// 空态文案：本卡摘录未覆盖空态键，按仓库空态惯例「暂无+面名」
+/// （同 `security_cmd_safety::EMPTY_TEXT` 的处理）。
+pub const EMPTY_TEXT: &str = "暂无审计配置";
+
+/// 四分支状态渲染（fail-closed：失败可见；空态非沉默；未拉取不加载数据）。
+pub fn render_state(theme: &Theme, feed: &Feed) -> AnyElement {
+    let col = div().flex().flex_col().gap_2().text_sm();
+    let col = match &feed.state {
+        ViewState::Loading => col.child(SharedString::from(format!(
+            "{NS_PREFIX} · {NS_QUOTED_COUNT}/{NS_KEY_COUNT}"
+        ))),
+        ViewState::Failed { message } => col
+            .child(
+                div()
+                    .font_bold()
+                    .text_color(theme.foreground)
+                    .child(SharedString::from(NOT_DELIVERED)),
+            )
+            .child(SharedString::from(message.clone())),
+        ViewState::Empty => col.child(SharedString::from(EMPTY_TEXT)),
+        ViewState::Active { summary } => col.child(render_summary(theme, summary)),
+    };
+    col.into_any_element()
+}
+
+/// 正常态：四个清单分区 + 历史分片计数行。
+fn render_summary(theme: &Theme, summary: &AuditConfigSummary) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(render_section(
+            theme,
+            "allowedDomains",
+            &summary.allowed_domains,
+        ))
+        .child(render_section(
+            theme,
+            "deniedDomains",
+            &summary.denied_domains,
+        ))
+        .child(render_section(
+            theme,
+            "commandSafetyAllow",
+            &summary.command_safety_allow,
+        ))
+        .child(render_section(
+            theme,
+            "commandSafetyAsk",
+            &summary.command_safety_ask,
+        ))
+        .child(div().text_sm().child(SharedString::from(format!(
+            "retentionShards · {}",
+            summary.retention_shards
+        ))))
+}
+
+/// 摘要分区：ASCII 键段做区头 + 计数 + 规则行（⛔ 不自编中文组名）。
+fn render_section(theme: &Theme, header: &str, rules: &[String]) -> Div {
+    let section = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_2()
+        .border_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(SharedString::from(format!("{header} · {}", rules.len()))),
+        );
+    rules.iter().fold(section, |acc, rule| {
+        acc.child(div().text_sm().child(SharedString::from(rule.clone())))
+    })
+}
+
+/// 逐字模板目录（真实参考数据，非伪造条目）：命名空间 + 键 + 中文模板。
+pub fn render_catalog(theme: &Theme) -> AnyElement {
+    let group = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_2()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(format!(
+            "{NS_PREFIX} · {NS_QUOTED_COUNT}/{NS_KEY_COUNT}"
+        )));
+    TEXTS
+        .iter()
+        .fold(group, |acc, (k, t)| {
+            acc.child(SharedString::from(format!("{k} {t}")))
+        })
+        .into_any_element()
+}
+
+/// 浮层呈现入口：标题行 + 状态分支（无数据源 ⇒ 加载中，不伪造）+ 模板目录。
+/// 签名固定 `theme: &Theme`；数据源就绪后由运行时侧喂 [`Feed`]。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    let feed = Feed::undelivered();
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_color(theme.muted_foreground)
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(SharedString::from(PANEL_TITLE)),
+        )
+        .child(render_state(theme, &feed))
+        .child(render_catalog(theme))
+        .into_any_element()
 }
