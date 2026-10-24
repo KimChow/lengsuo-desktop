@@ -8,6 +8,7 @@
 //! - ⛔ 不判权限、不持凭据、不联网。
 //! - 颜色一律取自主题 token。
 use crate::state::preview_payload::{DecodeError, ImagePayload, PreviewPayload, MAX_BYTES};
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
@@ -17,7 +18,11 @@ const DESC_NOT_DELIVERED: &str = "图形描述解码未接入（mermaid / drawio
 /// A14：解码待预览图形文件。`.svg` 解析根元素宽高（解不出记 0）；
 /// 其余图形描述格式尚无解码器 ⇒ [`PreviewPayload::NotDelivered`]。
 pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
-    let ext = path.rsplit('.').next().unwrap_or_default().to_ascii_lowercase();
+    let ext = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     if ext == "svg" {
         decode_svg(path, bytes)
     } else {
@@ -61,7 +66,7 @@ fn decode_svg(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
 /// 返回文件**真实总字节数**（供「已截断」标注）。
 fn read_capped(path: &str, out: &mut Vec<u8>) -> Result<usize, String> {
     use std::io::Read as _;
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     file.take(MAX_BYTES as u64 + 1)
         .read_to_end(out)
         .map_err(|e| e.to_string())?;
@@ -183,7 +188,7 @@ fn svg_stage(img: &ImagePayload, theme: &Theme) -> Div {
         .rounded_lg()
         .border_1()
         .border_color(theme.border)
-        .bg_color(theme.muted)
+        .bg(theme.muted)
         .p_2();
     if img.source_len > img.bytes.len() {
         stage.child(
@@ -199,18 +204,94 @@ fn svg_stage(img: &ImagePayload, theme: &Theme) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, render_with_payload, DESC_NOT_DELIVERED};
-    use crate::state::preview_payload::{DecodeError, PreviewPayload};
+    use super::{attr_px, decode, render_with_payload, DESC_NOT_DELIVERED};
+    use crate::state::preview_payload::{DecodeError, ImagePayload, PreviewPayload, MAX_BYTES};
     use gpui_kit::component::Theme;
 
+    /// ① 正常字节 ⇒ 载荷字段正确（格式 / 宽高 / 字节原样 / 未截断）。
     #[test]
-    fn decode_missing_file_is_honest_io_failure() {
+    fn decode_svg_bytes_yields_image_payload_with_dims() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"><rect width="10" height="10"/></svg>"#;
+        let p = decode("board.svg", Some(svg));
+        let PreviewPayload::Image(img) = p else {
+            panic!("应是 Image 载荷：{p:?}");
+        };
+        assert_eq!(
+            (img.format.as_str(), img.width, img.height),
+            ("svg", 120, 60)
+        );
+        assert_eq!(img.bytes.as_slice(), &svg[..]);
+        assert_eq!(img.source_len, svg.len(), "未超限不许标注截断");
+    }
+
+    /// ② 垃圾字节 ⇒ fail-closed 返回 `Failed`（⛔ 不 panic、⛔ 不伪装成空图）。
+    #[test]
+    fn decode_garbage_bytes_fails_closed() {
         assert!(matches!(
-            decode("definitely/missing/board.svg", None),
-            PreviewPayload::Failed(DecodeError::Io(_))
+            decode("board.svg", Some(&[0xFF, 0xFE, 0x00, 0x19, 0x98])),
+            PreviewPayload::Failed(DecodeError::Parse(_))
+        ));
+        // 合法 XML 但根元素不是 <svg>：同样如实报解析失败。
+        assert!(matches!(
+            decode("board.svg", Some(b"<html><body/></html>")),
+            PreviewPayload::Failed(DecodeError::Parse(_))
         ));
     }
 
+    /// ③ 超 [`MAX_BYTES`] ⇒ 只保留上限字节并如实标注（truncated = source_len > bytes.len()）。
+    #[test]
+    fn decode_over_max_bytes_is_truncated_not_whole() {
+        let mut big =
+            br#"<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'>"#.to_vec();
+        big.resize(MAX_BYTES + 64, b' ');
+        let p = decode("board.svg", Some(big.as_slice()));
+        let PreviewPayload::Image(img) = p else {
+            panic!("截断仍应交付 Image 载荷：{p:?}");
+        };
+        assert_eq!(img.bytes.len(), MAX_BYTES, "⛔ 不整包进内存");
+        assert_eq!(img.source_len, big.len());
+        assert!(img.source_len > img.bytes.len(), "必须如实标注截断");
+        assert_eq!((img.width, img.height), (0, 0), "结构破坏后宽高如实记 0");
+    }
+
+    /// ④ 各载荷形态（正常 / 截断 / 未下发 / 失败）渲染不 panic。
+    #[test]
+    fn render_with_payload_all_variants_build_without_panic() {
+        let theme = Theme::default();
+        let ok = decode("board.svg", Some(b"<svg width='9' height='9'/>"));
+        let _ = render_with_payload("dir/board.svg", &ok, &theme);
+        let truncated = PreviewPayload::Image(ImagePayload {
+            bytes: vec![b'<'],
+            format: "svg".to_owned(),
+            width: 0,
+            height: 0,
+            source_len: MAX_BYTES + 1,
+        });
+        let _ = render_with_payload("big.svg", &truncated, &theme);
+        let _ = render_with_payload(
+            "flow.mermaid",
+            &PreviewPayload::NotDelivered {
+                reason: DESC_NOT_DELIVERED,
+            },
+            &theme,
+        );
+        let _ = render_with_payload(
+            "gone.svg",
+            &PreviewPayload::Failed(DecodeError::Io("missing".to_owned())),
+            &theme,
+        );
+    }
+
+    /// 宽高属性解析边界：纯数字 / px 后缀可解；百分比与缺省如实记 0。
+    #[test]
+    fn attr_px_accepts_plain_and_px_units_only() {
+        assert_eq!(attr_px(Some("120")), 120);
+        assert_eq!(attr_px(Some("120px")), 120);
+        assert_eq!(attr_px(Some("50%")), 0);
+        assert_eq!(attr_px(None), 0);
+    }
+
+    /// 图形描述类（mermaid 等）尚无解码器 ⇒ 诚实未下发（⛔ 不伪造图形）。
     #[test]
     fn diagram_description_formats_are_not_delivered() {
         assert_eq!(
@@ -221,12 +302,12 @@ mod tests {
         );
     }
 
+    /// `bytes = None` 且文件缺失 ⇒ 如实 `Io` 失败（fail-closed）。
     #[test]
-    fn render_with_payload_builds_without_panic() {
-        let p = PreviewPayload::NotDelivered {
-            reason: DESC_NOT_DELIVERED,
-        };
-        let theme = Theme::default();
-        let _ = render_with_payload("flow.mermaid", &p, &theme);
+    fn decode_missing_file_is_honest_io_failure() {
+        assert!(matches!(
+            decode("definitely/missing/board.svg", None),
+            PreviewPayload::Failed(DecodeError::Io(_))
+        ));
     }
 }
