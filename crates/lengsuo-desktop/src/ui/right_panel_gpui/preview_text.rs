@@ -47,47 +47,57 @@ pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyEleme
     render_body(path, None, theme)
 }
 
+/// 是否等宽展示：文档形态里 md/markdown 走正文字体，其余（含未识别扩展名）等宽。
+fn use_mono(path: &str) -> bool {
+    if is_document(path) {
+        !is_prose(path)
+    } else {
+        true
+    }
+}
+
+/// 路径头（`child()` 文案参数要求 `'static`：借用 path 需先转 owned）。
+fn path_row(path: &str, theme: &gpui_kit::component::Theme) -> Div {
+    div()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(path.to_owned())
+}
+
+/// 未下发 / 失败态：路径头 + 一行照实说明（⛔ 不伪造正文）。
+fn render_notice(path: &str, notice: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(path_row(path, theme))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(notice.to_owned()),
+        )
+        .into_any_element()
+}
+
 /// 按下发内容渲染文档区；`content` 为 `None` 即未下发态（⛔ 不伪造正文）。
 fn render_body(
     path: &str,
     content: Option<&str>,
     theme: &gpui_kit::component::Theme,
 ) -> AnyElement {
-    // child() 文案参数要求 'static：借用 path 需先转 owned。
-    let path_row = div()
-        .text_xs()
-        .text_color(theme.muted_foreground)
-        .child(path.to_owned());
-
     let Some(content) = content else {
-        return div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(path_row)
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.foreground)
-                    .child("内容未下发（等运行时契约）"),
-            )
-            .into_any_element();
+        return render_notice(path, "内容未下发（等运行时契约）", theme);
     };
 
     let total = content.chars().count();
     let visible: String = content.chars().take(MAX_CHARS).collect();
-    // 字体按类型选择：文档形态里 md/markdown 走正文字体，其余（含未识别扩展名）等宽。
-    let mono = if is_document(path) {
-        !is_prose(path)
-    } else {
-        true
-    };
     let mut body = div().text_sm().text_color(theme.foreground);
-    if mono {
+    if use_mono(path) {
         body = body.font_family(theme.mono_font_family.clone());
     }
 
-    let mut column = div().flex().flex_col().gap_2().child(path_row);
+    let mut column = div().flex().flex_col().gap_2().child(path_row(path, theme));
     // 正文区：截断兜底后的内容纵向可滚（`overflow_y_scroll` 需带 id 的元素）。
     column = column.child(
         div()
@@ -162,14 +172,54 @@ fn read_bounded(path: &str) -> std::io::Result<(Vec<u8>, bool)> {
     Ok((buf, false))
 }
 
-/// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
+/// A14：带载荷渲染。`Text` ⇒ 等宽行列表 + 截断提示行；未下发 / 失败 ⇒
+/// 照实显示原因（⛔ 不伪造正文）；其他种类载荷与本预览器不符 ⇒ 占位外壳。
 pub(super) fn render_with_payload(
     path: &str,
-    payload: &crate::state::preview_payload::PreviewPayload,
+    payload: &PreviewPayload,
     theme: &gpui_kit::component::Theme,
 ) -> AnyElement {
-    let _ = payload;
-    render(path, theme)
+    match payload {
+        PreviewPayload::Text(text) => render_payload_lines(path, text, theme),
+        PreviewPayload::NotDelivered { reason } => render_notice(path, reason, theme),
+        PreviewPayload::Failed(err) => render_notice(path, &err.line(), theme),
+        _ => render(path, theme),
+    }
+}
+
+/// 行列表：沿用既有外壳（路径头 + 可滚正文 + 截断提示）。
+fn render_payload_lines(
+    path: &str,
+    payload: &TextPayload,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
+    let mut body = div().text_sm().text_color(theme.foreground);
+    if use_mono(path) {
+        body = body.font_family(theme.mono_font_family.clone());
+    }
+    let mut column = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(path_row(path, theme));
+    // 正文区：行列表纵向可滚（`overflow_y_scroll` 需带 id 的元素）。
+    column = column.child(
+        div()
+            .id("preview-text-lines")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(body.child(payload.lines.join("\n"))),
+    );
+    if payload.truncated {
+        column = column.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child("内容超过预览上限，已截断显示。"),
+        );
+    }
+    column.into_any_element()
 }
 
 #[cfg(test)]
