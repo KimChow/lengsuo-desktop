@@ -387,3 +387,197 @@ fn collapse_view(theme: &Theme, label: &str) -> Div {
         .text_color(theme.muted_foreground)
         .child(label.to_string())
 }
+
+/// 逐字断言用例（key → 期望中文，均取自任务书逐字摘录）。
+#[cfg(test)]
+#[rustfmt::skip]
+const VERBATIM: &[(&str, &str)] = &[
+    ("collab.plan.create.addAttachmentAria", "添加附件"),
+    ("collab.plan.create.addLibraryAria", "添加资料"),
+    ("collab.plan.create.aria.todoAttributes", "待办属性"),
+    ("collab.plan.create.assigneeFallback", "处理人"),
+    ("collab.plan.create.assigneeMulti", "{first} 等 {count} 人"),
+    ("collab.plan.create.attachmentFallbackName", "附件"),
+    ("collab.plan.create.attachmentPendingUpload", "{name}（待上传）"),
+    ("collab.plan.create.attachmentRemoveAria", "移除附件"),
+    ("collab.plan.create.attachmentSectionTitle", "附件 {count}"),
+    ("collab.plan.create.attachmentSource.local", "本地文件"),
+    ("collab.plan.create.attachmentSource.netdisk", "项目资产"),
+    ("collab.plan.create.collapseAria", "恢复默认高度"),
+];
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
+    // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
+    // 覆盖：文案逐字 / 纯函数 / 空态 / 分支渲染不 panic。
+    use super::{
+        assignee_row, attachment_display, attachment_section_title, copy, main_area, render,
+        resolve, view_model, Attachment, AttachmentRow, AttachmentSource, PlanDraft, Row, State,
+        ViewModel, COPY, NOT_DELIVERED, NS_KEY_COUNT, NS_PREFIX, PANEL_TITLE, VERBATIM,
+    };
+    use gpui_kit::component::Theme;
+
+    /// 文案逐字：全表与摘录一致，键属本命名空间，不超全表键数。
+    #[test]
+    fn copy_verbatim() {
+        assert_eq!(COPY, VERBATIM);
+        for (k, _) in COPY {
+            assert!(*k == NS_PREFIX || k.starts_with("collab.plan.create."));
+        }
+        assert!(COPY.len() <= NS_KEY_COUNT);
+    }
+
+    /// 标题与命名空间前缀逐字。
+    #[test]
+    fn title_and_namespace() {
+        assert_eq!(PANEL_TITLE, "协作计划·新建");
+        assert_eq!(NS_PREFIX, "collab.plan.create");
+        assert_eq!(copy("collab.plan.create.nonexistent"), None);
+    }
+
+    /// 状态解析四分支；默认态 = 加载中（未拉取过 ≠ 空集）。
+    #[test]
+    fn resolve_four_states() {
+        assert_eq!(State::default(), State::Loading);
+        assert_eq!(resolve(None), State::Loading);
+        assert_eq!(resolve(Some(Err(()))), State::LoadFailed);
+        assert_eq!(resolve(Some(Ok(None))), State::Empty);
+        let draft = PlanDraft::default();
+        assert_eq!(resolve(Some(Ok(Some(draft.clone())))), State::Normal(draft));
+    }
+
+    /// 处理人行：0 人空态 / 1 人显名 / 多人模板填槽。
+    #[test]
+    fn assignee_row_branches() {
+        assert_eq!(assignee_row(&[]), Row::Empty("处理人"));
+        let one = vec!["李昊".to_string()];
+        assert_eq!(assignee_row(&one), Row::Value("李昊".to_string()));
+        let many = vec!["李昊".to_string(), "王五".to_string(), "赵六".to_string()];
+        assert_eq!(assignee_row(&many), Row::Value("李昊 等 3 人".to_string()));
+    }
+
+    /// 附件展示名：无名 fallback / 待上传模板 / 来源文案逐字。
+    #[test]
+    fn attachment_display_and_sources() {
+        let named = Attachment {
+            name: Some("纪要.pdf".to_string()),
+            source: AttachmentSource::Local,
+            pending_upload: false,
+        };
+        assert_eq!(attachment_display(&named), "纪要.pdf");
+        let pending = Attachment {
+            pending_upload: true,
+            ..named
+        };
+        assert_eq!(attachment_display(&pending), "纪要.pdf（待上传）");
+        let unnamed = Attachment {
+            name: None,
+            source: AttachmentSource::Netdisk,
+            pending_upload: true,
+        };
+        assert_eq!(attachment_display(&unnamed), "附件（待上传）");
+        assert_eq!(AttachmentSource::Local.label(), "本地文件");
+        assert_eq!(AttachmentSource::Netdisk.label(), "项目资产");
+    }
+
+    /// 附件区标题：{count} 取真实计数。
+    #[test]
+    fn attachment_section_title_counts() {
+        assert_eq!(attachment_section_title(0), "附件 0");
+        assert_eq!(attachment_section_title(3), "附件 3");
+    }
+
+    /// 空态：逐字空态提示，不是空白；添加入口文案逐字。
+    #[test]
+    fn empty_state_renders_hints() {
+        let vm = view_model(&State::Empty);
+        assert_eq!(vm.assignee, Row::Empty("处理人"));
+        assert_eq!(vm.attachment_title, Row::Value("附件 0".to_string()));
+        assert!(vm.attachments.is_empty());
+        assert_eq!(vm.add_attachment, "添加附件");
+        assert_eq!(vm.add_library, "添加资料");
+        assert_eq!(vm.attributes_label, "待办属性");
+    }
+
+    /// 加载中/失败：fail-closed，数据位「未下发」，⛔ 不伪造空态/0 计数。
+    #[test]
+    fn loading_and_failed_fail_closed() {
+        for state in [State::Loading, State::LoadFailed] {
+            let vm = view_model(&state);
+            assert_eq!(vm.assignee, Row::NotDelivered);
+            assert_eq!(vm.attachment_title, Row::NotDelivered);
+            assert!(vm.attachments.is_empty());
+        }
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    /// 正常态：草稿逐项落到行（多人模板 / 待上传 / 无名 fallback / 来源）。
+    #[test]
+    fn normal_branch_maps_draft() {
+        let draft = PlanDraft {
+            assignees: vec!["李昊".to_string(), "王五".to_string()],
+            attachments: vec![
+                Attachment {
+                    name: Some("纪要.pdf".to_string()),
+                    source: AttachmentSource::Local,
+                    pending_upload: true,
+                },
+                Attachment {
+                    name: None,
+                    source: AttachmentSource::Netdisk,
+                    pending_upload: false,
+                },
+            ],
+        };
+        let vm = view_model(&State::Normal(draft));
+        assert_eq!(vm.assignee, Row::Value("李昊 等 2 人".to_string()));
+        assert_eq!(vm.attachment_title, Row::Value("附件 2".to_string()));
+        assert_eq!(
+            vm.attachments,
+            vec![
+                AttachmentRow {
+                    name: "纪要.pdf（待上传）".to_string(),
+                    source: "本地文件",
+                    remove: "移除附件",
+                },
+                AttachmentRow {
+                    name: "附件".to_string(),
+                    source: "项目资产",
+                    remove: "移除附件",
+                },
+            ]
+        );
+        assert_eq!(vm.collapse, "恢复默认高度");
+    }
+
+    /// 四分支渲染只构建元素树，不 panic；main_area 无源 ⇒ 加载中如实呈现。
+    #[test]
+    fn render_branches_build_tree_only() {
+        let theme = Theme::default();
+        let states = [
+            State::Loading,
+            State::LoadFailed,
+            State::Empty,
+            State::Normal(PlanDraft::default()),
+        ];
+        for state in &states {
+            let _ = render(&theme, &view_model(state));
+        }
+        let _ = main_area(&theme);
+    }
+
+    /// 渲染模型字段齐全性（title 常量贯穿四分支）。
+    #[test]
+    fn view_model_keeps_title_in_all_branches() {
+        let vms: [ViewModel; 4] = [
+            view_model(&State::Loading),
+            view_model(&State::LoadFailed),
+            view_model(&State::Empty),
+            view_model(&State::Normal(PlanDraft::default())),
+        ];
+        for vm in vms {
+            assert_eq!(vm.title, PANEL_TITLE);
+        }
+    }
+}
