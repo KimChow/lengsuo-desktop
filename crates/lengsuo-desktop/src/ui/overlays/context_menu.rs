@@ -189,33 +189,86 @@ impl ContextMenuState {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`ContextMenuState::initial`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &ContextMenuState::initial())
+}
+
+/// 按状态渲染整层：标题行 + 中央区（未下发 / 空态 / 菜单面板）。
+fn render(theme: &Theme, state: &ContextMenuState) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
-        .child(
+        .child(title_row(theme))
+        .child(body(theme, state))
+}
+
+/// 标题行（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 中央区：未下发 / 空态走居中提示行；有菜单项走面板。
+fn body(theme: &Theme, state: &ContextMenuState) -> Div {
+    match state {
+        ContextMenuState::NotDelivered => hint_panel(theme, NOT_DELIVERED),
+        ContextMenuState::Ready(model) if model.is_empty() => hint_panel(theme, EMPTY_HINT),
+        ContextMenuState::Ready(model) => menu_panel(theme, model),
+    }
+}
+
+/// 居中提示行（未下发 / 空态共用，弱色）。
+fn hint_panel(theme: &Theme, text: &str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 菜单面板：菜单项行 + 尾部错误行（⛔ 未下发不伪造条目/数值）。
+fn menu_panel(theme: &Theme, model: &MenuModel) -> Div {
+    let mut panel = div()
+        .flex()
+        .flex_col()
+        .m_4()
+        .w_64()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border);
+    for (idx, item) in model.items.iter().enumerate() {
+        let mut row = div().px_4().py_2().text_sm().text_color(theme.foreground);
+        if idx > 0 {
+            row = row.border_t_1().border_color(theme.border);
+        }
+        panel = panel.child(row.child(item.label()));
+    }
+    if let Some(error) = model.error {
+        panel = panel.child(
             div()
                 .px_4()
                 .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
+                .text_xs()
+                .border_t_1()
+                .border_color(theme.border)
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .child(error.text()),
+        );
+    }
+    panel
 }
 #[cfg(test)]
 mod tests {
