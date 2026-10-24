@@ -121,32 +121,90 @@ impl TaskStatusState {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`TaskStatusState::initial`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &TaskStatusState::initial())
+}
+
+/// 按状态渲染整层：标题行 + 徽标清单（空态 ⇒ 居中「未下发」）。
+fn render(theme: &Theme, state: &TaskStatusState) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme))
+        .child(body(theme, state))
+}
+
+/// 标题行（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 主体：有徽标 ⇒ 清单行；空态 ⇒ 居中「未下发」（fail-closed，⛔ 不伪造条目）。
+fn body(theme: &Theme, state: &TaskStatusState) -> Div {
+    if state.is_empty_state() {
+        return div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED);
+    }
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .children(state.badges().iter().map(|status| badge_row(theme, *status)))
+}
+
+/// 徽标清单行：label 徽标 + 可选 tag 徽标 + description 说明。
+fn badge_row(theme: &Theme, status: TaskStatus) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
+                .px_2()
+                .py_1()
+                .rounded_full()
+                .border_1()
+                .border_color(theme.border)
                 .text_sm()
-                .font_bold()
                 .text_color(theme.foreground)
-                .child(TITLE),
+                .child(status.label()),
         )
+        .children(status.tag().map(|tag| {
+            div()
+                .px_2()
+                .py_1()
+                .rounded_full()
+                .border_1()
+                .border_color(theme.accent)
+                .text_xs()
+                .text_color(theme.accent)
+                .child(tag)
+        }))
         .child(
             div()
                 .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(status.description()),
         )
 }
 #[cfg(test)]
@@ -246,5 +304,29 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_branches_build_without_panic() {
+        let theme = Theme::default();
+        let _ = super::render(&theme, &TaskStatusState::NotDelivered);
+        let _ = super::render(&theme, &TaskStatusState::Ready(Vec::new()));
+        let _ = super::render(
+            &theme,
+            &TaskStatusState::Ready(TaskStatus::ALL.to_vec()),
+        );
+    }
+
+    #[test]
+    fn empty_state_centers_not_delivered_hint() {
+        // 空态 = 居中提示「未下发」，不是空白或空列表（fail-closed 契约由测试钉死）。
+        for state in [
+            TaskStatusState::NotDelivered,
+            TaskStatusState::Ready(Vec::new()),
+        ] {
+            assert!(state.is_empty_state());
+        }
+        let ready = TaskStatusState::Ready(TaskStatus::ALL.to_vec());
+        assert!(!ready.is_empty_state());
     }
 }
