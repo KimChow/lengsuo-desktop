@@ -5,8 +5,13 @@
 //! 图像内容由运行时契约下发，未下发时诚实显示，⛔ 不伪造图像。
 //!
 //! 纯函数层（本段）无 GPUI 依赖，可无窗口测试。
+use std::io::{Cursor, Read as _};
+use std::sync::Arc;
+
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::*;
+
+use crate::state::preview_payload::{DecodeError, ImagePayload, PreviewPayload, MAX_BYTES};
 
 /// 缩放档位（0.25 / 0.5 / 1.0 / 2.0 / 4.0）。
 pub(super) fn zoom_steps() -> [f32; 5] {
@@ -49,16 +54,25 @@ pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyEleme
 
 /// 带显式状态的纯视图函数：渲染结果只依赖参数，不依赖 GPUI 侧可变状态。
 fn render_with(path: &str, fit: bool, zoom: f32, theme: &gpui_kit::component::Theme) -> AnyElement {
-    // 视图边界把传入缩放归一到合法档位（非法值落 1.0）；
-    // 点击步进接线后，同一函数承担 +1/-1 步进。
-    let zoom = next_zoom(zoom, 0);
+    render_shell(path, fit, zoom, IMAGE_NOT_DELIVERED, theme)
+}
+
+/// 外壳底座：元信息行 + 占位容器（提示文案可换）+ 缩放行。
+/// 视图边界把传入缩放归一到合法档位（非法值落 1.0）；点击步进接线后同一函数承担步进。
+fn render_shell(
+    path: &str,
+    fit: bool,
+    zoom: f32,
+    note: &str,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
     div()
         .flex()
         .flex_col()
         .gap_2()
         .child(meta_row(path, theme))
-        .child(image_container(theme))
-        .child(zoom_row(fit, zoom, theme))
+        .child(image_container(note, theme))
+        .child(zoom_row(fit, next_zoom(zoom, 0), theme))
         .into_any_element()
 }
 
@@ -85,8 +99,8 @@ fn meta_row(path: &str, theme: &gpui_kit::component::Theme) -> Div {
         )
 }
 
-/// 图片容器：`muted` 底 + `border` 描边 + 居中占位图记号；未下发时诚实占位。
-fn image_container(theme: &gpui_kit::component::Theme) -> Div {
+/// 图片容器：`muted` 底 + `border` 描边 + 居中占位图记号 + 一行如实提示（文案由调用方给）。
+fn image_container(note: &str, theme: &gpui_kit::component::Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -104,7 +118,7 @@ fn image_container(theme: &gpui_kit::component::Theme) -> Div {
             div()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(IMAGE_NOT_DELIVERED),
+                .child(note.to_string()),
         )
 }
 
@@ -190,29 +204,150 @@ fn fit_toggle(fit: bool, theme: &gpui_kit::component::Theme) -> Div {
 //   · `render_with_payload`  —— 把载荷画出来。**默认退回既有占位视图**，因此外壳
 //                              （头信息 / 缩放控件 / 「未下发」提示行）行为与本次基建前一致。
 
-/// A14：解码待预览文件。当前为**诚实占位**（不读文件、不解码）。
-pub(super) fn decode(
-    _path: &str,
-    _bytes: Option<&[u8]>,
-) -> crate::state::preview_payload::PreviewPayload {
-    crate::state::preview_payload::PreviewPayload::NotDelivered {
-        reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+/// 解压后像素数上限（16 MP）：防解压炸弹，超限 fail-closed。
+const MAX_PIXELS: u64 = 16_000_000;
+
+/// 读文件前 [`MAX_BYTES`] 字节（⛔ 不整包进内存），返回 (字节, 原始长度)。
+fn read_capped(path: &str) -> Result<(Vec<u8>, usize), String> {
+    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len() as usize;
+    let mut buf = vec![0u8; len.min(MAX_BYTES)];
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    file.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    Ok((buf, len))
+}
+
+/// 从字节解出 (格式名, 宽, 高)；识别不出 / 尺寸解不出 ⇒ Err（fail-closed）。
+fn sniff(data: &[u8]) -> Result<(String, u32, u32), String> {
+    let reader = image::ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let format = reader.format().ok_or("无法识别图像格式")?;
+    let (width, height) = reader.into_dimensions().map_err(|e| e.to_string())?;
+    if u64::from(width) * u64::from(height) > MAX_PIXELS {
+        return Err(format!("像素数超限（{width}×{height} > {MAX_PIXELS}）"));
+    }
+    Ok((format!("{format:?}").to_lowercase(), width, height))
+}
+
+/// A14：解码待预览图片。
+///
+/// 字节优先用运行时下发（`bytes`：⛔ 只用传入字节，不碰文件系统）；
+/// 未下发则读 `path`（按 [`MAX_BYTES`] 截断）。拿不到 / 识别不出 ⇒ `Failed`，⛔ 绝不伪造。
+pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
+    let (capped, source_len) = match bytes {
+        Some(b) => (b[..b.len().min(MAX_BYTES)].to_vec(), b.len()),
+        None => match read_capped(path) {
+            Ok(pair) => pair,
+            Err(e) => return PreviewPayload::Failed(DecodeError::Io(e)),
+        },
+    };
+    let (format, width, height) = match sniff(&capped) {
+        Ok(it) => it,
+        Err(msg) => return PreviewPayload::Failed(DecodeError::Parse(msg)),
+    };
+    PreviewPayload::Image(ImagePayload {
+        bytes: capped,
+        format,
+        width,
+        height,
+        source_len,
+    })
+}
+
+/// 载荷的元信息行：宽×高 · 格式 · 字节数（截断时如实标注原大小）。
+fn info_line(p: &ImagePayload) -> String {
+    if p.source_len > p.bytes.len() {
+        format!(
+            "{} × {} · {} · 已截断（原 {} 字节，预览 {} 字节）",
+            p.width,
+            p.height,
+            p.format,
+            p.source_len,
+            p.bytes.len()
+        )
+    } else {
+        format!(
+            "{} × {} · {} · {} 字节",
+            p.width,
+            p.height,
+            p.format,
+            p.bytes.len()
+        )
     }
 }
 
-/// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
+/// A14：带载荷渲染。图片载荷 ⇒ 真像素（整图解码成功时，适应窗口夹紧）；
+/// 其余态（未下发 / 失败 / 非图片载荷）如实说明，⛔ 不伪造图像。
 pub(super) fn render_with_payload(
     path: &str,
-    payload: &crate::state::preview_payload::PreviewPayload,
+    payload: &PreviewPayload,
     theme: &gpui_kit::component::Theme,
 ) -> AnyElement {
-    let _ = payload;
-    render(path, theme)
+    match payload {
+        PreviewPayload::Image(p) => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(meta_row(path, theme))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(info_line(p)),
+            )
+            .child(image_view(p, theme))
+            .child(zoom_row(true, zoom_steps()[2], theme))
+            .into_any_element(),
+        PreviewPayload::NotDelivered { .. } => render(path, theme),
+        PreviewPayload::Failed(err) => render_shell(path, true, 1.0, &err.line(), theme),
+        _ => render_shell(path, true, 1.0, "载荷不是图片（类型不匹配）", theme),
+    }
+}
+
+/// 图片视图：整图解码成功 ⇒ `img()` 真像素；失败（如截断字节解不出整图）⇒ 如实占位。
+fn image_view(p: &ImagePayload, theme: &gpui_kit::component::Theme) -> Div {
+    let container = div()
+        .flex()
+        .w_full()
+        .min_h_48()
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.muted);
+    match image::load_from_memory(&p.bytes) {
+        Ok(decoded) => container.child(
+            img(Arc::new(RenderImage::new(vec![image::Frame::new(
+                decoded.to_rgba8(),
+            )])))
+            .object_fit(ObjectFit::Contain)
+            .w_full(),
+        ),
+        Err(_) => container.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child("像素渲染不可用（字节不完整，无法整图解码）"),
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{fit_label, next_zoom, zoom_steps};
+    use super::{decode, fit_label, next_zoom, zoom_steps};
+    use crate::state::preview_payload::{DecodeError, PreviewPayload, MAX_BYTES};
+
+    /// 3×2 纯色 PNG（内存构造，不碰磁盘）；`pub(super)` 供 render_tests 复用。
+    pub(super) fn tiny_png() -> Vec<u8> {
+        let pixels = image::RgbaImage::from_pixel(3, 2, image::Rgba([24, 48, 96, 255]));
+        let mut buf = Vec::new();
+        image::DynamicImage::ImageRgba8(pixels)
+            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .expect("内存编码 3×2 PNG 不会失败");
+        buf
+    }
 
     #[test]
     fn zoom_steps_cover_quarter_to_4x() {
@@ -239,6 +374,56 @@ mod tests {
         assert_eq!(fit_label(true), "适应窗口");
         assert_eq!(fit_label(false), "原始大小");
     }
+
+    /// ① 正常字节 ⇒ 载荷字段全对（格式 / 宽高 / 字节 / 原始长度，未截断）。
+    #[test]
+    fn decode_png_bytes_yields_full_payload() {
+        let png = tiny_png();
+        let PreviewPayload::Image(p) = decode("a/tiny.png", Some(&png)) else {
+            panic!("合法 PNG 字节必须解出 Image 载荷");
+        };
+        assert_eq!((p.width, p.height), (3, 2));
+        assert_eq!(p.format, "png");
+        assert_eq!(p.bytes, png);
+        assert_eq!(p.source_len, png.len());
+        assert_eq!(p.source_len, p.bytes.len(), "未超限不许标截断");
+    }
+
+    /// ② 垃圾字节 ⇒ fail-closed 返回 `Failed`，不 panic、不伪造内容。
+    #[test]
+    fn decode_garbage_bytes_fail_closed() {
+        match decode("x.png", Some(b"definitely not an image")) {
+            PreviewPayload::Failed(DecodeError::Parse(_)) => {}
+            other => panic!("垃圾字节必须 Parse 失败，得到 {other:?}"),
+        }
+    }
+
+    /// ②b `bytes = None` 且路径不存在 ⇒ `Failed(Io)`（同样 fail-closed，不 panic）。
+    #[test]
+    fn decode_missing_path_fails_io() {
+        assert!(matches!(
+            decode("/nonexistent/definitely-missing.png", None),
+            PreviewPayload::Failed(DecodeError::Io(_))
+        ));
+    }
+
+    /// ③ 超 `MAX_BYTES` ⇒ 截断到上限：`bytes.len() == MAX_BYTES` 且
+    /// `source_len > bytes.len()`（载荷以长度差表达截断态），头信息仍可解尺寸。
+    #[test]
+    fn decode_over_max_bytes_truncates() {
+        let mut oversized = tiny_png();
+        oversized.resize(MAX_BYTES + 1024, 0);
+        let PreviewPayload::Image(p) = decode("big.png", Some(&oversized)) else {
+            panic!("超限字节（头完整）仍应给出载荷");
+        };
+        assert_eq!(p.bytes.len(), MAX_BYTES);
+        assert_eq!(p.source_len, MAX_BYTES + 1024);
+        assert!(
+            p.source_len > p.bytes.len(),
+            "source_len > bytes.len() 即截断"
+        );
+        assert_eq!((p.width, p.height), (3, 2));
+    }
 }
 
 /// 接线层的无窗口渲染断言：`TestAppContext` + `VisualTestContext::draw`
@@ -247,7 +432,8 @@ mod tests {
 /// ⛔ 不写 `use super::*`：避免 GPUI 的 `test` 属性宏遮蔽标准库 `#[test]`。
 #[cfg(all(test, feature = "ui"))]
 mod render_tests {
-    use super::{render_with, zoom_steps};
+    use super::{decode, render_with, render_with_payload, zoom_steps};
+    use crate::state::preview_payload::{DecodeError, PreviewPayload};
     use gpui_kit::component::Theme;
     use gpui_kit::{
         div, point, px, size, AnyElement, Bounds, InteractiveElement as _, IntoElement,
@@ -311,5 +497,22 @@ mod render_tests {
     fn image_panel_normalizes_invalid_zoom() {
         let bounds = draw_probe(|theme| render_with("c/d.webp", true, 0.3, theme));
         assert_rendered(bounds, "图片预览（非法档位归一态）");
+    }
+
+    /// ④ `bytes = Some(..)` → decode → render 端到端：真像素路径完整画一帧不 panic。
+    #[test]
+    fn decoded_payload_renders_end_to_end() {
+        let png = super::tests::tiny_png();
+        let payload = decode("a/tiny.png", Some(&png));
+        let bounds = draw_probe(|theme| render_with_payload("a/tiny.png", &payload, theme));
+        assert_rendered(bounds, "图片预览（decode→render 端到端）");
+    }
+
+    /// ④b 失败载荷：`Failed` 的诚实说明行照实画出（外壳保留），不 panic。
+    #[test]
+    fn failed_payload_renders_honest_note() {
+        let payload = PreviewPayload::Failed(DecodeError::Parse("坏字节".to_owned()));
+        let bounds = draw_probe(|theme| render_with_payload("x.png", &payload, theme));
+        assert_rendered(bounds, "图片预览（失败态说明行）");
     }
 }
