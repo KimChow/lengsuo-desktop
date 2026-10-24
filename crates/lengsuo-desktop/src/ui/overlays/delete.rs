@@ -114,12 +114,14 @@ pub struct DeleteOverlay {
 }
 
 impl DeleteOverlay {
+    /// 以指定状态构造。
+    pub const fn new(state: State) -> Self {
+        Self { state }
+    }
+
     /// 由已下发的分支序列构造；空输入 ⇒ `NotDelivered` 空态（⛔ 不是空列表）。
     pub fn from_delivered(states: &[State]) -> Self {
-        states
-            .first()
-            .copied()
-            .map_or(Self::default(), |state| Self { state })
+        states.first().copied().map_or(Self::default(), Self::new)
     }
 
     /// 分支标题；非业务分支 ⇒ `None`（fail-closed）。
@@ -213,7 +215,14 @@ fn branch_card(theme: &Theme, overlay: &DeleteOverlay) -> Div {
                 .text_color(theme.muted_foreground)
                 .child(overlay.content().unwrap_or(NOT_DELIVERED)),
         )
-        .child(div().flex().items_center().gap_2().child(confirm).child(cancel))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(confirm)
+                .child(cancel),
+        )
 }
 
 /// 提交反馈 chip（进行中/成功/失败 toast 文案，语义色取 theme token）。
@@ -257,9 +266,9 @@ pub fn main_area(theme: &Theme) -> Div {
         .flex_col()
         .gap_2()
         .child(div().text_color(theme.foreground).child(TITLE))
-        .child(branch_card(theme, &DeleteOverlay { state: State::Dialog }))
-        .child(branch_card(theme, &DeleteOverlay { state: State::Inline }))
-        .child(branch_card(theme, &DeleteOverlay { state: State::Running }))
+        .child(branch_card(theme, &DeleteOverlay::new(State::Dialog)))
+        .child(branch_card(theme, &DeleteOverlay::new(State::Inline)))
+        .child(branch_card(theme, &DeleteOverlay::new(State::Running)))
         .child(
             div()
                 .flex()
@@ -273,16 +282,105 @@ pub fn main_area(theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::{main_area, text, DeleteOverlay, State, BRANCHES, TEXTS, TITLE};
     use gpui_kit::component::Theme;
+
+    /// ① 纯函数层状态/计数正确：全表 27 键、全部在命名空间内且不重复。
+    #[test]
+    fn table_has_27_unique_keys_in_delete_namespace() {
+        assert_eq!(TEXTS.len(), 27);
+        assert!(TEXTS.iter().all(|(k, _)| k.starts_with("delete.")));
+        let mut keys: Vec<&str> = TEXTS.iter().map(|(k, _)| *k).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), TEXTS.len());
+    }
+
+    /// ① 分支计数：恰为三条业务分支。
+    #[test]
+    fn branch_count_is_three() {
+        assert_eq!(BRANCHES, [State::Dialog, State::Inline, State::Running]);
+    }
+
+    /// ② 空输入 ⇒ `NotDelivered` 空态（不是空列表），且不产出任何文案。
+    #[test]
+    fn empty_delivered_input_yields_not_delivered_state() {
+        let overlay = DeleteOverlay::from_delivered(&[]);
+        assert_eq!(overlay.state, State::NotDelivered);
+        assert_eq!(overlay.title(), None);
+        assert_eq!(overlay.content(), None);
+        assert_eq!(overlay.confirm_label(), None);
+    }
+
+    /// ③ 文案逐字一致（对 ≥3 个 key 断言，含占位符长文案）。
+    #[test]
+    fn copy_is_verbatim_from_table() {
+        assert_eq!(text("delete.dialog.title"), Some("删除任务"));
+        assert_eq!(
+            text("delete.inline.running.content"),
+            Some("该任务正在执行中，删除将立即终止运行，且无法恢复。")
+        );
+        assert_eq!(
+            text("delete.worktree.dialog.dirtyWarningSummary"),
+            Some("Uncommitted +{stagedAdditions} -{stagedDeletions}，Unstaged +{unstagedAdditions} -{unstagedDeletions}，可取消删除后回到对话中处理。")
+        );
+    }
+
+    /// ⑤ 分支覆盖：三条业务分支的标题/正文/确认文案全部可解析。
+    #[test]
+    fn every_branch_resolves_all_labels() {
+        for state in BRANCHES {
+            let overlay = DeleteOverlay { state };
+            assert!(overlay.title().is_some(), "{state:?} 缺标题");
+            assert!(overlay.content().is_some(), "{state:?} 缺正文");
+            assert!(overlay.confirm_label().is_some(), "{state:?} 缺确认文案");
+        }
+    }
+
+    /// ⑤ 分支覆盖：各分支文案与全表逐键对齐，取消动作仅删除确认分支提供。
+    #[test]
+    fn branch_labels_match_table() {
+        let dialog = DeleteOverlay::new(State::Dialog);
+        assert_eq!(dialog.title(), Some("删除任务"));
+        assert_eq!(dialog.confirm_label(), Some("确认删除"));
+        assert_eq!(dialog.cancel_label(), Some("取消"));
+        let inline = DeleteOverlay::new(State::Inline);
+        assert_eq!(inline.title(), Some("删除任务？"));
+        assert_eq!(inline.confirm_label(), Some("确认"));
+        assert_eq!(inline.cancel_label(), None);
+        let running = DeleteOverlay::new(State::Running);
+        assert_eq!(running.title(), Some("删除任务？"));
+        assert_eq!(running.confirm_label(), Some("停止并删除"));
+        assert_eq!(running.cancel_label(), None);
+    }
+
+    /// ⑤ 反馈分支：loading/success/failed 映射全表，未下发无反馈。
+    #[test]
+    fn toast_states_match_table() {
+        assert_eq!(
+            DeleteOverlay::new(State::Loading).toast_text(),
+            Some("正在删除...")
+        );
+        assert_eq!(
+            DeleteOverlay::new(State::Success).toast_text(),
+            Some("删除成功")
+        );
+        assert_eq!(
+            DeleteOverlay::new(State::Failed).toast_text(),
+            Some("删除失败，请重试")
+        );
+        assert_eq!(DeleteOverlay::new(State::NotDelivered).toast_text(), None);
+    }
+
+    /// 默认态：未拉取过 ≠ 空集，默认必须是 NotDelivered。
     #[test]
     fn default_state_is_not_delivered() {
         assert_eq!(State::default(), State::NotDelivered);
-    }
-    #[test]
-    fn title_not_empty() {
+        assert_eq!(DeleteOverlay::default().state, State::NotDelivered);
         assert!(!TITLE.is_empty());
     }
+
+    /// ④ `main_area(&Theme::default())` 不 panic。
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
