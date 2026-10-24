@@ -15,7 +15,7 @@ pub const BUNDLED_RUNTIME: &str = "内置运行时";
 /// 「内置运行时」区块说明（`settings.softwareConfig.bundledRuntimeDesc`）。
 pub const BUNDLED_RUNTIME_DESC: &str = "允许使用随包提供的运行时工具。";
 /// 「内置运行时」安装位置说明（`settings.softwareConfig.bundledRuntimePath`）。
-pub const BUNDLED_RUNTIME_PATH: &str = "内置运行时安装在 ~/.workbuddy/ 目录下。";
+pub const BUNDLED_RUNTIME_PATH: &str = "内置运行时安装在 ~/.lengsuo/ 目录下。";
 /// 「运行时列表」区块标题（`settings.softwareConfig.runtimeTools`）。
 pub const RUNTIME_TOOLS: &str = "运行时列表";
 /// 表格列名（`settings.softwareConfig.colTool`）。
@@ -202,7 +202,7 @@ mod tests {
         // 抽查关键文案（逐字，含全角标点）——防手改漂移。
         assert_eq!(
             BUNDLED_RUNTIME_PATH,
-            "内置运行时安装在 ~/.workbuddy/ 目录下。"
+            "内置运行时安装在 ~/.lengsuo/ 目录下。"
         );
         assert_eq!(TARGET_PLATFORM, "主要面向 Windows。");
         assert_eq!(

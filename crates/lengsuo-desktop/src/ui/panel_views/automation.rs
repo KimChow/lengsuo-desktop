@@ -24,7 +24,7 @@ use gpui_kit::*;
 pub const TITLE: &str = "定时任务";
 
 /// 面板描述（`automation.list.description`，逐字）。
-pub const DESCRIPTION: &str = "配置定时任务，Workbuddy 将按计划定时执行任务";
+pub const DESCRIPTION: &str = "配置定时任务，冷锁 将按计划定时执行任务";
 
 /// 清单空态主文案（`automation.empty`，逐字）。
 pub const EMPTY: &str = "暂无定时任务";
@@ -463,7 +463,7 @@ mod tests {
     fn copy_is_verbatim_from_namespace() {
         assert_eq!(
             super::DESCRIPTION,
-            "配置定时任务，Workbuddy 将按计划定时执行任务"
+            "配置定时任务，冷锁 将按计划定时执行任务"
         );
         assert_eq!(EMPTY, "暂无定时任务");
         assert_eq!(EMPTY_FIRST_TASK, "开启你的第一个定时任务吧");

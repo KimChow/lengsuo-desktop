@@ -17,11 +17,11 @@ pub const WELCOME: &str = "欢迎体验实验性功能";
 /// `settings.laboratory.invitation`。
 pub const INVITATION: &str = "邀你抢先体验 🎉";
 /// `settings.laboratory.description1`。
-pub const DESCRIPTION1: &str = "和同事、WorkBuddy 一起讨论工作";
+pub const DESCRIPTION1: &str = "和同事、冷锁 一起讨论工作";
 /// `settings.laboratory.enter`。
 pub const ENTER: &str = "去体验";
 /// `settings.laboratory.description2`。
-pub const DESCRIPTION2: &str = "@WorkBuddy 整理信息，推进工作。";
+pub const DESCRIPTION2: &str = "@冷锁 整理信息，推进工作。";
 /// `settings.laboratory.preview`。
 pub const PREVIEW: &str = "查看完整频道产品图";
 /// `settings.laboratory.channel`（区块二标题）。
@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].title, "欢迎体验实验性功能");
         assert_eq!(sections[0].rows[0].label, "邀你抢先体验 🎉");
-        assert_eq!(sections[0].rows[0].value, "和同事、WorkBuddy 一起讨论工作");
+        assert_eq!(sections[0].rows[0].value, "和同事、冷锁 一起讨论工作");
         assert_eq!(sections[1].title, "频道");
     }
 

@@ -40,9 +40,9 @@ pub const AUTO_UPDATE_DESCRIPTION: &str =
 pub const CARD_INSTALL_COUNT: &str = "安装次数 {count}";
 
 /// 自动触发开关说明（skills.toggle.tip.enable / .disable，逐字）。
-pub const TOGGLE_TIP_ENABLE: &str = "开启技能自动触发，WorkBuddy 将在对话中自动判断是否使用此技能";
+pub const TOGGLE_TIP_ENABLE: &str = "开启技能自动触发，冷锁 将在对话中自动判断是否使用此技能";
 pub const TOGGLE_TIP_DISABLE: &str =
-    "关闭自动触发后，WorkBuddy 将不在对话中自动触发此技能，仅支持手动触发";
+    "关闭自动触发后，冷锁 将不在对话中自动触发此技能，仅支持手动触发";
 
 /// 分类 Tab 六枚（skills.tab.*，逐字）：已安装 / 推荐 / SkillHub / Knot / 套件 / 企业 Skill。
 pub const TAB_INSTALLED: &str = "已安装";

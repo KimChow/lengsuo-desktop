@@ -44,7 +44,7 @@ pub const STATUS_RUNNING: &str = "运行中";
 
 /// 未开通时的引导提示行（逐字）。
 pub const HINT_NOT_ACTIVATED: &str =
-    "智能体邮箱是为你的 Workbuddy 创建的邮箱。你可以在 Workbuddy 对话中接收或发送邮件。";
+    "智能体邮箱是为你的 冷锁 创建的邮箱。你可以在 冷锁 对话中接收或发送邮件。";
 
 /// 开通中时的提示行（逐字）。
 pub const HINT_ACTIVATING: &str = "正在开通中，请稍候";
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(HINT_ACTIVATING, "正在开通中，请稍候");
         assert_eq!(
             HINT_NOT_ACTIVATED,
-            "智能体邮箱是为你的 Workbuddy 创建的邮箱。你可以在 Workbuddy 对话中接收或发送邮件。"
+            "智能体邮箱是为你的 冷锁 创建的邮箱。你可以在 冷锁 对话中接收或发送邮件。"
         );
         assert_eq!(ACTION_DEACTIVATE, "停用");
         assert_eq!(ACTION_GOTO_MAILBOX, "前往邮箱");

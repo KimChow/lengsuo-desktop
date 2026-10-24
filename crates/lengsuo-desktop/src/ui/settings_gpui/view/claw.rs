@@ -12,7 +12,7 @@ pub const NOT_DELIVERED: &str = "服务端尚未下发内容。";
 /// 「远程通道」区块标题（settings.claw.wecomConnection）。
 pub const SECTION_TITLE: &str = "远程通道";
 /// 「远程通道」区块说明（settings.claw.wecomConnectionDesc）。
-pub const SECTION_DESC: &str = "连接第三方消息通道，即可远程指挥电脑端 WorkBuddy 执行任务。";
+pub const SECTION_DESC: &str = "连接第三方消息通道，即可远程指挥电脑端 冷锁 执行任务。";
 /// 已知通道（穷举：服务端下发的是 id，中文文案由本层映射，⛔ 不收自由文本）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelId {
@@ -102,7 +102,7 @@ fn catalog(id: ChannelId) -> (&'static str, &'static str) {
         ),
         ChannelId::WechatKf => (
             "微信客服号",
-            "与微信助理功能一致，微信扫码即可绑定，远程遥控 WorkBuddy 干活。",
+            "与微信助理功能一致，微信扫码即可绑定，远程遥控 冷锁 干活。",
         ),
         ChannelId::WechatMp => (
             "微信小程序集成",
@@ -110,11 +110,11 @@ fn catalog(id: ChannelId) -> (&'static str, &'static str) {
         ),
         ChannelId::Dingtalk => (
             "钉钉机器人集成",
-            "接入钉钉机器人，成员可在群聊中直接与 WorkBuddy 对话，高效处理指令。",
+            "接入钉钉机器人，成员可在群聊中直接与 冷锁 对话，高效处理指令。",
         ),
         ChannelId::Feishu => (
             "飞书集成",
-            "接入飞书机器人，成员可在群聊中直接与 WorkBuddy 对话，高效处理指令。",
+            "接入飞书机器人，成员可在群聊中直接与 冷锁 对话，高效处理指令。",
         ),
         ChannelId::Slack => ("Slack 集成", "注册 Slack 应用，通过 Slack 接收和回复消息。"),
         ChannelId::Discord => ("Discord 集成", "注册 Discord 机器人以接收和回复消息。"),
