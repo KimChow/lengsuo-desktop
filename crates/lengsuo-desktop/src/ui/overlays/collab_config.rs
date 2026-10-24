@@ -4,6 +4,8 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `collab.config`（全表 93 键）。
 //! 数据源在运行时侧：当前按纯数据层逐分支呈现，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 // ===== 纯数据层（无 GPUI 依赖）=====
 /// 视图标题（`collab.config.title`，逐字取自界面文案全表）。
@@ -309,6 +311,142 @@ pub fn view_of<'a>(state: State, counts: &'a ConfigCounts) -> View<'a> {
         State::Ready if counts.is_empty() => View::Empty,
         State::Ready => View::Normal(counts),
     }
+}
+
+// ===== GPUI 层 =====
+/// 拉取中说明（全表 `collab.activity.panel.loading`，跨命名空间借用，状态文档已说明）。
+const LOADING_TEXT: &str = "加载中…";
+/// 拉取失败说明（全表 `collab.activity.panel.loadFailed`，同上；fail-closed 必须可见）。
+const LOAD_FAILED_TEXT: &str = "加载失败";
+
+/// 配置区卡片（键 = 该区在全表中的文案键；指令区为文本无计数）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Section {
+    Instruction,
+    Automation,
+    Skills,
+    Experts,
+}
+
+impl Section {
+    /// 全表键名（标题）。
+    fn title_key(&self) -> &'static str {
+        match self {
+            Section::Instruction => "collab.config.instruction.title",
+            Section::Automation => "collab.config.automation.title",
+            Section::Skills => "collab.config.skills.title",
+            Section::Experts => "collab.config.experts.title",
+        }
+    }
+
+    /// 全表键名（说明）。
+    fn description_key(&self) -> &'static str {
+        match self {
+            Section::Instruction => "collab.config.instruction.description",
+            Section::Automation => "collab.config.automation.description",
+            Section::Skills => "collab.config.skills.description",
+            Section::Experts => "collab.config.experts.description",
+        }
+    }
+
+    /// 全表键名（动作文案）。
+    fn action_key(&self) -> &'static str {
+        match self {
+            Section::Instruction => "collab.config.instruction.editAction",
+            Section::Automation => "collab.config.automation.addAction",
+            Section::Skills => "collab.config.skills.addAction",
+            Section::Experts => "collab.config.experts.addAction",
+        }
+    }
+
+    /// 标题（逐字）。
+    fn label(&self) -> &'static str {
+        t(self.title_key())
+    }
+
+    /// 说明（逐字）。
+    fn description(&self) -> &'static str {
+        t(self.description_key())
+    }
+
+    /// 动作文案（逐字）。
+    fn action(&self) -> &'static str {
+        t(self.action_key())
+    }
+}
+
+/// 主区/浮层呈现入口。数据源未接线 ⇒ 默认 `Loading`（fail-closed，⛔ 不伪造计数）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render_view(view_of(State::default(), &ConfigCounts::default()), theme)
+}
+
+/// 按视图态逐分支渲染（纯函数；标题行 + 分支内容节点）。
+fn render_view(view: View<'_>, theme: &Theme) -> AnyElement {
+    let root = div().flex().flex_col().gap_2().child(
+        div()
+            .text_color(theme.foreground)
+            .child(SharedString::from(TITLE)),
+    );
+    match view {
+        View::Loading => root.child(caption(LOADING_TEXT, theme)).into_any_element(),
+        View::LoadFailed => root
+            .child(caption(LOAD_FAILED_TEXT, theme))
+            .into_any_element(),
+        View::Empty => root
+            .child(section_card(Section::Instruction, 0, theme))
+            .child(section_card(Section::Automation, 0, theme))
+            .child(section_card(Section::Skills, 0, theme))
+            .child(section_card(Section::Experts, 0, theme))
+            .into_any_element(),
+        View::Normal(counts) => root
+            .child(section_card(Section::Instruction, 0, theme))
+            .child(section_card(Section::Automation, counts.automation, theme))
+            .child(section_card(Section::Skills, counts.skills, theme))
+            .child(section_card(Section::Experts, counts.experts, theme))
+            .into_any_element(),
+    }
+}
+
+/// 一张配置区卡（标题 + 动作行 / 说明；定时任务区附「查看全部({count})」行）。
+fn section_card(section: Section, count: usize, theme: &Theme) -> AnyElement {
+    let card = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_lg()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .child(
+                    div()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(section.label())),
+                )
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(section.action())),
+                ),
+        )
+        .child(caption(section.description(), theme));
+    if let (Section::Automation, Some(label)) = (section, view_all_label(count)) {
+        card.child(caption(&label, theme)).into_any_element()
+    } else {
+        card.into_any_element()
+    }
+}
+
+/// 说明行（弱化色）。
+fn caption(body: &str, theme: &Theme) -> AnyElement {
+    div()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(body.to_string()))
+        .into_any_element()
 }
 
 #[cfg(test)]
