@@ -139,18 +139,52 @@ impl Panel {
         }
     }
 }
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；本卡负责补全真实视图）。
+/// 主区渲染（浮层不占主区，签名不变；无数据源 ⇒ fail-closed「未下发」）。
 pub fn main_area(theme: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
-        .child(
+    render(theme, &Panel::not_delivered())
+}
+/// 面板渲染：非 `Normal`（未拉取/加载中/失败）一律 fail-closed「未下发」；
+/// `Normal` 按快照渲染标题行 + 胶囊 + 各状态标签行（空集 ⇒ 仅空态标题，不渲染空列表）。
+fn render(theme: &Theme, panel: &Panel) -> Div {
+    if panel.state != State::Normal {
+        return div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_color(theme.foreground).child(TITLE))
+            .child(
+                div()
+                    .text_color(theme.muted_foreground)
+                    .child(NOT_DELIVERED),
+            );
+    }
+    let mut view = div().flex().flex_col().gap_2().child(
+        div()
+            .text_color(theme.foreground)
+            .child(SharedString::from(panel.panel_title())),
+    );
+    if let Some(capsule) = panel.capsule_text() {
+        view = view.child(
             div()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .text_color(theme.foreground)
+                .child(SharedString::from(capsule)),
+        );
+    }
+    for status in panel.statuses_present() {
+        view = view.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(div().text_color(theme.foreground).child(status.label()))
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(panel.count(status).to_string())),
+                ),
+        );
+    }
+    view
 }
 #[cfg(test)]
 mod tests {
