@@ -38,7 +38,13 @@ pub enum TaskKind {
 
 impl TaskKind {
     /// 类型行全量（对齐 A52 的四类 + `workMode`）。
-    pub const ALL: [Self; 5] = [Self::Cloud, Self::Local, Self::Code, Self::Design, Self::Work];
+    pub const ALL: [Self; 5] = [
+        Self::Cloud,
+        Self::Local,
+        Self::Code,
+        Self::Design,
+        Self::Work,
+    ];
 
     /// 类型行文案（逐字）。
     pub fn label(self) -> &'static str {
@@ -205,6 +211,9 @@ pub fn fill_updated_at_line(time: &str) -> String {
 // ===== GPUI 层 =====
 
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 无运行时数据源时按纯数据层渲染：标题行 + 类型行 + 状态徽标 + 复制分支名
+/// 动作行 + 明细三态（空态 / 「未下发」fail-closed）；颜色一律取主题 token。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
     div()
@@ -213,25 +222,147 @@ pub fn main_area(theme: &Theme) -> Div {
         .h_full()
         .flex()
         .flex_col()
-        .child(
+        .p_2()
+        .child(hover_card(theme))
+}
+
+/// 悬停卡卡片：标题行 + 内容节点 + 三态明细区。
+fn hover_card(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .child(title_row(theme))
+        .child(kind_list(theme))
+        .child(status_list(theme))
+        .child(copy_branch_row(theme))
+        .child(divider(theme))
+        .child(render_details(theme, &Details::Empty))
+        .child(render_details(theme, &Details::NotDelivered))
+}
+
+/// 标题行。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 类型行清单（`taskHoverCard.*` 全量）。
+fn kind_list(theme: &Theme) -> Div {
+    let mut list = div().flex().flex_col().gap_1();
+    for kind in TaskKind::ALL {
+        list = list.child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
                 .flex()
                 .items_center()
-                .justify_center()
+                .gap_2()
                 .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+                .text_color(theme.foreground)
+                .child(dot(theme))
+                .child(kind.label()),
+        );
+    }
+    list
+}
+
+/// 状态徽标清单（`taskStatus.*` 全量，label + description 成对）。
+fn status_list(theme: &Theme) -> Div {
+    let mut list = div().flex().flex_col().gap_2();
+    for status in TaskStatus::ALL {
+        list = list.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(status_badge(theme, status))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(status.description()),
+                ),
+        );
+    }
+    list
+}
+
+/// 状态徽标（圆点 + label）。
+fn status_badge(theme: &Theme, status: TaskStatus) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(theme.muted)
+        .text_xs()
+        .text_color(theme.foreground)
+        .child(dot(theme))
+        .child(status.label())
+}
+
+/// 复制分支名动作行（触摸目标 ≥48dp；接线等运行时侧动作总线就绪后补）。
+fn copy_branch_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .min_h(px(48.))
+        .px_3()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(dot(theme))
+        .child(COPY_WORKTREE_BRANCH)
+}
+
+/// 分区细分隔线。
+fn divider(theme: &Theme) -> Div {
+    div().h(px(1.)).bg(theme.border)
+}
+
+/// 徽标/类型行圆点。
+fn dot(theme: &Theme) -> Div {
+    div().w_2().h_2().rounded_full().bg(theme.accent)
+}
+
+/// 明细区渲染：三态一一对应（未下发 / 空态 / 已填充），⛔ 空列表不冒充空态。
+fn render_details(theme: &Theme, details: &Details) -> Div {
+    match details {
+        Details::NotDelivered => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .min_h(px(24.))
+            .rounded_md()
+            .bg(theme.muted)
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED),
+        Details::Empty => div().min_h(px(24.)).rounded_md().bg(theme.muted),
+        Details::Filled(lines) => {
+            let mut list = div().flex().flex_col().gap_1();
+            for line in lines {
+                list = list.child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(line.clone()),
+                );
+            }
+            list
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
