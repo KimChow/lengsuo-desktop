@@ -133,7 +133,10 @@ impl MenuModel {
 
     /// 空快照（⇒ 空态提示，不是空白面板）。
     pub fn empty() -> Self {
-        Self { items: Vec::new(), error: None }
+        Self {
+            items: Vec::new(),
+            error: None,
+        }
     }
 
     /// 是否一项都没有（空输入 ⇒ 空态）。
@@ -228,7 +231,7 @@ fn body(theme: &Theme, state: &ContextMenuState) -> Div {
 }
 
 /// 居中提示行（未下发 / 空态共用，弱色）。
-fn hint_panel(theme: &Theme, text: &str) -> Div {
+fn hint_panel(theme: &Theme, text: &'static str) -> Div {
     div()
         .flex_1()
         .flex()
@@ -272,21 +275,51 @@ fn menu_panel(theme: &Theme, model: &MenuModel) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, ContextMenuState, MenuModel, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, ContextMenuState, MenuError, MenuItem, MenuModel, ADD_TO_CHAT, BATCH_OPERATIONS,
+        DELETE_TASK, EMPTY_HINT, MORE, NOT_DELIVERED, OPEN_FILE, OPEN_FILE_FAILED, OPEN_FOLDER,
+        OPEN_FOLDER_FAILED, REMOVE_FROM_LIST, RENAME, SAVE_AS, SAVE_AS_FAILED, SHARE_FILE,
+        SHARE_TASK, SHOW_SOURCE, TITLE, VIEW_TASK_DETAIL,
+    };
     use gpui_kit::component::Theme;
+
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+    fn item_labels_are_verbatim_from_table() {
+        assert_eq!(OPEN_FILE, "打开");
+        assert_eq!(OPEN_FOLDER, "打开文件夹");
+        assert_eq!(ADD_TO_CHAT, "添加到对话框");
+        assert_eq!(SHARE_FILE, "分享给好友");
+        assert_eq!(SHARE_TASK, "分享任务");
+        assert_eq!(SAVE_AS, "另存为");
+        assert_eq!(RENAME, "重命名");
+        assert_eq!(SHOW_SOURCE, "显示源码");
+        assert_eq!(VIEW_TASK_DETAIL, "查看任务详情");
+        assert_eq!(BATCH_OPERATIONS, "批量操作");
+        assert_eq!(DELETE_TASK, "删除任务");
+        assert_eq!(REMOVE_FROM_LIST, "从列表中移除");
+        assert_eq!(MORE, "更多");
     }
+
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn error_lines_are_verbatim_from_table() {
+        assert_eq!(
+            OPEN_FILE_FAILED,
+            "打开失败，请检查该文件类型是否已关联默认应用"
+        );
+        assert_eq!(
+            OPEN_FOLDER_FAILED,
+            "无法打开文件夹，该文件夹可能已被重命名或删除"
+        );
+        assert_eq!(SAVE_AS_FAILED, "另存为失败，请重试");
+    }
+
+    #[test]
+    fn shell_copy_is_verbatim() {
+        assert_eq!(TITLE, "上下文菜单");
         assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(EMPTY_HINT, "暂无内容");
     }
-    #[test]
-    fn main_area_builds_without_panic() {
-        let theme = Theme::default();
-        let _ = main_area(&theme);
-    }
+
     #[test]
     fn initial_state_is_fail_closed_not_delivered() {
         let state = ContextMenuState::initial();
@@ -294,10 +327,65 @@ mod tests {
         assert_eq!(state.hint_line(), NOT_DELIVERED);
         assert_eq!(state.error_line(), None);
     }
+
     #[test]
     fn empty_input_is_empty_state_not_blank() {
         let state = ContextMenuState::Ready(MenuModel::empty());
-        assert_eq!(state.hint_line(), "暂无内容");
+        assert_eq!(state.hint_line(), EMPTY_HINT);
+        // 空态是提示文案，不是空白或空列表。
         assert!(!state.hint_line().is_empty());
+    }
+
+    #[test]
+    fn all_variants_have_unique_labels() {
+        assert_eq!(MenuItem::ALL.len(), 13);
+        let labels: Vec<_> = MenuItem::ALL.iter().map(|item| item.label()).collect();
+        for label in &labels {
+            assert!(!label.is_empty());
+        }
+        let mut sorted = labels.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), labels.len());
+    }
+
+    #[test]
+    fn model_counts_items_and_hides_error_by_default() {
+        let model = MenuModel::new(MenuItem::ALL.to_vec());
+        assert_eq!(model.items.len(), 13);
+        assert!(!model.is_empty());
+        assert_eq!(model.error, None);
+        assert_eq!(ContextMenuState::Ready(model).error_line(), None);
+    }
+
+    #[test]
+    fn failed_action_reports_matching_error_line() {
+        for error in MenuError::ALL {
+            let state =
+                ContextMenuState::Ready(MenuModel::new(vec![MenuItem::OpenFile]).with_error(error));
+            assert_eq!(state.error_line(), Some(error.text()));
+        }
+        let failed = MenuModel::new(vec![MenuItem::OpenFolder]).with_error(MenuError::OpenFolder);
+        assert_eq!(
+            ContextMenuState::Ready(failed).error_line(),
+            Some(OPEN_FOLDER_FAILED)
+        );
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_branches_build_without_panic() {
+        let theme = Theme::default();
+        let full = MenuModel::new(MenuItem::ALL.to_vec());
+        let failed = full.clone().with_error(MenuError::OpenFile);
+        let _ = super::render(&theme, &ContextMenuState::NotDelivered);
+        let _ = super::render(&theme, &ContextMenuState::Ready(MenuModel::empty()));
+        let _ = super::render(&theme, &ContextMenuState::Ready(full));
+        let _ = super::render(&theme, &ContextMenuState::Ready(failed));
     }
 }
