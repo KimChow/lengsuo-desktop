@@ -173,18 +173,103 @@ impl DeleteOverlay {
 
 // ── GPUI 层 ─────────────────────────────────────────────────────────
 
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；GPUI 层随后补全）。
+/// 单条分支卡片：标题 / 正文 / 动作行（颜色一律 theme token，⛔ 不硬编码色值）。
+fn branch_card(theme: &Theme, overlay: &DeleteOverlay) -> Div {
+    let confirm = div()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.danger)
+        .text_color(theme.danger)
+        .child(overlay.confirm_label().unwrap_or(NOT_DELIVERED));
+    let cancel = match overlay.cancel_label() {
+        Some(label) => div()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .text_color(theme.muted_foreground)
+            .child(label),
+        None => div(),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_3()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(overlay.title().unwrap_or(NOT_DELIVERED)),
+        )
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(overlay.content().unwrap_or(NOT_DELIVERED)),
+        )
+        .child(div().flex().items_center().gap_2().child(confirm).child(cancel))
+}
+
+/// 提交反馈 chip（进行中/成功/失败 toast 文案，语义色取 theme token）。
+fn toast_chip(theme: &Theme, state: State) -> Div {
+    let overlay = DeleteOverlay { state };
+    let text_color = match state {
+        State::Success => theme.success,
+        State::Failed => theme.danger,
+        _ => theme.muted_foreground,
+    };
+    div()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_color(text_color)
+        .child(overlay.toast_text().unwrap_or(NOT_DELIVERED))
+}
+
+/// 空态节点：无数据源时如实展示「未下发」（fail-closed，⛔ 不伪造条目/数值）。
+fn not_delivered_card(theme: &Theme) -> Div {
+    let empty = DeleteOverlay::from_delivered(&[]);
+    div()
+        .px_3()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(empty.title().unwrap_or(NOT_DELIVERED)),
+        )
+}
+
+/// 主区渲染：标题行 + 三条分支卡片 + 反馈行 + 空态（未下发 fail-closed 分支）。
 pub fn main_area(theme: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
         .gap_2()
         .child(div().text_color(theme.foreground).child(TITLE))
+        .child(branch_card(theme, &DeleteOverlay { state: State::Dialog }))
+        .child(branch_card(theme, &DeleteOverlay { state: State::Inline }))
+        .child(branch_card(theme, &DeleteOverlay { state: State::Running }))
         .child(
             div()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(toast_chip(theme, State::Loading))
+                .child(toast_chip(theme, State::Success))
+                .child(toast_chip(theme, State::Failed)),
         )
+        .child(not_delivered_card(theme))
 }
 #[cfg(test)]
 mod tests {
