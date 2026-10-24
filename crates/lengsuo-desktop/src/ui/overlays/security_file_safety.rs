@@ -197,17 +197,47 @@ pub fn state_label(state: &State) -> &'static str {
 }
 
 // ===== GPUI 层 =====
-/// 主区/浮层呈现入口（诚实占位：等跨线契约就绪后换源）。
-pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = resolve(Source::NotFetched);
-    let title = SharedString::from(format!("{}（{}）", TITLE, state_label(&state)));
-    div()
+/// 家族组节点：组名 + 逐字文案行（颜色一律 theme.*，⛔ 不硬编码色值）。
+fn group_node(theme: &Theme, group: &Group) -> AnyElement {
+    let mut node = div()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
+        .child(div().text_color(theme.foreground).child(group.family));
+    for entry in &group.entries {
+        node = node.child(div().child(entry.text));
+    }
+    node.into_any_element()
+}
+
+/// 空态节点（空输入 ⇒ 单个空态节点，⛔ 不得渲染成空列表）。
+fn empty_node(theme: &Theme) -> AnyElement {
+    div().text_color(theme.muted_foreground).child(EMPTY_HINT).into_any_element()
+}
+
+/// 主区/浮层呈现入口（签名不变）。
+///
+/// 内容节点 = 规格文案目录（静态、逐字，非运行时事件）；运行时审计事件流未接入 ⇒
+/// 标题行如实标注「未下发」（fail-closed，⛔ 不伪造事件条目/数值）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    let events_state = resolve(Source::NotFetched);
+    let column = div()
+        .flex()
+        .flex_col()
+        .gap_3()
         .text_color(theme.muted_foreground)
-        .child(title)
-        .into_any_element()
+        .child(div().text_color(theme.foreground).child(SharedString::from(format!(
+            "{}（{}）",
+            TITLE,
+            state_label(&events_state)
+        ))));
+    // 目录空集 ⇒ 空态单节点；正常 ⇒ 逐组渲染（目录恒非空，分支由测试锁定）。
+    let catalog = entries();
+    let column = match resolve(Source::Delivered(&catalog)) {
+        State::Empty => column.child(empty_node(theme)),
+        _ => groups().into_iter().fold(column, |col, g| col.child(group_node(theme, &g))),
+    };
+    column.into_any_element()
 }
 
 #[cfg(test)]
