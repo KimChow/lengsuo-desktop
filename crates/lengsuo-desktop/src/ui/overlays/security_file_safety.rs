@@ -23,74 +23,278 @@ pub const NS_KEY_COUNT: usize = 68;
 
 /// 命名空间全表（key → 中文模板，逐字；占位符 `{paths}` / `{matchedRule}` / `{count}` / `{threshold}` 原样保留）。
 pub const TEXTS: &[(&str, &str)] = &[
-    ("securityCenter.audit.fileSafety.allowListed", "文件访问命中文件安全允许规则：{paths}"),
-    ("securityCenter.audit.fileSafety.allowListed.delete", "文件删除命中文件安全允许规则：{paths}"),
-    ("securityCenter.audit.fileSafety.allowListed.deleteWithRule", "文件删除命中文件安全允许规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.allowListed.read", "文件读取命中文件安全允许规则：{paths}"),
-    ("securityCenter.audit.fileSafety.allowListed.readWithRule", "文件读取命中文件安全允许规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.allowListed.write", "文件写入命中文件安全允许规则：{paths}"),
-    ("securityCenter.audit.fileSafety.allowListed.writeWithRule", "文件写入命中文件安全允许规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.allowListedWithRule", "文件访问命中文件安全允许规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.approved", "用户已批准文件访问：{paths}"),
-    ("securityCenter.audit.fileSafety.approved.delete", "用户已批准删除文件：{paths}"),
-    ("securityCenter.audit.fileSafety.approved.deleteWithRule", "用户已批准删除文件：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.approved.read", "用户已批准读取文件：{paths}"),
-    ("securityCenter.audit.fileSafety.approved.readWithRule", "用户已批准读取文件：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.approved.write", "用户已批准写入文件：{paths}"),
-    ("securityCenter.audit.fileSafety.approved.writeWithRule", "用户已批准写入文件：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.approvedWithRule", "用户已批准文件访问：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.askMatched", "文件访问命中询问规则：{paths}"),
-    ("securityCenter.audit.fileSafety.askMatched.delete", "文件删除命中询问规则：{paths}"),
-    ("securityCenter.audit.fileSafety.askMatched.deleteWithRule", "文件删除命中询问规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.askMatched.read", "文件读取命中询问规则：{paths}"),
-    ("securityCenter.audit.fileSafety.askMatched.readWithRule", "文件读取命中询问规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.askMatched.write", "文件写入命中询问规则：{paths}"),
-    ("securityCenter.audit.fileSafety.askMatched.writeWithRule", "文件写入命中询问规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.askMatchedWithRule", "文件访问命中询问规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.autoApproved", "沙箱自动放行文件访问：{paths}"),
-    ("securityCenter.audit.fileSafety.autoApproved.delete", "沙箱自动放行删除文件：{paths}"),
-    ("securityCenter.audit.fileSafety.autoApproved.read", "沙箱自动放行读取文件：{paths}"),
-    ("securityCenter.audit.fileSafety.autoApproved.write", "沙箱自动放行写入文件：{paths}"),
-    ("securityCenter.audit.fileSafety.blockListed", "文件访问命中文件安全禁止规则：{paths}"),
-    ("securityCenter.audit.fileSafety.blockListed.delete", "文件删除命中文件安全禁止规则：{paths}"),
-    ("securityCenter.audit.fileSafety.blockListed.deleteWithRule", "文件删除命中文件安全禁止规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.blockListed.read", "文件读取命中文件安全禁止规则：{paths}"),
-    ("securityCenter.audit.fileSafety.blockListed.readWithRule", "文件读取命中文件安全禁止规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.blockListed.write", "文件写入命中文件安全禁止规则：{paths}"),
-    ("securityCenter.audit.fileSafety.blockListed.writeWithRule", "文件写入命中文件安全禁止规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.blockListedWithRule", "文件访问命中文件安全禁止规则：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.bulkDelete.approved", "已允许批量删除：当前请求累计删除 {count} 个条目，已达到或超过阈值 {threshold}"),
-    ("securityCenter.audit.fileSafety.bulkDelete.needsApproval", "批量删除需要确认：当前请求累计删除 {count} 个条目，已达到或超过阈值 {threshold}"),
-    ("securityCenter.audit.fileSafety.bulkDelete.rejected", "已拒绝批量删除：当前请求累计删除 {count} 个条目，已达到或超过阈值 {threshold}"),
-    ("securityCenter.audit.fileSafety.denyMatched", "文件访问命中文件安全禁止规则，已阻止：{paths}"),
-    ("securityCenter.audit.fileSafety.denyMatched.delete", "文件删除命中文件安全禁止规则，已阻止：{paths}"),
-    ("securityCenter.audit.fileSafety.denyMatched.deleteWithRule", "文件删除命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.denyMatched.read", "文件读取命中文件安全禁止规则，已阻止：{paths}"),
-    ("securityCenter.audit.fileSafety.denyMatched.readWithRule", "文件读取命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.denyMatched.write", "文件写入命中文件安全禁止规则，已阻止：{paths}"),
-    ("securityCenter.audit.fileSafety.denyMatched.writeWithRule", "文件写入命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.denyMatchedWithRule", "文件访问命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.fallback", "文件安全事件：{paths}"),
-    ("securityCenter.audit.fileSafety.needsApproval", "文件访问需要审批：{paths}"),
-    ("securityCenter.audit.fileSafety.needsApproval.delete", "文件删除需要审批：{paths}"),
-    ("securityCenter.audit.fileSafety.needsApproval.read", "文件读取需要审批：{paths}"),
-    ("securityCenter.audit.fileSafety.needsApproval.write", "文件写入需要审批：{paths}"),
-    ("securityCenter.audit.fileSafety.rejected", "用户已拒绝文件访问：{paths}"),
-    ("securityCenter.audit.fileSafety.rejected.delete", "用户已拒绝删除文件：{paths}"),
-    ("securityCenter.audit.fileSafety.rejected.deleteWithRule", "用户已拒绝删除文件：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.rejected.read", "用户已拒绝读取文件：{paths}"),
-    ("securityCenter.audit.fileSafety.rejected.readWithRule", "用户已拒绝读取文件：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.rejected.write", "用户已拒绝写入文件：{paths}"),
-    ("securityCenter.audit.fileSafety.rejected.writeWithRule", "用户已拒绝写入文件：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.rejectedWithRule", "用户已拒绝文件访问：{paths}（询问规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.sessionCacheHit", "文件访问命中询问规则并使用会话放行缓存：{paths}"),
-    ("securityCenter.audit.fileSafety.sessionCacheHit.delete", "文件删除命中询问规则并使用会话放行缓存：{paths}"),
-    ("securityCenter.audit.fileSafety.sessionCacheHit.deleteWithRule", "文件删除命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.sessionCacheHit.read", "文件读取命中询问规则并使用会话放行缓存：{paths}"),
-    ("securityCenter.audit.fileSafety.sessionCacheHit.readWithRule", "文件读取命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.sessionCacheHit.write", "文件写入命中询问规则并使用会话放行缓存：{paths}"),
-    ("securityCenter.audit.fileSafety.sessionCacheHit.writeWithRule", "文件写入命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）"),
-    ("securityCenter.audit.fileSafety.sessionCacheHitWithRule", "文件访问命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）"),
+    (
+        "securityCenter.audit.fileSafety.allowListed",
+        "文件访问命中文件安全允许规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.allowListed.delete",
+        "文件删除命中文件安全允许规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.allowListed.deleteWithRule",
+        "文件删除命中文件安全允许规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.allowListed.read",
+        "文件读取命中文件安全允许规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.allowListed.readWithRule",
+        "文件读取命中文件安全允许规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.allowListed.write",
+        "文件写入命中文件安全允许规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.allowListed.writeWithRule",
+        "文件写入命中文件安全允许规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.allowListedWithRule",
+        "文件访问命中文件安全允许规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approved",
+        "用户已批准文件访问：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approved.delete",
+        "用户已批准删除文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approved.deleteWithRule",
+        "用户已批准删除文件：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approved.read",
+        "用户已批准读取文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approved.readWithRule",
+        "用户已批准读取文件：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approved.write",
+        "用户已批准写入文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approved.writeWithRule",
+        "用户已批准写入文件：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.approvedWithRule",
+        "用户已批准文件访问：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatched",
+        "文件访问命中询问规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatched.delete",
+        "文件删除命中询问规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatched.deleteWithRule",
+        "文件删除命中询问规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatched.read",
+        "文件读取命中询问规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatched.readWithRule",
+        "文件读取命中询问规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatched.write",
+        "文件写入命中询问规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatched.writeWithRule",
+        "文件写入命中询问规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.askMatchedWithRule",
+        "文件访问命中询问规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.autoApproved",
+        "沙箱自动放行文件访问：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.autoApproved.delete",
+        "沙箱自动放行删除文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.autoApproved.read",
+        "沙箱自动放行读取文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.autoApproved.write",
+        "沙箱自动放行写入文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListed",
+        "文件访问命中文件安全禁止规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListed.delete",
+        "文件删除命中文件安全禁止规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListed.deleteWithRule",
+        "文件删除命中文件安全禁止规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListed.read",
+        "文件读取命中文件安全禁止规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListed.readWithRule",
+        "文件读取命中文件安全禁止规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListed.write",
+        "文件写入命中文件安全禁止规则：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListed.writeWithRule",
+        "文件写入命中文件安全禁止规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.blockListedWithRule",
+        "文件访问命中文件安全禁止规则：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.bulkDelete.approved",
+        "已允许批量删除：当前请求累计删除 {count} 个条目，已达到或超过阈值 {threshold}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.bulkDelete.needsApproval",
+        "批量删除需要确认：当前请求累计删除 {count} 个条目，已达到或超过阈值 {threshold}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.bulkDelete.rejected",
+        "已拒绝批量删除：当前请求累计删除 {count} 个条目，已达到或超过阈值 {threshold}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatched",
+        "文件访问命中文件安全禁止规则，已阻止：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatched.delete",
+        "文件删除命中文件安全禁止规则，已阻止：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatched.deleteWithRule",
+        "文件删除命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatched.read",
+        "文件读取命中文件安全禁止规则，已阻止：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatched.readWithRule",
+        "文件读取命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatched.write",
+        "文件写入命中文件安全禁止规则，已阻止：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatched.writeWithRule",
+        "文件写入命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.denyMatchedWithRule",
+        "文件访问命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.fallback",
+        "文件安全事件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.needsApproval",
+        "文件访问需要审批：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.needsApproval.delete",
+        "文件删除需要审批：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.needsApproval.read",
+        "文件读取需要审批：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.needsApproval.write",
+        "文件写入需要审批：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejected",
+        "用户已拒绝文件访问：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejected.delete",
+        "用户已拒绝删除文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejected.deleteWithRule",
+        "用户已拒绝删除文件：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejected.read",
+        "用户已拒绝读取文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejected.readWithRule",
+        "用户已拒绝读取文件：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejected.write",
+        "用户已拒绝写入文件：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejected.writeWithRule",
+        "用户已拒绝写入文件：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.rejectedWithRule",
+        "用户已拒绝文件访问：{paths}（询问规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHit",
+        "文件访问命中询问规则并使用会话放行缓存：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHit.delete",
+        "文件删除命中询问规则并使用会话放行缓存：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHit.deleteWithRule",
+        "文件删除命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHit.read",
+        "文件读取命中询问规则并使用会话放行缓存：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHit.readWithRule",
+        "文件读取命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHit.write",
+        "文件写入命中询问规则并使用会话放行缓存：{paths}",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHit.writeWithRule",
+        "文件写入命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）",
+    ),
+    (
+        "securityCenter.audit.fileSafety.sessionCacheHitWithRule",
+        "文件访问命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）",
+    ),
 ];
 
 /// 家族序（键按点号边界归组；`*WithRule` 归入去掉该后缀后的家族）。
@@ -117,11 +321,19 @@ pub struct Entry {
 
 /// 键 → 家族（纯函数；点号边界保证 `approvedWithRule` 不误入 `approved.` 之外的家族）。
 pub fn family_of(key: &str) -> &'static str {
-    let local = key.strip_prefix(NS_PREFIX).unwrap_or("").trim_start_matches('.');
+    let local = key
+        .strip_prefix(NS_PREFIX)
+        .unwrap_or("")
+        .trim_start_matches('.');
     let local = local.strip_suffix("WithRule").unwrap_or(local);
     FAMILIES
         .iter()
-        .find(|f| local == **f || local.strip_prefix(**f).is_some_and(|rest| rest.starts_with('.')))
+        .find(|f| {
+            local == **f
+                || local
+                    .strip_prefix(**f)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
         .copied()
         .unwrap_or("fallback")
 }
@@ -182,7 +394,7 @@ pub enum Source<'a> {
 pub fn resolve(source: Source) -> State {
     match source {
         Source::NotFetched => State::NotDelivered,
-        Source::Delivered(es) if es.is_empty() => State::Empty,
+        Source::Delivered([]) => State::Empty,
         Source::Delivered(_) => State::Ready,
     }
 }
@@ -212,7 +424,10 @@ fn group_node(theme: &Theme, group: &Group) -> AnyElement {
 
 /// 空态节点（空输入 ⇒ 单个空态节点，⛔ 不得渲染成空列表）。
 fn empty_node(theme: &Theme) -> AnyElement {
-    div().text_color(theme.muted_foreground).child(EMPTY_HINT).into_any_element()
+    div()
+        .text_color(theme.muted_foreground)
+        .child(EMPTY_HINT)
+        .into_any_element()
 }
 
 /// 主区/浮层呈现入口（签名不变）。
@@ -226,16 +441,22 @@ pub fn main_area(theme: &Theme) -> AnyElement {
         .flex_col()
         .gap_3()
         .text_color(theme.muted_foreground)
-        .child(div().text_color(theme.foreground).child(SharedString::from(format!(
-            "{}（{}）",
-            TITLE,
-            state_label(&events_state)
-        ))));
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(format!(
+                    "{}（{}）",
+                    TITLE,
+                    state_label(&events_state)
+                ))),
+        );
     // 目录空集 ⇒ 空态单节点；正常 ⇒ 逐组渲染（目录恒非空，分支由测试锁定）。
     let catalog = entries();
     let column = match resolve(Source::Delivered(&catalog)) {
         State::Empty => column.child(empty_node(theme)),
-        _ => groups().into_iter().fold(column, |col, g| col.child(group_node(theme, &g))),
+        _ => groups()
+            .into_iter()
+            .fold(column, |col, g| col.child(group_node(theme, &g))),
     };
     column.into_any_element()
 }
@@ -245,8 +466,8 @@ mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        entries, family_of, groups, main_area, resolve, state_label, Source, State, TEXTS,
-        EMPTY_HINT, NS_KEY_COUNT, NS_PREFIX, NOT_DELIVERED, TITLE,
+        entries, family_of, groups, main_area, resolve, state_label, Source, State, EMPTY_HINT,
+        NOT_DELIVERED, NS_KEY_COUNT, NS_PREFIX, TEXTS, TITLE,
     };
     use gpui_kit::component::Theme;
     use std::collections::HashSet;
@@ -280,9 +501,18 @@ mod tests {
         assert_eq!(families.len(), unique.len(), "每家族恰一组");
         assert_eq!(gs.first().map(|g| g.family), Some("allowListed"));
         assert_eq!(gs.last().map(|g| g.family), Some("sessionCacheHit"));
-        assert_eq!(family_of("securityCenter.audit.fileSafety.approvedWithRule"), "approved");
-        assert_eq!(family_of("securityCenter.audit.fileSafety.bulkDelete.rejected"), "bulkDelete");
-        assert_eq!(family_of("securityCenter.audit.fileSafety.fallback"), "fallback");
+        assert_eq!(
+            family_of("securityCenter.audit.fileSafety.approvedWithRule"),
+            "approved"
+        );
+        assert_eq!(
+            family_of("securityCenter.audit.fileSafety.bulkDelete.rejected"),
+            "bulkDelete"
+        );
+        assert_eq!(
+            family_of("securityCenter.audit.fileSafety.fallback"),
+            "fallback"
+        );
         assert_eq!(family_of("whatever.else"), "fallback");
         let total: usize = gs.iter().map(|g| g.entries.len()).sum();
         assert_eq!(total, NS_KEY_COUNT);
