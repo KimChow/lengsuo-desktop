@@ -654,14 +654,148 @@ pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
     }
 }
 
-/// A14：带载荷渲染。当前仍退回既有占位外壳（本卡第二步填实）。
+/// A14：带载荷渲染。`Office` 画真内容、`Failed` 照实显示原因；其余退回占位外壳。
 pub(super) fn render_with_payload(
     path: &str,
     payload: &PreviewPayload,
     theme: &gpui_kit::component::Theme,
 ) -> AnyElement {
-    let _ = payload;
-    render(path, theme)
+    match payload {
+        PreviewPayload::Office(office) => office_content(path, office, theme).into_any_element(),
+        PreviewPayload::Failed(err) => failed_content(path, err, theme).into_any_element(),
+        _ => render(path, theme),
+    }
+}
+
+/// 载荷种类 → 外壳子类型（沿用既有头/工具条）。
+fn local_kind(kind: payload::OfficeKind) -> OfficeKind {
+    match kind {
+        payload::OfficeKind::Docx | payload::OfficeKind::Unknown => OfficeKind::Word,
+        payload::OfficeKind::Xlsx => OfficeKind::Sheet,
+        payload::OfficeKind::Pptx => OfficeKind::Slide,
+    }
+}
+
+/// 真内容区：既有外壳（头 + 工具条）+ 块列表；空态/截断如实标注。
+fn office_content(path: &str, office: &OfficePayload, theme: &gpui_kit::component::Theme) -> Div {
+    let kind = local_kind(office.kind);
+    let mut list = div().flex().flex_col().gap_1().p_3();
+    if office.blocks.is_empty() {
+        list = list.child(muted_line("未解出文本内容（可能全是图形/图片）", theme));
+    }
+    for (idx, block) in office.blocks.iter().enumerate() {
+        list = list.child(block_line(idx, block, theme));
+    }
+    if office.truncated {
+        list = list.child(muted_line("已截断：超过预览上限（行数/字节）", theme));
+    }
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .child(header_row(path, kind, theme))
+        .child(toolbar_row(kind, theme))
+        .child(list)
+}
+
+/// 单块排版：标题带分隔线、列表项带圆点、单元格等宽、幻灯片带页码徽标。
+fn block_line(idx: usize, block: &OfficeBlock, theme: &gpui_kit::component::Theme) -> Div {
+    match block.kind {
+        OfficeBlockKind::Heading => div()
+            .px_2()
+            .py_2()
+            .text_sm()
+            .text_color(theme.foreground)
+            .border_b_1()
+            .border_color(theme.border)
+            .child(block.text.clone()),
+        OfficeBlockKind::Paragraph => div()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(block.text.clone()),
+        OfficeBlockKind::Bullet => div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .child(div().size_1().rounded_full().bg(theme.muted_foreground))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(block.text.clone()),
+            ),
+        OfficeBlockKind::Cell => div()
+            .px_2()
+            .py_1()
+            .text_xs()
+            .text_color(theme.foreground)
+            .font_family(theme.mono_font_family.clone())
+            .child(block.text.clone()),
+        OfficeBlockKind::Slide => div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .p_2()
+            .border_1()
+            .border_color(theme.border)
+            .rounded_sm()
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(theme.muted)
+                    .text_xs()
+                    .text_color(theme.foreground)
+                    .child(format!("第 {} 页", idx + 1)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(block.text.clone()),
+            ),
+    }
+}
+
+/// 次要说明行（空态/截断标注）。
+fn muted_line(text: &str, theme: &gpui_kit::component::Theme) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(text.to_owned())
+}
+
+/// 失败态：既有外壳 + 居中一行诚实原因（`DecodeError::line`）。
+fn failed_content(path: &str, err: &DecodeError, theme: &gpui_kit::component::Theme) -> Div {
+    let kind = office_kind(path);
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .child(header_row(path, kind, theme))
+        .child(toolbar_row(kind, theme))
+        .child(
+            div().flex().flex_1().items_center().justify_center().p_6().child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .rounded_sm()
+                    .bg(theme.background)
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(err.line()),
+            ),
+        )
 }
 
 #[cfg(all(test, feature = "ui"))]
