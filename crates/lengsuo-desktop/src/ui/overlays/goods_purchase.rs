@@ -196,7 +196,7 @@ impl PurchaseInfo {
             self.amount.clone(),
             self.cycle.as_ref().map(|c| c.text()),
             self.purchased_on.clone(),
-            self.refund.map(|r| r.text()),
+            self.refund.map(|r| r.text().to_string()),
         ]
     }
 
@@ -218,18 +218,85 @@ impl PurchaseInfo {
     }
 }
 
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；GPUI 层随后补全）。
+// ---------- GPUI 层 ----------
+
+/// 主区渲染（浮层不占主区，签名固定）。
+///
+/// 当前无运行时数据源 ⇒ `PurchaseInfo::default()` + `State::default()`，
+/// fail-closed 如实显示「未下发」；跨线契约就绪后换源即可。
 pub fn main_area(theme: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
-        .child(
+    render(theme, &PurchaseInfo::default(), State::default())
+}
+
+/// 按纯数据层渲染：标题行（支付结果横幅）+ 内容节点 + 空态/fail-closed 分支。
+fn render(theme: &Theme, info: &PurchaseInfo, state: State) -> Div {
+    let mut col = div().flex().flex_col().gap_2();
+    // 标题行：支付结果横幅（未下发 ⇒ 「未下发」）。
+    col = col.child(pay_banner(theme, info.pay, state));
+    if !state.shows_info() || info.is_empty() {
+        // 空态（fail-closed）：未拉取过 ≠ 空集，⛔ 不渲染空行列表。
+        return col.child(
             div()
                 .text_color(theme.muted_foreground)
                 .child(NOT_DELIVERED),
-        )
+        );
+    }
+    // 内容节点：固定 4 行（标签 + 已下发值，值未下发如实显示）。
+    for (label, value) in PurchaseInfo::row_labels()
+        .into_iter()
+        .zip(info.row_values())
+    {
+        col = col.child(info_row(theme, label, value));
+    }
+    // 退款可发起时的操作节点。
+    if info.refund == Some(RefundState::Refundable) {
+        col = col.child(div().text_color(theme.accent).child(copy::REFUND_ACTION));
+    }
+    // 续期 CTA（金额未下发 ⇒ 不渲染，⛔ 不伪造数值）。
+    if let Some(cta) = info.renew_cta() {
+        col = col.child(
+            div()
+                .text_color(theme.accent_foreground)
+                .child(SharedString::from(cta)),
+        );
+    }
+    // 底部协议（原文含书名号）。
+    col.child(
+        div()
+            .text_color(theme.muted_foreground)
+            .child(copy::AGREEMENT),
+    )
+}
+
+/// 标题行：支付结果横幅（成功/超时/未下发三分支）。
+fn pay_banner(theme: &Theme, pay: Option<PayResult>, state: State) -> Div {
+    match (state.shows_info(), pay) {
+        (true, Some(PayResult::Success)) => {
+            div().text_color(theme.success).child(copy::PAY_SUCCESS)
+        }
+        (true, Some(PayResult::Timeout)) => div().text_color(theme.danger).child(copy::PAY_TIMEOUT),
+        _ => div()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED),
+    }
+}
+
+/// 内容行：标签（弱化）+ 值（未下发 ⇒ 如实显示，⛔ 不留空冒充）。
+fn info_row(theme: &Theme, label: &'static str, value: Option<String>) -> Div {
+    let value_node = match value {
+        Some(v) => div()
+            .text_color(theme.foreground)
+            .child(SharedString::from(v)),
+        None => div()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED),
+    };
+    div()
+        .flex()
+        .flex_row()
+        .justify_between()
+        .child(div().text_color(theme.muted_foreground).child(label))
+        .child(value_node)
 }
 
 #[cfg(test)]
