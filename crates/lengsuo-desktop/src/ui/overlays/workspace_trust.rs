@@ -137,33 +137,150 @@ impl OverlayState {
 }
 
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+/// 无数据源接线 ⇒ 默认态 fail-closed，只如实渲染「未下发」。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render_overlay(theme, &OverlayState::NotDelivered)
+}
+
+/// 按纯数据层状态渲染整层：标题行 + 分支内容区。
+fn render_overlay(theme: &Theme, state: &OverlayState) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(header_row(theme, state))
+        .child(body(theme, state))
+}
+
+/// 标题行：分支各自的标题 +（警告分支）受限徽标。
+fn header_row(theme: &Theme, state: &OverlayState) -> Div {
+    let title = match state {
+        OverlayState::RestrictedStatus => STATUS_TITLE,
+        _ => TITLE,
+    };
+    let mut row = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
-                .child(TITLE),
+                .child(title),
+        );
+    if matches!(state, OverlayState::RestrictedStatus) {
+        row = row.child(badge_chip(theme));
+    }
+    row
+}
+
+/// 内容区分支：未下发（fail-closed）/ 空态 / 信任确认 / 受限警告。
+fn body(theme: &Theme, state: &OverlayState) -> Div {
+    match state {
+        OverlayState::NotDelivered => centered_note(theme, NOT_DELIVERED),
+        OverlayState::Empty => centered_note(theme, EMPTY_HINT),
+        OverlayState::Choose(request) => choose_branch(theme, request),
+        OverlayState::RestrictedStatus => restricted_branch(theme),
+    }
+}
+
+/// 居中说明（未下发/空态共用）。
+fn centered_note(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 信任确认分支：正文（前段+路径+后段）+ 确认/取消按钮行。
+fn choose_branch(theme: &Theme, request: &TrustRequest) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .px_4()
+        .pb_4()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(SharedString::from(request.body_text())),
         )
         .child(
             div()
-                .flex_1()
                 .flex()
                 .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .gap_2()
+                .child(button_chip(theme, Decision::Trust.label(), true))
+                .child(button_chip(theme, Decision::Reject.label(), false)),
         )
+}
+
+/// 受限警告分支：状态正文 + 保持/关闭按钮行。
+fn restricted_branch(theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .px_4()
+        .pb_4()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(STATUS_BODY),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(button_chip(theme, RestrictedAction::Keep.label(), false))
+                .child(button_chip(theme, RestrictedAction::Close.label(), true)),
+        )
+}
+
+/// 按钮 chip：主按钮 accent 描边、次按钮 muted；颜色一律主题 token，⛔ 不硬编码色值。
+fn button_chip(theme: &Theme, label: &'static str, primary: bool) -> Div {
+    let color = if primary {
+        theme.accent
+    } else {
+        theme.muted_foreground
+    };
+    div()
+        .px_4()
+        .py_2()
+        .border_1()
+        .border_color(color)
+        .rounded_sm()
+        .text_sm()
+        .text_color(color)
+        .child(label)
+}
+
+/// 受限模式徽标 chip（警告用色取主题 token）。
+fn badge_chip(theme: &Theme) -> Div {
+    div()
+        .px_2()
+        .border_1()
+        .border_color(theme.warning)
+        .rounded_sm()
+        .text_xs()
+        .text_color(theme.warning)
+        .child(BADGE_RESTRICTED)
 }
 #[cfg(test)]
 mod tests {
