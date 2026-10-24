@@ -149,9 +149,89 @@ impl ArchiveOverlay {
     }
 }
 
-/// 主区渲染（数据源未接入：渲染诚实默认态 = 标题 + 正文 + 未下发提示）。
-pub fn main_area(theme: &Theme) -> Div {
-    let overlay = ArchiveOverlay::default();
+/// 操作行：取消 / 确认归档（任务进行中降为次级配色，颜色一律取主题 token）。
+fn button_row(theme: &Theme, overlay: &ArchiveOverlay) -> Div {
+    let confirm = if overlay.confirm_enabled() {
+        div()
+            .bg(theme.button_primary)
+            .text_color(theme.button_primary_foreground)
+    } else {
+        div()
+            .bg(theme.button_secondary)
+            .text_color(theme.button_secondary_foreground)
+    };
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .child(
+            div()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .text_color(theme.foreground)
+                .child(copy::DIALOG_CANCEL),
+        )
+        .child(
+            confirm
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .child(copy::DIALOG_CONFIRM),
+        )
+}
+
+/// 归档页区：标题 + 状态化条目区（未下发/拉取中不宣称空集，⛔ 不伪造条目）。
+fn page_section(theme: &Theme, overlay: &ArchiveOverlay) -> Div {
+    let mut section = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_color(theme.foreground).child(copy::PAGE_TITLE));
+    match overlay.state {
+        // 数据未下发：fail-closed 提示，⛔ 不得替换为空列表或空态。
+        State::NotDelivered => {
+            section = section.child(
+                div()
+                    .text_color(theme.muted_foreground)
+                    .child(NOT_DELIVERED),
+            );
+        }
+        // 拉取中：不渲染条目，也不宣称空集。
+        State::Loading => {}
+        State::Failed => {
+            section = section.child(
+                div()
+                    .text_color(theme.danger_foreground)
+                    .child(copy::TOAST_FAILED),
+            );
+        }
+        State::Normal if overlay.archived_tasks.is_empty() => {
+            section = section.child(
+                div()
+                    .text_color(theme.muted_foreground)
+                    .child(copy::PAGE_EMPTY),
+            );
+        }
+        State::Normal => {
+            for name in &overlay.archived_tasks {
+                section =
+                    section.child(div().text_color(theme.muted_foreground).child(name.clone()));
+            }
+            section = section.child(
+                div()
+                    .text_color(theme.accent_foreground)
+                    .child(copy::UNARCHIVE),
+            );
+        }
+    }
+    section
+}
+
+/// 按纯数据模型渲染浮层（标题行 + 正文 + 操作行 + 归档页区）。
+fn render(theme: &Theme, overlay: &ArchiveOverlay) -> Div {
     div()
         .flex()
         .flex_col()
@@ -162,11 +242,13 @@ pub fn main_area(theme: &Theme) -> Div {
                 .text_color(theme.muted_foreground)
                 .child(overlay.dialog_content()),
         )
-        .child(
-            div()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+        .child(button_row(theme, overlay))
+        .child(page_section(theme, overlay))
+}
+
+/// 主区渲染（签名固定；数据源未接入前用诚实默认态，fail-closed）。
+pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &ArchiveOverlay::default())
 }
 
 #[cfg(test)]
