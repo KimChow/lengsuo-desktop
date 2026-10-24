@@ -154,19 +154,41 @@ impl CloudWelcome {
     }
 }
 
+// ============ GPUI 渲染层 ============
+
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 当前无运行时数据源 ⇒ 恒为 [`CloudWelcome::not_delivered`] 的诚实渲染。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(&CloudWelcome::not_delivered(), theme)
+}
+
+/// 按纯数据层渲染整层：标题行 + 导航行 + 活动区。
+fn render(model: &CloudWelcome, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(render_header(theme))
+        .child(render_nav(theme))
+        .child(render_activity(model, theme))
+}
+
+/// 标题行 + 登录入口。
+fn render_header(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
@@ -174,14 +196,105 @@ pub fn main_area(theme: &Theme) -> Div {
         )
         .child(
             div()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.accent)
+                .text_sm()
+                .text_color(theme.accent)
+                .child(LOGIN_LABEL),
+        )
+}
+
+/// 导航链接行（静态界面文案，非服务端数据）。
+fn render_nav(theme: &Theme) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .flex_wrap()
+        .gap_4()
+        .px_4()
+        .py_2();
+    for link in NAV_LINKS {
+        row = row.child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(link.label),
+        );
+    }
+    row
+}
+
+/// 活动区（未下发 ⇒ 空态「未下发」，⛔ 不伪造条目/数值）。
+fn render_activity(model: &CloudWelcome, theme: &Theme) -> Div {
+    let mut section = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .py_3()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(ACTIVITY_LABEL),
+        );
+    if model.is_not_delivered() {
+        // fail-closed：数据未到手时如实说明，不渲染任何活动条目。
+        return section.child(
+            div()
                 .flex_1()
                 .flex()
                 .items_center()
                 .justify_center()
+                .py_4()
                 .text_sm()
                 .text_color(theme.muted_foreground)
                 .child(NOT_DELIVERED),
-        )
+        );
+    }
+    if let Some(entry) = model.activity_entry_label() {
+        section = section.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(div().text_sm().text_color(theme.accent).child(entry))
+                .child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.accent)
+                        .text_sm()
+                        .text_color(theme.accent)
+                        .child(ACTIVITY_ACTION),
+                ),
+        );
+    }
+    if let Some(notice) = model.activity_notice_label() {
+        section = section.child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(notice),
+        );
+    }
+    if let Some(hint) = model.model_switched_hint() {
+        section = section.child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(hint),
+        );
+    }
+    section
 }
 #[cfg(test)]
 mod tests {
