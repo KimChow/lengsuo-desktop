@@ -454,9 +454,10 @@ mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        text, view_all_label, view_of, ConfigCounts, State, View, NS_KEY_COUNT, NS_PREFIX, TEXTS,
-        TITLE,
+        main_area, render_view, text, view_all_label, view_of, ConfigCounts, Section, State, View,
+        NS_KEY_COUNT, NS_PREFIX, TEXTS, TITLE,
     };
+    use gpui_kit::component::Theme;
 
     #[test]
     fn texts_verbatim_and_full_coverage() {
@@ -538,5 +539,55 @@ mod tests {
         assert_ne!(view_of(ready, &zero), View::Normal(&zero));
         assert_eq!(view_all_label(0), None);
         assert_eq!(view_all_label(3).as_deref(), Some("查看全部(3)"));
+    }
+
+    #[test]
+    fn load_failed_is_never_empty_state() {
+        let failed = super::resolve(Some(false));
+        assert_eq!(failed, State::LoadFailed);
+        // fail-closed：失败 ≠ 空态（空态意味着「确无数据」的假象）。
+        assert_eq!(view_of(failed, &ConfigCounts::default()), View::LoadFailed);
+        assert_ne!(view_of(failed, &ConfigCounts::default()), View::Empty);
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        // 只构造元素树（默认分支 Loading，fail-closed），不渲染。
+        let element = main_area(&Theme::default());
+        let _ = element;
+    }
+
+    #[test]
+    fn every_view_branch_renders_without_panic() {
+        let theme = Theme::default();
+        let _ = render_view(View::Loading, &theme);
+        let _ = render_view(View::LoadFailed, &theme);
+        let _ = render_view(View::Empty, &theme);
+        let counts = ConfigCounts {
+            automation: 2,
+            experts: 1,
+            skills: 3,
+        };
+        let _ = render_view(View::Normal(&counts), &theme);
+    }
+
+    #[test]
+    fn section_labels_and_actions_are_verbatim() {
+        assert_eq!(Section::Instruction.label(), "指令");
+        assert_eq!(Section::Automation.label(), "定时任务");
+        assert_eq!(Section::Skills.label(), "技能");
+        assert_eq!(Section::Experts.label(), "专家");
+        assert_eq!(Section::Instruction.action(), "编辑指令");
+        assert_eq!(Section::Automation.action(), "+ 添加计划");
+        assert_eq!(Section::Skills.action(), "+ 添加");
+        assert_eq!(Section::Experts.action(), "+ 添加");
+        assert_eq!(
+            Section::Instruction.description(),
+            "设定项目背景与规范，让 AI 与你高效协作"
+        );
+        assert_eq!(
+            Section::Experts.description(),
+            "配置项目专家，为成员提供更专业的服务"
+        );
     }
 }
