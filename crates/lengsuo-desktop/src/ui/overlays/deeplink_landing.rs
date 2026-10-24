@@ -197,11 +197,7 @@ impl DeeplinkLandingModel {
     /// 三者皆否 ⇒ 「打开失败」兜底（本函数只在落地需提示时被调用）。
     /// 空输入（未失效但目标不存在且无连接器）⇒ 「内容不存在或已下架」空态（⛔ 不是空列表）。
     #[must_use]
-    pub fn from_delivered(
-        share_expired: bool,
-        found: bool,
-        pending_connectors: &[String],
-    ) -> Self {
+    pub fn from_delivered(share_expired: bool, found: bool, pending_connectors: &[String]) -> Self {
         let state = if share_expired {
             State::ShareExpired
         } else if !found {
