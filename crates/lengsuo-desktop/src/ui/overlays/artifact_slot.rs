@@ -294,17 +294,78 @@ fn text_button(theme: &Theme, label: String, primary: bool) -> Div {
 mod tests {
     use super::{
         fill_count, main_area, ArtifactSlotData, ArtifactSlotState, FILES_TITLE, NOT_DELIVERED,
-        NO_ARTIFACTS, TITLE, TITLE_COUNT, VIEW_ALL,
+        NO_ARTIFACTS, OPEN_IN_BROWSER, OPEN_PREVIEW, SOURCES_CLOSE, SOURCES_COUNT_LABEL,
+        SOURCES_LABEL, SOURCES_TITLE, SOURCES_TOOLTIP, TITLE, TITLE_COUNT, VIEW_ALL,
     };
     use gpui_kit::component::Theme;
 
+    fn sample() -> ArtifactSlotData {
+        ArtifactSlotData {
+            file_changes: vec!["a.rs".to_string(), "b.md".to_string()],
+            preview_url: Some("https://example.invalid/preview".to_string()),
+            sources: vec!["来源一".into(), "来源二".into(), "来源三".into()],
+        }
+    }
+
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+    fn count_templates_fill_placeholder() {
+        assert_eq!(fill_count(TITLE_COUNT, 3), "任务产生制品（3个）：");
+        assert_eq!(fill_count(FILES_TITLE, 2), "文件变更（2个）：");
+        assert_eq!(fill_count(VIEW_ALL, 3), "查看所有产物 (3)");
+        assert_eq!(fill_count(SOURCES_TITLE, 3), "引用来源 (3)");
+        assert_eq!(fill_count(SOURCES_COUNT_LABEL, 3), "3个来源");
+        assert_eq!(fill_count(SOURCES_TOOLTIP, 3), "引用 3 篇资料作为参考");
     }
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn counts_come_from_data_not_hardcoded() {
+        let data = sample();
+        assert_eq!(data.artifact_count(), 3);
+        assert!(!data.is_empty());
+        assert_eq!(data.title_text(), "任务产生制品（3个）：");
+        assert_eq!(data.files_title_text(), "文件变更（2个）：");
+        assert_eq!(data.view_all_text(), "查看所有产物 (3)");
+        assert_eq!(data.sources_title_text(), "引用来源 (3)");
+        assert_eq!(data.sources_count_text(), "3个来源");
+        assert_eq!(data.sources_tooltip_text(), "引用 3 篇资料作为参考");
+        let mut no_preview = data;
+        no_preview.preview_url = None;
+        assert_eq!(no_preview.artifact_count(), 2);
+    }
+    #[test]
+    fn initial_state_is_fail_closed_not_delivered() {
+        let state = ArtifactSlotState::initial();
+        assert!(state.is_not_delivered());
+        assert_eq!(state.body_text().as_deref(), Some(NOT_DELIVERED));
         assert_eq!(NOT_DELIVERED, "未下发");
+    }
+    #[test]
+    fn empty_input_is_empty_state_not_blank_list() {
+        let state = ArtifactSlotState::Ready(ArtifactSlotData::default());
+        assert!(ArtifactSlotData::default().is_empty());
+        assert_eq!(state.body_text().as_deref(), Some(NO_ARTIFACTS));
+        assert!(!state.body_text().expect("上方已断言 Some").is_empty());
+        assert_eq!(NO_ARTIFACTS, "暂无数据");
+    }
+    #[test]
+    fn body_text_none_only_when_ready_has_entries() {
+        assert_eq!(ArtifactSlotState::Ready(sample()).body_text(), None);
+        let mut sources_only = ArtifactSlotData::default();
+        sources_only.sources.push("来源一".to_string());
+        assert_eq!(ArtifactSlotState::Ready(sources_only).body_text(), None);
+    }
+    #[test]
+    fn copy_is_verbatim() {
+        assert_eq!(TITLE, "产物槽");
+        assert_eq!(TITLE_COUNT, "任务产生制品（{count}个）：");
+        assert_eq!(FILES_TITLE, "文件变更（{count}个）：");
+        assert_eq!(OPEN_PREVIEW, "打开网页预览 →");
+        assert_eq!(OPEN_IN_BROWSER, "在浏览器中预览");
+        assert_eq!(VIEW_ALL, "查看所有产物 ({count})");
+        assert_eq!(SOURCES_TITLE, "引用来源 ({count})");
+        assert_eq!(SOURCES_LABEL, "来源");
+        assert_eq!(SOURCES_COUNT_LABEL, "{count}个来源");
+        assert_eq!(SOURCES_TOOLTIP, "引用 {count} 篇资料作为参考");
+        assert_eq!(SOURCES_CLOSE, "关闭");
     }
     #[test]
     fn main_area_builds_without_panic() {
@@ -312,34 +373,17 @@ mod tests {
         let _ = main_area(&theme);
     }
     #[test]
-    fn count_templates_fill_placeholder() {
-        assert_eq!(fill_count(TITLE_COUNT, 3), "任务产生制品（3个）：");
-        assert_eq!(fill_count(FILES_TITLE, 2), "文件变更（2个）：");
-        assert_eq!(fill_count(VIEW_ALL, 3), "查看所有产物 (3)");
-    }
-    #[test]
-    fn counts_come_from_data_not_hardcoded() {
-        let data = ArtifactSlotData {
-            file_changes: vec!["a.rs".to_string(), "b.md".to_string()],
-            preview_url: Some("https://example.invalid/preview".to_string()),
-            sources: vec!["来源一".to_string(), "来源二".to_string(), "来源三".to_string()],
-        };
-        assert_eq!(data.artifact_count(), 3);
-        assert!(!data.is_empty());
-        assert_eq!(data.title_text(), "任务产生制品（3个）：");
-        assert_eq!(data.files_title_text(), "文件变更（2个）：");
-        assert_eq!(data.view_all_text(), "查看所有产物 (3)");
-        let no_preview = ArtifactSlotData {
-            preview_url: None,
-            ..data
-        };
-        assert_eq!(no_preview.artifact_count(), 2);
-    }
-    #[test]
-    fn empty_input_is_empty_state_not_blank_list() {
-        let state = ArtifactSlotState::Ready(ArtifactSlotData::default());
-        assert!(ArtifactSlotData::default().is_empty());
-        assert_eq!(state.body_text().as_deref(), Some(NO_ARTIFACTS));
-        assert_eq!(NO_ARTIFACTS, "暂无数据");
+    fn render_all_branches_build_without_panic() {
+        let theme = Theme::default();
+        let _ = super::render(&theme, &ArtifactSlotState::NotDelivered);
+        let empty = ArtifactSlotState::Ready(ArtifactSlotData::default());
+        let _ = super::render(&theme, &empty);
+        let _ = super::render(&theme, &ArtifactSlotState::Ready(sample()));
+        let mut no_preview = sample();
+        no_preview.preview_url = None;
+        let _ = super::render(&theme, &ArtifactSlotState::Ready(no_preview));
+        let mut sources_only = ArtifactSlotData::default();
+        sources_only.sources.push("来源一".to_string());
+        let _ = super::render(&theme, &ArtifactSlotState::Ready(sources_only));
     }
 }
