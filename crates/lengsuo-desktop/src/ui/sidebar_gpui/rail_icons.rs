@@ -256,3 +256,89 @@ where
         .p_1()
         .children(items.iter().map(|item| rail_row(theme, item, on_intent.clone())))
 }
+
+#[cfg(test)]
+mod tests {
+    // ⛔ 不用 `use super::*`：父模块 glob 进来的 gpui_kit `test` 宏会遮蔽 `#[test]`。
+    use super::{RailIntent, RailItem, NOT_DELIVERED};
+
+    #[test]
+    fn labels_verbatim() {
+        let labels: Vec<&str> = RailIntent::ALL.iter().map(|k| k.label()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "新建任务",
+                "助理",
+                "专家·技能·连接器",
+                "定时任务",
+                "资料库",
+                "更多"
+            ]
+        );
+    }
+
+    #[test]
+    fn ids_unique_and_stable() {
+        let ids: Vec<&str> = RailIntent::ALL.iter().map(|k| k.as_id()).collect();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), RailIntent::ALL.len());
+        assert!(ids.iter().all(|id| id.starts_with("rail-")));
+    }
+
+    #[test]
+    fn all_six_kinds() {
+        assert_eq!(RailIntent::ALL.len(), 6);
+    }
+
+    #[test]
+    fn fail_closed_undelivered() {
+        assert_eq!(RailItem::undelivered(RailIntent::Library).display_label(), "未下发");
+        assert_eq!(
+            RailItem::undelivered(RailIntent::Library).display_label(),
+            NOT_DELIVERED
+        );
+        assert_eq!(RailItem::new(RailIntent::NewTask).display_label(), "新建任务");
+    }
+
+    #[test]
+    fn selected_roundtrip() {
+        assert!(!RailItem::new(RailIntent::More).selected);
+        assert!(RailItem::new(RailIntent::More).with_selected(true).selected);
+    }
+
+    // 渲染层构建：需要 feature = "ui"；无窗口环境只能构建，不能模拟点击。
+    #[cfg(feature = "ui")]
+    mod render_builds {
+        use super::super::{rail, rail_row, RailIntent, RailItem};
+        use gpui_kit::component::Theme;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        #[test]
+        fn builds_all_rows_with_sink() {
+            let theme = Theme::default();
+            let items: Vec<RailItem> =
+                RailIntent::ALL.iter().map(|k| RailItem::new(*k)).collect();
+            let sink: Rc<RefCell<Vec<RailIntent>>> = Rc::new(RefCell::new(Vec::new()));
+            let on_intent = {
+                let sink = sink.clone();
+                move |i: RailIntent| sink.borrow_mut().push(i)
+            };
+            let _ = rail(&theme, &items, on_intent);
+            // 只构建、未点击 ⇒ 不上报任何意图。
+            assert!(sink.borrow().is_empty());
+        }
+
+        #[test]
+        fn builds_undelivered_selected_row() {
+            let theme = Theme::default();
+            let item = RailItem::undelivered(RailIntent::Experts).with_selected(true);
+            let _ = rail_row(&theme, &item, |_| {});
+            assert_eq!(item.display_label(), "未下发");
+            assert!(item.selected);
+        }
+    }
+}
