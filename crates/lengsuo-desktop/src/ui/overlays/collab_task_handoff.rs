@@ -4,6 +4,7 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `collab.task.handoff`。
 //! 数据源在运行时侧：当前按纯数据层逐分支呈现，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 use std::borrow::Cow;
@@ -381,14 +382,357 @@ impl State {
 // ===== GPUI 层 =====
 /// 主区/浮层呈现入口（无数据源 ⇒ fail-closed「未下发」；签名不变）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = resolve(None);
+    panel(&resolve(None), theme).into_any_element()
+}
+
+/// 整层：标题行 + 状态主体。
+fn panel(state: &State, theme: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
         .gap_2()
+        .child(render_header(theme))
+        .child(render_body(state, theme))
+}
+
+/// 标题行：弹窗标题徽标（headerTitle）+ 视图标题 + 关闭。
+fn render_header(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(chip(HEADER_TITLE, theme))
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(TITLE),
+        )
+        .child(div().flex_1())
+        .child(chip(CLOSE_LABEL, theme))
+}
+
+/// 按状态机分支渲染主体。
+fn render_body(state: &State, theme: &Theme) -> Div {
+    match state {
+        State::NotDelivered | State::LoadFailed => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(centered_muted(NOT_DELIVERED, theme)) // fail-closed：如实「未下发」
+            .child(render_form(&TodoForm::default(), CREATE, theme)),
+        State::Composing(scene) => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(section_header(SECTION_TASK_INFO, None, theme))
+                    .child(padded_muted_line(
+                        SharedString::from(scene.task_source_line()),
+                        theme,
+                    )),
+            )
+            .child(render_artifacts(scene, theme))
+            .child(render_summary(scene, theme))
+            .child(render_form(&scene.todo, CREATE, theme)),
+        State::Submitting => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(centered_muted(SUBMITTING, theme))
+            .child(centered_muted(PENDING_MESSAGE_QUEUED, theme)),
+        State::Accepted {
+            uploaded_attachments,
+            failed_attachments,
+        } => {
+            let kind = if *failed_attachments == 0 {
+                StatusColor::Good
+            } else {
+                StatusColor::Warn
+            };
+            let mut col = div().flex().flex_col().gap_2().child(centered_status(
+                SharedString::from(state.notice().unwrap_or_default()),
+                kind,
+                theme,
+            ));
+            if *uploaded_attachments > 0 {
+                col = col.child(centered_muted(
+                    fill(
+                        ATTACHMENTS_UPLOADED,
+                        &[("count", &uploaded_attachments.to_string())],
+                    ),
+                    theme,
+                ));
+            }
+            col
+        }
+        State::Failed(_) => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(centered_status(
+                SharedString::from(state.notice().unwrap_or_default()),
+                StatusColor::Bad,
+                theme,
+            )),
+    }
+}
+
+/// 任务产物区（空 ⇒ 空态文案 noArtifacts，⛔ 不渲染空列表）。
+fn render_artifacts(scene: &HandoffScene, theme: &Theme) -> Div {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(section_header(
+            SECTION_ARTIFACT_TITLE,
+            Some(SharedString::from(scene.artifact_count_line())),
+            theme,
+        ));
+    if scene.artifacts.is_empty() {
+        return col.child(padded_muted_line(NO_ARTIFACTS, theme));
+    }
+    for artifact in &scene.artifacts {
+        let mut row = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(SharedString::from(artifact_display_name(artifact))),
+            );
+        if artifact.ai_generated {
+            row = row.child(chip_accent(AI_BADGE, theme));
+        }
+        col = col.child(row.child(chip(SECTION_FILE_TAG, theme)));
+    }
+    col
+}
+
+/// 任务进度摘要区（生成中挂 AI 徽标）。
+fn render_summary(scene: &HandoffScene, theme: &Theme) -> Div {
+    let mut line = div().flex().items_center().gap_2();
+    if matches!(scene.summary, SummaryPhase::Generating) {
+        line = line.child(chip_accent(AI_BADGE, theme));
+    }
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(section_header(
+            SECTION_PROGRESS_TITLE,
+            Some(SharedString::from(summary_toggle(scene.summary_expanded))),
+            theme,
+        ))
+        .child(
+            line.text_sm()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(scene.summary_line())),
+        )
+}
+
+/// 新建待办表单（本地状态，不依赖下发数据）。
+fn render_form(form: &TodoForm, primary_label: &'static str, theme: &Theme) -> Div {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(section_header(FIELD_TITLE, None, theme))
+        .child(field_input(&form.title, TITLE_PLACEHOLDER, theme))
+        .child(section_header(FIELD_DESCRIPTION, None, theme))
+        .child(field_input(&form.description, DESCRIPTION_PLACEHOLDER, theme))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(chip(form.assignee_chip_label().to_string(), theme))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SEARCH_PLACEHOLDER),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(form.attachment_line())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(button_chip(ATTACHMENTS_ADD_TITLE, false, theme))
+                        .child(chip(ATTACHMENTS_LOCAL, theme))
+                        .child(chip(ATTACHMENTS_NETDISK, theme)),
+                ),
+        );
+    if form.shows_validation() {
+        if let Some(err) = form.validation_error() {
+            col = col.child(div().text_xs().text_color(theme.danger).child(err));
+        }
+    }
+    col.child(
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(button_chip(CANCEL, false, theme))
+            .child(button_chip(primary_label, true, theme)),
+    )
+}
+
+/// 输入框样式节点（空值显示占位文案，弱化色）。
+fn field_input(value: &str, placeholder: &'static str, theme: &Theme) -> Div {
+    let filled = !value.trim().is_empty();
+    div()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(if filled {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(if filled {
+            SharedString::from(value.trim())
+        } else {
+            SharedString::from(placeholder)
+        })
+}
+
+/// 弱化小标签。
+fn chip(label: impl Into<SharedString>, theme: &Theme) -> Div {
+    let text: SharedString = label.into();
+    div()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
         .text_color(theme.muted_foreground)
-        .child(SharedString::from(state.notice().unwrap_or_default()))
-        .into_any_element()
+        .child(text)
+}
+
+/// 强调色小标签（AI 徽标等）。
+fn chip_accent(label: &'static str, theme: &Theme) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.accent)
+        .child(label)
+}
+
+/// 按钮（静态复刻，无交互）。
+fn button_chip(label: &'static str, primary: bool, theme: &Theme) -> Div {
+    let (bg, fg) = if primary {
+        (theme.button_primary, theme.button_primary_foreground)
+    } else {
+        (theme.button_secondary, theme.button_secondary_foreground)
+    };
+    div()
+        .px_3()
+        .py_1()
+        .rounded_sm()
+        .text_sm()
+        .bg(bg)
+        .text_color(fg)
+        .child(label)
+}
+
+/// 区块标题行（可选尾注）。
+fn section_header(title: &'static str, trailing: Option<SharedString>, theme: &Theme) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(title),
+        );
+    if let Some(text) = trailing {
+        row = row.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(text),
+        );
+    }
+    row
+}
+
+/// 带内边距的弱化说明行。
+fn padded_muted_line(text: impl Into<SharedString>, theme: &Theme) -> Div {
+    let text: SharedString = text.into();
+    div()
+        .px_2()
+        .py_1()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 居中弱化单行（状态提示）。
+fn centered_muted(text: impl Into<SharedString>, theme: &Theme) -> Div {
+    let text: SharedString = text.into();
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 结果状态色。
+enum StatusColor {
+    Good,
+    Warn,
+    Bad,
+}
+
+/// 居中结果行（成功/部分失败/失败三色）。
+fn centered_status(text: SharedString, kind: StatusColor, theme: &Theme) -> Div {
+    let color = match kind {
+        StatusColor::Good => theme.success,
+        StatusColor::Warn => theme.warning,
+        StatusColor::Bad => theme.danger,
+    };
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(color)
+        .child(text)
 }
 
 #[cfg(test)]
