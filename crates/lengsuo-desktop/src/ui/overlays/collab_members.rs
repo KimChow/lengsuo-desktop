@@ -4,6 +4,8 @@
 //! 硬约束：fail-closed（加载/失败不得退化成空列表）；⛔ 不伪造服务端数据；
 //! 文案逐字取自命名空间 `collab.members`（29 键全收）。
 #![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 卡面名（任务书目标名，非文案表键）。
 pub const TITLE: &str = "协作·成员";
@@ -252,4 +254,156 @@ pub fn display_name(member: &CollabMember) -> &str {
     } else {
         &member.name
     }
+}
+
+// ===== GPUI 层 =====
+
+/// 主区/浮层呈现入口（fail-closed：无数据源 ⇒ 默认「加载中」，⛔ 不伪造成员）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    members_panel(theme, &State::default(), &InviteState::default())
+}
+
+/// 面板骨架：标题行 + 说明行 + 正文（按状态机分支）+ 加入方式 + 邀请区；颜色一律 `theme.*`。
+pub fn members_panel(theme: &Theme, state: &State, invite: &InviteState) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_color(theme.muted_foreground)
+        .child(title_row(theme, state))
+        .child(tooltip_row())
+        .child(body(theme, state))
+        .child(join_mode_row())
+        .child(invite_section(theme, invite))
+        .into_any_element()
+}
+
+/// 标题行：`popover.title`（`{count}` 已填）+ 说明入口文案。
+fn title_row(theme: &Theme, state: &State) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(popover_title(state))),
+        )
+        .child(SharedString::from(must_text(
+            "collab.members.popover.tooltipAria",
+        )))
+        .into_any_element()
+}
+
+/// 说明行：`popover.tooltip` 全文（muted）。
+fn tooltip_row() -> AnyElement {
+    div()
+        .child(SharedString::from(must_text(
+            "collab.members.popover.tooltip",
+        )))
+        .into_any_element()
+}
+
+/// 正文：`body_label` 驱动的分支渲染（加载中/失败 fail-closed/空态/成员列表）。
+fn body(theme: &Theme, state: &State) -> AnyElement {
+    let col = div().flex().flex_col().gap_2();
+    match body_label(state) {
+        Some(label) => col.child(SharedString::from(label)).into_any_element(),
+        None => col.children(member_rows(theme, state)).into_any_element(),
+    }
+}
+
+/// 成员行集（仅 `Ready` 分支进入）。
+fn member_rows(theme: &Theme, state: &State) -> Vec<AnyElement> {
+    match state {
+        State::Ready(list) => list.iter().map(|m| member_row(theme, m)).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// 单行成员：显示名（空串兜底「未知」）+ 角色位文案。
+fn member_row(theme: &Theme, member: &CollabMember) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .text_color(theme.foreground)
+        .child(SharedString::from(display_name(member)))
+        .child(SharedString::from(member_tag(member)))
+        .into_any_element()
+}
+
+/// 角色位：Admin 呈 `ownerTag`，其余用角色文案（均逐字取自文案表）。
+fn member_tag(member: &CollabMember) -> &'static str {
+    match member.role {
+        Role::Admin => must_text("collab.members.ownerTag"),
+        other => other.label(),
+    }
+}
+
+/// 加入方式行：`joinMode.label` + 两档选项文案（选中态由调用方接线后驱动）。
+fn join_mode_row() -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .child(SharedString::from(must_text(
+            "collab.members.joinMode.label",
+        )))
+        .child(SharedString::from(JoinMode::ApplyThenJoin.label()))
+        .child(SharedString::from(JoinMode::DirectJoin.label()))
+        .into_any_element()
+}
+
+/// 邀请区：加入角色说明 + 按钮位文案（`InviteState` 驱动）+ 提示 + 警示。
+fn invite_section(theme: &Theme, invite: &InviteState) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(SharedString::from(must_text(
+            "collab.members.invite.joinRoleLabel",
+        )))
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(invite.label())),
+        )
+        .child(SharedString::from(must_text("collab.members.invite.note")))
+        .child(SharedString::from(must_text(
+            "collab.members.invite.warning",
+        )))
+        .into_any_element()
+}
+
+/// 移除确认卡：标题 + 正文（`{name}` 已填）+ [取消]/[移除成员] 动作位；
+/// 由调用方在确认时机呈现。
+pub fn remove_confirm_card(theme: &Theme, name: &str) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .border_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(must_text(
+                    "collab.members.actions.removeConfirmTitle",
+                ))),
+        )
+        .child(SharedString::from(remove_confirm_content(name)))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(SharedString::from(must_text(
+                    "collab.members.actions.cancel",
+                )))
+                .child(SharedString::from(must_text(
+                    "collab.members.actions.remove",
+                ))),
+        )
+        .into_any_element()
 }
