@@ -5,6 +5,9 @@
 //! （默认态 [`State::Loading`]）；⛔ 不伪造服务端数据；文案逐字取自命名空间
 //! `collab.plan.create`（全表 34 有效键；本卡落逐字摘录的 12 键，其余键待全表下发后补）。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 面板标题（逐字取自文案全表）。
 pub const PANEL_TITLE: &str = "协作计划·新建";
@@ -162,4 +165,225 @@ pub fn attachment_section_title(count: usize) -> String {
         copy("collab.plan.create.attachmentSectionTitle").expect("missing copy key"),
         &[("count", &count.to_string())],
     )
+}
+
+// ===== GPUI 层 =====
+
+/// 渲染模型里的附件条目行。
+#[derive(Debug, PartialEq)]
+pub struct AttachmentRow {
+    /// 展示名（真名 / `attachmentFallbackName`；待上传 ⇒ `attachmentPendingUpload`）。
+    pub name: String,
+    /// 来源（`attachmentSource.*`，逐字）。
+    pub source: &'static str,
+    /// 移除入口（`attachmentRemoveAria`，逐字）。
+    pub remove: &'static str,
+}
+
+/// 由 [`State`] 纯函数映射出的渲染模型（GPUI 层唯一输入）。
+#[derive(Debug, PartialEq)]
+pub struct ViewModel {
+    pub title: &'static str,
+    /// 折叠入口（`collapseAria`，逐字）。
+    pub collapse: &'static str,
+    /// 待办属性区标签（`aria.todoAttributes`，逐字）。
+    pub attributes_label: &'static str,
+    /// 处理人行。
+    pub assignee: Row,
+    /// 附件区标题（`attachmentSectionTitle` 真实计数；加载/失败 ⇒ 未下发）。
+    pub attachment_title: Row,
+    /// 附件条目行。
+    pub attachments: Vec<AttachmentRow>,
+    /// 添加附件入口（`addAttachmentAria`，逐字）。
+    pub add_attachment: &'static str,
+    /// 添加资料入口（`addLibraryAria`，逐字）。
+    pub add_library: &'static str,
+}
+
+/// 状态 → 渲染模型（纯函数；GPUI 层唯一输入）。
+pub fn view_model(state: &State) -> ViewModel {
+    let c = |key: &str| copy(key).expect("missing copy key");
+    let chrome = ViewModel {
+        title: PANEL_TITLE,
+        collapse: c("collab.plan.create.collapseAria"),
+        attributes_label: c("collab.plan.create.aria.todoAttributes"),
+        assignee: Row::NotDelivered,
+        attachment_title: Row::NotDelivered,
+        attachments: vec![],
+        add_attachment: c("collab.plan.create.addAttachmentAria"),
+        add_library: c("collab.plan.create.addLibraryAria"),
+    };
+    match state {
+        // 加载中/拉取失败：fail-closed。数据位一律「未下发」，⛔ 不伪造空态/0 计数。
+        State::Loading | State::LoadFailed => chrome,
+        // 空态：已下发但无草稿——逐字空态提示，不是空白。
+        State::Empty => ViewModel {
+            assignee: assignee_row(&[]),
+            attachment_title: Row::Value(attachment_section_title(0)),
+            ..chrome
+        },
+        // 正常态：草稿逐项落到行，`{count}` 取真实计数。
+        State::Normal(draft) => ViewModel {
+            assignee: assignee_row(&draft.assignees),
+            attachment_title: Row::Value(attachment_section_title(draft.attachments.len())),
+            attachments: draft
+                .attachments
+                .iter()
+                .map(|a| AttachmentRow {
+                    name: attachment_display(a),
+                    source: a.source.label(),
+                    remove: c("collab.plan.create.attachmentRemoveAria"),
+                })
+                .collect(),
+            ..chrome
+        },
+    }
+}
+
+/// 主区/浮层呈现入口。无数据源 ⇒ `resolve(None)` 如实落到加载中（fail-closed，⛔ 不伪造条目）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render(theme, &view_model(&resolve(None)))
+}
+
+/// 渲染模型 → 元素树（纯构建，不持实体/凭据；颜色一律主题 token，⛔ 不硬编码色值）。
+fn render(theme: &Theme, vm: &ViewModel) -> AnyElement {
+    // 附件区：标题（真实计数/未下发）→ 条目 → 添加入口。
+    let mut attachments = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_4()
+        .child(attachment_header_view(theme, &vm.attachment_title));
+    for row in &vm.attachments {
+        attachments = attachments.child(attachment_view(theme, row));
+    }
+    let attachments = attachments.child(
+        div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .child(action_view(theme, vm.add_attachment))
+            .child(action_view(theme, vm.add_library)),
+    );
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        // 头部：标题 + 恢复默认高度入口。
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px_4()
+                .py_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(vm.title),
+                )
+                .child(collapse_view(theme, vm.collapse)),
+        )
+        // 待办属性区：处理人行。
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px_4()
+                .child(section_label(theme, vm.attributes_label))
+                .child(row_view(theme, &vm.assignee)),
+        )
+        .child(attachments)
+        .into_any_element()
+}
+
+/// 分区标签（弱化小字）。
+fn section_label(theme: &Theme, label: &str) -> Div {
+    div()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(label.to_string())
+}
+
+/// 单行内容：`Value` 前景 / `Empty` 弱化占位 / `NotDelivered` 以警示色如实标出。
+fn row_view(theme: &Theme, row: &Row) -> Div {
+    let (text, color) = match row {
+        Row::Value(v) => (v.clone(), theme.foreground),
+        Row::Empty(hint) => ((*hint).to_string(), theme.muted_foreground),
+        Row::NotDelivered => (NOT_DELIVERED.to_string(), theme.danger),
+    };
+    div().text_sm().text_color(color).child(text)
+}
+
+/// 附件区标题行：正常 ⇒ 弱化标题（真实计数）；未下发 ⇒ 警示色如实标出（⛔ 不伪造 0 计数）。
+fn attachment_header_view(theme: &Theme, row: &Row) -> Div {
+    let (text, color) = match row {
+        Row::Value(v) => (v.clone(), theme.muted_foreground),
+        Row::Empty(hint) => ((*hint).to_string(), theme.muted_foreground),
+        Row::NotDelivered => (NOT_DELIVERED.to_string(), theme.danger),
+    };
+    div().text_xs().text_color(color).child(text)
+}
+
+/// 附件条目行：展示名 + 来源；移除入口触达目标 ≥48dp。
+fn attachment_view(theme: &Theme, row: &AttachmentRow) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .text_sm()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(div().text_color(theme.foreground).child(row.name.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(row.source),
+                ),
+        )
+        .child(
+            div()
+                .h(px(48.))
+                .flex()
+                .items_center()
+                .text_color(theme.muted_foreground)
+                .child(row.remove),
+        )
+}
+
+/// 添加入口（添加附件/添加资料）：触达目标 ≥48dp。
+fn action_view(theme: &Theme, label: &str) -> Div {
+    div()
+        .h(px(48.))
+        .flex()
+        .items_center()
+        .px_4()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(label.to_string())
+}
+
+/// 恢复默认高度入口：触达目标 ≥48dp。
+fn collapse_view(theme: &Theme, label: &str) -> Div {
+    div()
+        .h(px(48.))
+        .flex()
+        .items_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(label.to_string())
 }
