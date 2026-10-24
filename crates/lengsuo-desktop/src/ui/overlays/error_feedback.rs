@@ -153,18 +153,13 @@ fn render_overlay(theme: &Theme, state: &OverlayState) -> Div {
 
 /// 标题行：视图标题。
 fn header_row(theme: &Theme) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .px_4()
-        .py_2()
-        .child(
-            div()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
+    div().flex().items_center().px_4().py_2().child(
+        div()
+            .text_sm()
+            .font_bold()
+            .text_color(theme.foreground)
+            .child(TITLE),
+    )
 }
 
 /// 内容区三分支：未下发（fail-closed）/ 无错误隐藏 / 错误条清单。
@@ -190,13 +185,7 @@ fn centered_note(theme: &Theme, text: &'static str) -> Div {
 
 /// 错误条清单：逐条渲染 异常提示条。
 fn banner_list(theme: &Theme, rows: &[BannerRow]) -> Div {
-    let mut list = div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px_4()
-        .pb_4();
+    let mut list = div().flex_1().flex().flex_col().gap_2().px_4().pb_4();
     for row in rows {
         list = list.child(banner_row(theme, row.kind));
     }
@@ -299,15 +288,93 @@ fn close_button(theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, render_overlay, Action, BannerRow, ErrorKind, OverlayState, CLOSE_ARIA,
+        CLOSE_ICON, ERROR_ICON, NOT_DELIVERED, TITLE,
+    };
     use gpui_kit::component::Theme;
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+    fn overlay_texts_verbatim() {
+        assert_eq!(TITLE, "异常提示");
+        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(CLOSE_ARIA, "关闭");
     }
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
-        assert_eq!(NOT_DELIVERED, "未下发");
+    fn error_kind_texts_verbatim() {
+        assert_eq!(ErrorKind::ConnectionTimeout.title(), "连接超时");
+        assert_eq!(
+            ErrorKind::ConnectionTimeout.detail(),
+            "如果问题持续存在，请检查您的网络设置或 VPN 状态"
+        );
+        assert_eq!(ErrorKind::ModelResponseTimeout.title(), "模型响应超时");
+        assert_eq!(ErrorKind::ModelResponseTimeout.detail(), "请重试或切换模型");
+        assert_eq!(ErrorKind::CreditsExhausted.title(), "发生意外错误");
+        assert_eq!(
+            ErrorKind::CreditsExhausted.detail(),
+            "您账户下可用的积分额度已耗尽，升级套餐继续完成任务。"
+        );
+    }
+    #[test]
+    fn action_labels_verbatim() {
+        assert_eq!(Action::Retry.label(), "重试");
+        assert_eq!(Action::Diagnose.label(), "网络诊断");
+        assert_eq!(Action::Upgrade.label(), "升级套餐");
+        assert_eq!(Action::BuyTopUp.label(), "购买积分");
+    }
+    #[test]
+    fn from_kinds_builds_rows_and_counts() {
+        let state = OverlayState::from_kinds(ErrorKind::ALL);
+        assert_eq!(state.row_count(), ErrorKind::ALL.len());
+        let OverlayState::Banner(rows) = &state else {
+            panic!("应构造出清单态");
+        };
+        assert_eq!(rows[0].kind, ErrorKind::ConnectionTimeout);
+        assert_eq!(rows[2].kind, ErrorKind::CreditsExhausted);
+        let repeated = OverlayState::from_kinds(&[
+            ErrorKind::ModelResponseTimeout,
+            ErrorKind::ModelResponseTimeout,
+        ]);
+        assert_eq!(repeated.row_count(), 2);
+    }
+    #[test]
+    fn empty_input_normalizes_to_hidden_not_banner_or_not_delivered() {
+        let state = OverlayState::from_kinds(&[]);
+        assert!(matches!(state, OverlayState::Hidden));
+        assert_eq!(state.row_count(), 0);
+        assert!(!matches!(state, OverlayState::NotDelivered));
+    }
+    #[test]
+    fn catalog_scenarios_have_actions_and_icon_glyphs() {
+        assert_eq!(ErrorKind::ALL.len(), 3);
+        assert!(ErrorKind::ALL.iter().all(|kind| !kind.actions().is_empty()));
+        assert!(ErrorKind::ConnectionTimeout
+            .actions()
+            .contains(&Action::Diagnose));
+        assert!(ErrorKind::CreditsExhausted
+            .actions()
+            .contains(&Action::Upgrade));
+        assert!(!ERROR_ICON.is_empty());
+        assert!(!CLOSE_ICON.is_empty());
+    }
+    #[test]
+    fn render_all_states_without_panic() {
+        let theme = Theme::default();
+        let _ = render_overlay(&theme, &OverlayState::NotDelivered);
+        let _ = render_overlay(&theme, &OverlayState::from_kinds(&[]));
+        let _ = render_overlay(
+            &theme,
+            &OverlayState::from_kinds(&[
+                ErrorKind::ConnectionTimeout,
+                ErrorKind::ModelResponseTimeout,
+                ErrorKind::CreditsExhausted,
+            ]),
+        );
+        let _ = render_overlay(
+            &theme,
+            &OverlayState::Banner(vec![BannerRow {
+                kind: ErrorKind::CreditsExhausted,
+            }]),
+        );
     }
     #[test]
     fn main_area_builds_without_panic() {
