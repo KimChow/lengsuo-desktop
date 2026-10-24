@@ -207,19 +207,83 @@ pub fn status_copy(state: State) -> Option<&'static str> {
 }
 
 // ===== GPUI 层 =====
-/// 主区呈现入口（无数据源 ⇒ fail-closed 显示「未下发」）。
+/// 主区呈现入口：标题行 + 搜索行 + 分组节点 + 列表区（无数据源 ⇒ fail-closed）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = resolve(None);
-    let mut col = div()
+    let state = resolve(None); // 无数据源：未拉取过 ≠ 空集，⛔ 不伪造条目
+    div()
         .flex()
         .flex_col()
         .gap_2()
         .text_color(theme.muted_foreground)
-        .child(SharedString::from(TITLE));
-    if let Some(status) = status_copy(state) {
-        col = col.child(SharedString::from(status));
+        .child(title_row(theme))
+        .child(SharedString::from(copy::get("searchPlaceholder")))
+        .child(group_row(theme, "myScheduleGroup", &["addCalendar", "createCalendar"]))
+        .child(list_region(theme, state, &[]))
+        .child(group_row(theme, "myTodosGroup", &["myTodos"]))
+        .child(group_row(
+            theme,
+            "team",
+            &["subscribeCalendar", "thirdPartyCalendar"],
+        ))
+        .into_any_element()
+}
+
+/// 标题行：标题 + 收起边栏动作。
+fn title_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .justify_between()
+        .text_color(theme.foreground)
+        .child(SharedString::from(TITLE))
+        .child(SharedString::from(copy::get("collapseSidebar")))
+        .into_any_element()
+}
+
+/// 分组节点：组名 + 组内动作文案。
+fn group_row(theme: &Theme, group_key: &str, action_keys: &[&str]) -> AnyElement {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_color(theme.foreground)
+        .child(SharedString::from(copy::get(group_key)));
+    for key in action_keys {
+        col = col.child(
+            div()
+                .pl_2()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(copy::get(key))),
+        );
     }
     col.into_any_element()
+}
+
+/// 日历列表区：四分支逐态呈现（`Ready` 需运行时条目，本卡无源不会出现）。
+fn list_region(theme: &Theme, state: State, entries: &[CalendarEntry]) -> AnyElement {
+    let mut col = div().flex().flex_col().gap_1();
+    match state {
+        State::Ready => {
+            for entry in entries {
+                col = col.child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(SharedString::from(display_name(&entry.name)))
+                        .child(SharedString::from(tag_copy(entry.tag))),
+                );
+            }
+        }
+        State::Empty => {
+            col = col.child(SharedString::from(copy::get("empty")));
+        }
+        State::LoadFailed => {
+            col = col.child(SharedString::from(copy::get("subscribeDialog.loadFailed")));
+        }
+        State::NotDelivered => {
+            col = col.child(SharedString::from(NOT_DELIVERED));
+        }
+    }
+    col.text_color(theme.muted_foreground).into_any_element()
 }
 
 #[cfg(test)]
