@@ -302,17 +302,132 @@ pub fn resolve(delivered: Option<Vec<TodoItem>>) -> State {
 }
 
 // ===== GPUI 层 =====
-/// 主区/浮层呈现入口（无数据源 ⇒ fail-closed 默认 `NotDelivered`，显示「未下发」）。
+/// 主区/浮层呈现入口（签名固定；无数据源 ⇒ fail-closed 默认 `NotDelivered`，显示「未下发」）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = State::default();
-    div()
+    render(theme, &State::default())
+}
+
+/// 按状态渲染整棵树（只构造元素，不触实体/上下文；测试逐分支调用防 panic）。
+pub fn render(theme: &Theme, state: &State) -> AnyElement {
+    let frame = div()
         .flex()
         .flex_col()
         .gap_2()
+        .text_sm()
         .text_color(theme.muted_foreground)
-        .child(SharedString::from(t("collab.plan.detail.title")))
-        .child(SharedString::from(state.status_text()))
+        .child(header_row(theme))
+        .child(tabs_row(theme))
+        .child(actions_row(theme));
+    match state {
+        State::Ready(items) => frame
+            .children(items.iter().map(|it| item_card(theme, it)))
+            .into_any_element(),
+        State::Empty | State::Loading | State::NotDelivered => frame
+            .child(
+                div()
+                    .px_4()
+                    .py_2()
+                    .text_color(theme.foreground)
+                    .child(SharedString::from(state.status_text())),
+            )
+            .into_any_element(),
+    }
+}
+
+/// 标题行：返回上级 + 待办详情 + 上一条/下一条。
+fn header_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(SharedString::from(t("collab.plan.detail.backToParent")))
+        .child(div().text_color(theme.foreground).child(SharedString::from(t("collab.plan.detail.title"))))
+        .child(SharedString::from(t("collab.plan.detail.nav.prev")))
+        .child(SharedString::from(t("collab.plan.detail.nav.next")))
         .into_any_element()
+}
+
+/// 页签行：详情 / 动态。
+fn tabs_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(div().text_color(theme.foreground).child(SharedString::from(t("collab.plan.detail.tab.detail"))))
+        .child(SharedString::from(t("collab.plan.detail.tab.activity")))
+        .into_any_element()
+}
+
+/// 操作行（静态文案，无实体回调；能力位由运行时侧接）。
+fn actions_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .text_xs()
+        .child(div().text_color(theme.foreground).child(SharedString::from(t("collab.plan.detail.actions.start"))))
+        .child(SharedString::from(t("collab.plan.detail.addToTask")))
+        .child(SharedString::from(t("collab.plan.detail.copyDetail")))
+        .child(SharedString::from(t("collab.plan.detail.copyLink.title")))
+        .child(SharedString::from(t("collab.plan.detail.deleteItem")))
+        .into_any_element()
+}
+
+/// 单条待办卡（值全部来自 [`TodoItem`] 纯函数或字段，⛔ 不伪造）。
+fn item_card(theme: &Theme, it: &TodoItem) -> AnyElement {
+    let mut card = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().text_color(theme.foreground).child(SharedString::from(it.title_or())))
+                .child(SharedString::from(it.quick_action())),
+        )
+        .child(SharedString::from(it.creator_line()))
+        .child(SharedString::from(it.assignee_line()))
+        .child(SharedString::from(it.priority_line()))
+        .child(SharedString::from(it.tags_line()));
+    if let Some(sub) = it.subtitle.as_deref() {
+        card = card.child(div().text_xs().child(SharedString::from(sub)));
+    }
+    if let Some(s) = it.status.as_deref() {
+        card = card.child(SharedString::from(format!("{} {}", t("collab.plan.detail.statusLabel"), s)));
+    }
+    if let Some(d) = it.dates_line() {
+        card = card.child(SharedString::from(d));
+    }
+    if let Some(sess) = it.session_line() {
+        card = card.child(div().text_xs().text_color(theme.accent).child(SharedString::from(sess)));
+    }
+    if it.needs_subtodo_confirm() {
+        let mut block = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_xs()
+            .child(SharedString::from(t("collab.plan.detail.completeSubtodos.title")))
+            .child(SharedString::from(it.subtodo_desc()));
+        if let Some(s) = it.status.as_deref() {
+            block = block.child(SharedString::from(it.subtodo_question(s)));
+        }
+        block = block
+            .child(SharedString::from(t("collab.plan.detail.completeSubtodos.skip")))
+            .child(SharedString::from(t("collab.plan.detail.completeSubtodos.updateAll")));
+        card = card.child(block);
+    }
+    card.into_any_element()
 }
 
 #[cfg(test)]
