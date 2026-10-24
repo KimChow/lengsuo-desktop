@@ -1,7 +1,16 @@
-//! 文本文档预览（`PreviewKind::Text`）——文档区 + 截断 + 未下发态（A14）。
+//! 文本文档预览（`PreviewKind::Text`）——真解码 + 行列表渲染（A14）。
 //!
-//! 预览内容由运行时契约下发（L2 未就绪）：本模块只做视图与状态，
-//! ⛔ 不读文件、不伪造正文；颜色/字体一律取 `theme`，⛔ 不硬编码。
+//! 字节优先由运行时契约下发（[`decode`] 的 `bytes`，只消费传入字节）；
+//! 未下发时有界读本地文件（≤ [`MAX_BYTES`] 即截断，⛔ 不整包进内存）。
+//! 拿不到内容 ⇒ `NotDelivered` / `Failed`，⛔ 不伪造正文；
+//! 颜色/字体一律取 `theme`，⛔ 不硬编码。
+use std::borrow::Cow;
+use std::fs::File;
+use std::io::Read;
+
+use crate::state::preview_payload::{
+    DecodeError, PreviewPayload, TextPayload, MAX_BYTES, MAX_LINES,
+};
 use gpui_kit::*;
 
 /// 截断阈值：内容超过该字符数只展示前缀（10MB 级文件由截断兜底，
@@ -100,24 +109,57 @@ fn render_body(
 }
 
 // ---------------------------------------------------------------------------
-// A14 解码入口（a14-preview-decode-deps 基建落盘；**诚实占位**）
+// A14 解码入口（`preview.rs` 分派：decode → render_with_payload）
 // ---------------------------------------------------------------------------
-//
-// 契约（A14 卡在此填实，⛔ 不要改签名、⛔ 不要动别的文件）：
-//   · `decode`               —— 把「待预览文件」解码成载荷。字节可由运行时下发（`bytes`）；
-//                              未下发时自行读本地文件。拿不到内容 ⇒ `NotDelivered` / `Failed`，
-//                              ⛔ 绝不伪造内容、⛔ 不吞错。
-//   · `render_with_payload`  —— 把载荷画出来。**默认退回既有占位视图**，因此外壳
-//                              （头信息 / 缩放控件 / 「未下发」提示行）行为与本次基建前一致。
 
-/// A14：解码待预览文件。当前为**诚实占位**（不读文件、不解码）。
-pub(super) fn decode(
-    _path: &str,
-    _bytes: Option<&[u8]>,
-) -> crate::state::preview_payload::PreviewPayload {
-    crate::state::preview_payload::PreviewPayload::NotDelivered {
-        reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+/// A14：把待预览文本解码成 [`TextPayload`]。
+///
+/// 字节优先用运行时下发的 `bytes`（只消费传入字节，便于测试）；`None` 时
+/// 有界读 `path`（读失败 ⇒ [`PreviewPayload::Failed`]）。超 [`MAX_BYTES`] /
+/// [`MAX_LINES`] ⇒ 截断并置 `truncated`，⛔ 不整包进内存、⛔ 不伪造内容。
+pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
+    let (data, over_limit): (Cow<'_, [u8]>, bool) = match bytes {
+        Some(b) if b.len() > MAX_BYTES => (Cow::Borrowed(&b[..MAX_BYTES]), true),
+        Some(b) => (Cow::Borrowed(b), false),
+        None => match read_bounded(path) {
+            Ok((buf, over)) => (Cow::Owned(buf), over),
+            Err(err) => return PreviewPayload::Failed(DecodeError::Io(err.to_string())),
+        },
+    };
+    // 二进制嗅探：含 NUL 字节 ⇒ fail-closed（解析失败），⛔ 不把 U+FFFD 汤伪装成文本。
+    if data.contains(&0) {
+        return PreviewPayload::Failed(DecodeError::Parse(
+            "内容含 NUL 字节，疑似二进制，不按文本预览".to_owned(),
+        ));
     }
+    let text = String::from_utf8_lossy(&data);
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let mut truncated = over_limit;
+    if lines.len() > MAX_LINES {
+        lines.truncate(MAX_LINES);
+        truncated = true;
+    }
+    PreviewPayload::Text(TextPayload { lines, truncated })
+}
+
+/// 有界读取：最多装满 `MAX_BYTES + 1` 字节缓冲（多读 1 字节只为探测超限）；
+/// 超限 ⇒ 数据截回 [`MAX_BYTES`] 并返回 `true`。
+fn read_bounded(path: &str) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut file = File::open(path)?;
+    let mut buf = vec![0u8; MAX_BYTES + 1];
+    let mut filled = 0;
+    loop {
+        if filled == buf.len() {
+            buf.truncate(MAX_BYTES);
+            return Ok((buf, true));
+        }
+        match file.read(&mut buf[filled..])? {
+            0 => break,
+            n => filled += n,
+        }
+    }
+    buf.truncate(filled);
+    Ok((buf, false))
 }
 
 /// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
