@@ -125,10 +125,18 @@ impl State {
     /// 状态转移（纯函数；仅 [`State::Pending`] 可接受邀请，其余态保持不变）。
     pub fn on(self, event: Event) -> State {
         match (self, event) {
-            (State::Pending, Event::AcceptSucceeded { pending_approval: true }) => {
-                State::PendingApproval
-            }
-            (State::Pending, Event::AcceptSucceeded { pending_approval: false }) => State::Accepted,
+            (
+                State::Pending,
+                Event::AcceptSucceeded {
+                    pending_approval: true,
+                },
+            ) => State::PendingApproval,
+            (
+                State::Pending,
+                Event::AcceptSucceeded {
+                    pending_approval: false,
+                },
+            ) => State::Accepted,
             (State::Pending, Event::AcceptFailed) => State::SubmitFailed,
             (other, _) => other,
         }
@@ -255,18 +263,167 @@ pub fn main_area(theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::{
+        main_area, state_card, Event, Input, State, TaskInvitation, ACCEPTED_BANNER_TEXT,
+        INVITER_SUFFIX, JOIN_ACTION, KEYS, LINK_INVALID_DESC, NOT_DELIVERED, OPEN_TASK,
+        UNTITLED_TASK,
+    };
     use gpui_kit::component::Theme;
-    #[test]
-    fn default_state_is_not_delivered() {
-        assert_eq!(State::default(), State::NotDelivered);
+
+    fn input(logged_in: bool, load_failed: bool, invitation: Option<bool>) -> Input {
+        Input {
+            logged_in,
+            load_failed,
+            invitation,
+        }
     }
+
+    /// ① 计数：命名空间 14 键、全部带前缀且无重复。
     #[test]
-    fn title_not_empty() {
-        assert!(!TITLE.is_empty());
+    fn key_table_has_fourteen_unique_keys() {
+        assert_eq!(KEYS.len(), 14);
+        for (i, key) in KEYS.iter().enumerate() {
+            assert!(key.starts_with("taskInvitation."), "{key}");
+            assert!(!KEYS[..i].contains(key), "重复键：{key}");
+        }
     }
+
+    /// ② 空输入 ⇒ 空态（LinkInvalid 失效视图这一具体状态），不是空列表。
+    #[test]
+    fn empty_input_yields_invalid_state_not_a_list() {
+        let inv = TaskInvitation::from_input(Some(&input(true, false, None)));
+        assert_eq!(inv.state(), State::LinkInvalid);
+        assert!(inv.state().is_error());
+        assert_ne!(inv.state(), State::NotDelivered);
+    }
+
+    /// ③ 文案逐字一致（含 inviterSuffix 的前导空格）。
+    #[test]
+    fn copy_is_verbatim_from_key_table() {
+        assert_eq!(JOIN_ACTION, "接受邀请");
+        assert_eq!(UNTITLED_TASK, "未命名任务");
+        assert_eq!(ACCEPTED_BANNER_TEXT, "已加入协作");
+        assert_eq!(
+            LINK_INVALID_DESC,
+            "该邀请已过期、已被撤回或已被使用，请联系邀请人重新发送。"
+        );
+        assert_eq!(INVITER_SUFFIX, " 邀请你协作此任务");
+    }
+
+    /// ④ main_area 用默认主题渲染不 panic。
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+
+    /// ⑤ 分支覆盖：resolve 全部分支 + 事件转移 + 非待接受态不变。
+    #[test]
+    fn resolve_and_transitions_cover_every_branch() {
+        assert_eq!(State::resolve(None), State::NotDelivered);
+        assert_eq!(
+            State::resolve(Some(&input(false, false, Some(false)))),
+            State::LoginRequired
+        );
+        assert_eq!(
+            State::resolve(Some(&input(true, true, Some(false)))),
+            State::LoadFailed
+        );
+        assert_eq!(
+            State::resolve(Some(&input(true, false, None))),
+            State::LinkInvalid
+        );
+        assert_eq!(
+            State::resolve(Some(&input(true, false, Some(true)))),
+            State::AlreadyMember
+        );
+        assert_eq!(
+            State::resolve(Some(&input(true, false, Some(false)))),
+            State::Pending
+        );
+        let pending = State::Pending;
+        assert_eq!(
+            pending.on(Event::AcceptSucceeded {
+                pending_approval: false
+            }),
+            State::Accepted
+        );
+        assert_eq!(
+            pending.on(Event::AcceptSucceeded {
+                pending_approval: true
+            }),
+            State::PendingApproval
+        );
+        assert_eq!(pending.on(Event::AcceptFailed), State::SubmitFailed);
+        // 非待接受态不接受邀请（已是成员/未下发保持不变）
+        assert_eq!(
+            State::AlreadyMember.on(Event::AcceptFailed),
+            State::AlreadyMember
+        );
+        assert_eq!(
+            State::NotDelivered.on(Event::AcceptSucceeded {
+                pending_approval: false
+            }),
+            State::NotDelivered
+        );
+    }
+
+    /// ⑥ fail-closed：默认态是未下发，视图模型经 transitioned 不改自身。
+    #[test]
+    fn default_is_not_delivered_fail_closed() {
+        assert_eq!(TaskInvitation::default().state(), State::NotDelivered);
+        assert_eq!(TaskInvitation::fail_closed().state(), State::NotDelivered);
+        assert_eq!(State::NotDelivered.headline(), NOT_DELIVERED);
+        let inv = TaskInvitation::new(State::Pending);
+        assert_eq!(
+            inv.transitioned(Event::AcceptFailed).state(),
+            State::SubmitFailed
+        );
+        assert_eq!(inv.state(), State::Pending);
+    }
+
+    /// ⑦ 每个分支主文案非空、渲染不 panic，错误标记与分支一一对应。
+    #[test]
+    fn every_branch_has_headline_and_correct_error_flag() {
+        let all = [
+            State::Pending,
+            State::Accepted,
+            State::PendingApproval,
+            State::AlreadyMember,
+            State::LinkInvalid,
+            State::LoginRequired,
+            State::SubmitFailed,
+            State::LoadFailed,
+            State::NotDelivered,
+        ];
+        for state in all {
+            assert!(!state.headline().is_empty());
+            let _ = state_card(&Theme::default(), state);
+        }
+        for state in [
+            State::LinkInvalid,
+            State::LoginRequired,
+            State::SubmitFailed,
+            State::LoadFailed,
+        ] {
+            assert!(state.is_error());
+        }
+        for state in [
+            State::Pending,
+            State::Accepted,
+            State::PendingApproval,
+            State::AlreadyMember,
+            State::NotDelivered,
+        ] {
+            assert!(!state.is_error());
+        }
+    }
+
+    /// ⑧ 动作文案只出现在可操作分支。
+    #[test]
+    fn action_labels_only_on_actionable_branches() {
+        assert_eq!(State::Pending.action_label(), Some(JOIN_ACTION));
+        assert_eq!(State::AlreadyMember.action_label(), Some(OPEN_TASK));
+        assert_eq!(State::LinkInvalid.action_label(), None);
+        assert_eq!(State::NotDelivered.action_label(), None);
     }
 }
