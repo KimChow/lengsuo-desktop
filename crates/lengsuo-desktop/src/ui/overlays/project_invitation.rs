@@ -389,21 +389,130 @@ fn render_state_page(phase: &Phase, theme: &Theme) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{main_area, BADGE, NOT_DELIVERED};
+    use super::{
+        main_area, pending_waiting_line, render_phase, InvitationDetail, Phase, Role,
+        ALREADY_ACCEPTED_DESC, BADGE, CONFLICT, EXCLUSIVE_BLOCKED, FIELD_EXPIRES_AT,
+        FIELD_MEMBER_COUNT, FIELD_PROJECT, FIELD_ROLE, INVITER_LINE, JOINED_TAG, JOINED_TITLE,
+        JOIN_ACTION, LOAD_FAILED, NOT_DELIVERED, PAGE_TITLE, PENDING_TAG, PENDING_WAITING_FALLBACK,
+        PENDING_WAITING_FOR, SUBTITLE, UNKNOWN_USER,
+    };
     use gpui_kit::component::Theme;
 
-    #[test]
-    fn badge_is_taken_verbatim_and_not_blank() {
-        assert_eq!(BADGE, "项目协作邀请");
+    fn sample_detail() -> InvitationDetail {
+        InvitationDetail {
+            project: Some("设计系统迁移".into()),
+            inviter: Some("林晚".into()),
+            role: Some(Role::Editor),
+            member_count: Some(6),
+            expires_at: Some("2026-11-01".into()),
+        }
     }
 
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn copy_is_verbatim_from_table() {
+        assert_eq!(BADGE, "项目协作邀请");
+        assert_eq!(PAGE_TITLE, "加入项目");
+        assert_eq!(SUBTITLE, "你收到一份项目协作邀请");
+        assert_eq!(JOIN_ACTION, "申请加入项目");
+        assert_eq!(CONFLICT, "邀请已被他人接受或处于终态");
+        assert_eq!(
+            EXCLUSIVE_BLOCKED,
+            "当前账号版本不支持团队协作功能，请联系企业管理员。"
+        );
+        assert_eq!(LOAD_FAILED, "邀请信息加载失败");
+        assert_eq!(INVITER_LINE, "{name} 邀请你加入项目");
+        assert_eq!(PENDING_WAITING_FOR, "等待 {name} 审批");
+        assert_eq!(PENDING_WAITING_FALLBACK, "等待项目所有者审批");
         assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    #[test]
+    fn role_labels_and_descriptions_are_verbatim() {
+        assert_eq!(Role::Admin.label(), "管理员");
+        assert_eq!(Role::Admin.description(), "可管理成员、配置与项目权限");
+        assert_eq!(Role::Editor.label(), "成员");
+        assert_eq!(Role::Editor.description(), "可参与协作、创建任务");
+        assert_eq!(Role::Viewer.label(), "访客");
+        assert_eq!(Role::Viewer.description(), "可查看项目内容与协作结果");
+    }
+
+    #[test]
+    fn detail_rows_count_labels_and_values() {
+        let rows = sample_detail().rows();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0], (FIELD_PROJECT, "设计系统迁移".to_string()));
+        assert_eq!(rows[1].0, FIELD_ROLE);
+        assert_eq!(rows[1].1, "成员 · 可参与协作、创建任务");
+        assert_eq!(rows[2], (FIELD_MEMBER_COUNT, "6".to_string()));
+        assert_eq!(rows[3], (FIELD_EXPIRES_AT, "2026-11-01".to_string()));
+    }
+
+    #[test]
+    fn empty_input_yields_empty_state_not_empty_list() {
+        let empty = InvitationDetail::default();
+        assert!(empty.rows().is_empty());
+        assert!(empty.is_empty());
+        // 空输入的邀请人行如实回退未知用户，不伪造邀请人。
+        assert_eq!(
+            empty.inviter_line(),
+            format!("{UNKNOWN_USER} 邀请你加入项目")
+        );
+        // 只有邀请人、无清单字段：不是空态，也不渲染空清单。
+        let inviter_only = InvitationDetail {
+            inviter: Some("林晚".into()),
+            ..InvitationDetail::default()
+        };
+        assert!(!inviter_only.is_empty());
+        assert!(inviter_only.rows().is_empty());
+    }
+
+    #[test]
+    fn template_lines_fill_names_verbatim() {
+        assert_eq!(sample_detail().inviter_line(), "林晚 邀请你加入项目");
+        assert_eq!(pending_waiting_line(Some("林晚")), "等待 林晚 审批");
+        assert_eq!(pending_waiting_line(None), PENDING_WAITING_FALLBACK);
+    }
+
+    #[test]
+    fn phase_headline_tag_and_acceptance_mapping() {
+        assert_eq!(Phase::NotDelivered.headline(), NOT_DELIVERED);
+        assert_eq!(Phase::Detail(Box::default()).headline(), PAGE_TITLE);
+        assert_eq!(Phase::Conflict.headline(), CONFLICT);
+        assert_eq!(Phase::Conflict.description(), Some(ALREADY_ACCEPTED_DESC));
+        assert_eq!(Phase::VersionBlocked.headline(), EXCLUSIVE_BLOCKED);
+        assert_eq!(Phase::VersionBlocked.description(), None);
+        assert_eq!(Phase::Joined.headline(), JOINED_TITLE);
+        assert_eq!(Phase::Joined.tag(), JOINED_TAG);
+        assert!(Phase::Joined.is_accepted());
+        assert_eq!(Phase::Pending { approver: None }.tag(), PENDING_TAG);
+        assert!(!Phase::Pending { approver: None }.is_accepted());
+        assert!(!Phase::Conflict.is_accepted());
     }
 
     #[test]
     fn main_area_builds_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+
+    #[test]
+    fn render_phase_covers_all_branches_without_panic() {
+        let theme = Theme::default();
+        let branches = [
+            Phase::NotDelivered,
+            Phase::Detail(Box::new(sample_detail())),
+            Phase::Detail(Box::default()),
+            Phase::Joining,
+            Phase::Pending {
+                approver: Some("林晚".into()),
+            },
+            Phase::Pending { approver: None },
+            Phase::Joined,
+            Phase::Conflict,
+            Phase::VersionBlocked,
+            Phase::Failed,
+        ];
+        for phase in &branches {
+            let _ = render_phase(phase, &theme);
+        }
     }
 }
