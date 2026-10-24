@@ -284,16 +284,104 @@ fn badge_chip(theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, render_overlay, Decision, OverlayState, RestrictedAction, TrustRequest,
+        BADGE_RESTRICTED, BADGE_TITLE_TEMPLATE, BODY_AFTER_DIRECTORY, BODY_BEFORE_DIRECTORY,
+        CLOSE_RESTRICTED, DECISION_BUTTONS, EMPTY_HINT, KEEP_RESTRICTED, NOT_DELIVERED, REJECT,
+        RESTRICTED_BUTTONS, STATUS_BODY, STATUS_TITLE, TITLE, TRUST,
+    };
     use gpui_kit::component::Theme;
+
+    /// 文案逐字一致（≥3 个 key；前段结尾空格与后段开头空格逐字保留）。
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
-    }
-    #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn overlay_texts_verbatim() {
+        assert_eq!(TITLE, "选择打开方式");
         assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(BADGE_RESTRICTED, "受限模式");
+        assert_eq!(BADGE_TITLE_TEMPLATE, "受限模式：{path}");
+        assert_eq!(BODY_BEFORE_DIRECTORY, "此文件夹中的 ");
+        assert_eq!(
+            BODY_AFTER_DIRECTORY,
+            " 目录可能包含可自动运行的脚本与配置。若以「受限模式」打开，将不会自动加载项目级配置，不自动执行终端命令。"
+        );
+        assert_eq!(TRUST, "正常打开");
+        assert_eq!(REJECT, "以「受限模式」打开");
+        assert_eq!(STATUS_TITLE, "受限模式已启用");
+        assert_eq!(
+            STATUS_BODY,
+            "此工作区当前按「受限模式」处理。在该模式下，项目级配置不会自动加载，Agent Runtime 的 Bash 工具会被禁用。"
+        );
+        assert_eq!(KEEP_RESTRICTED, "保持受限模式");
+        assert_eq!(CLOSE_RESTRICTED, "关闭受限模式");
+        assert_eq!(EMPTY_HINT, "无法读取该工作区的授信状态，请稍后重试。");
     }
+
+    /// 按钮模型：文案逐字 + 分组顺序（确认在前；保持在前）。
+    #[test]
+    fn button_labels_and_groups_verbatim() {
+        assert_eq!(Decision::Trust.label(), "正常打开");
+        assert_eq!(Decision::Reject.label(), "以「受限模式」打开");
+        assert_eq!(RestrictedAction::Keep.label(), "保持受限模式");
+        assert_eq!(RestrictedAction::Close.label(), "关闭受限模式");
+        assert_eq!(DECISION_BUTTONS, &[Decision::Trust, Decision::Reject]);
+        assert_eq!(
+            RESTRICTED_BUTTONS,
+            &[RestrictedAction::Keep, RestrictedAction::Close]
+        );
+    }
+
+    /// 纯函数层状态构造：None/空白/非空三路各归其态，路径去首尾空白。
+    #[test]
+    fn from_delivered_maps_all_states() {
+        assert!(matches!(
+            OverlayState::from_delivered(None),
+            OverlayState::NotDelivered
+        ));
+        assert!(matches!(
+            OverlayState::from_delivered(Some("  ")),
+            OverlayState::Empty
+        ));
+        let OverlayState::Choose(request) = OverlayState::from_delivered(Some(" /data/ws ")) else {
+            panic!("非空路径应构造信任确认分支");
+        };
+        assert_eq!(request.path, "/data/ws");
+    }
+
+    /// 空输入 ⇒ 空态（不是未下发，更不是空清单伪装的确认分支）。
+    #[test]
+    fn empty_input_is_empty_state_not_not_delivered() {
+        let state = OverlayState::from_delivered(Some(""));
+        assert!(matches!(state, OverlayState::Empty));
+        assert!(!matches!(state, OverlayState::NotDelivered));
+        assert!(matches!(
+            OverlayState::from_delivered(None),
+            OverlayState::NotDelivered
+        ));
+    }
+
+    /// 请求正文逐字拼接 + 徽标模板占位替换。
+    #[test]
+    fn request_body_and_badge_title_compose_verbatim() {
+        let request = TrustRequest::new("/data/ws");
+        assert_eq!(
+            request.body_text(),
+            "此文件夹中的 /data/ws 目录可能包含可自动运行的脚本与配置。若以「受限模式」打开，将不会自动加载项目级配置，不自动执行终端命令。"
+        );
+        assert_eq!(request.badge_title(), "受限模式：/data/ws");
+        assert_eq!(TrustRequest::new(" /a/b ").path, "/a/b");
+    }
+
+    /// 四个分支全部渲染不 panic（含 GPUI 树构建）。
+    #[test]
+    fn render_all_states_without_panic() {
+        let theme = Theme::default();
+        let _ = render_overlay(&theme, &OverlayState::NotDelivered);
+        let _ = render_overlay(&theme, &OverlayState::from_delivered(Some("")));
+        let _ = render_overlay(&theme, &OverlayState::from_delivered(Some("/data/ws")));
+        let _ = render_overlay(&theme, &OverlayState::RestrictedStatus);
+    }
+
+    /// main_area 默认态 fail-closed 且不 panic。
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
