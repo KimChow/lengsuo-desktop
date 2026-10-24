@@ -372,13 +372,7 @@ fn branch_row(theme: &Theme, item: &BranchItem, selected: Option<&str>) -> Div {
             theme.border
         });
     if item.is_current {
-        row = row.child(
-            div()
-                .w_2()
-                .h_2()
-                .rounded_full()
-                .bg(theme.accent),
-        );
+        row = row.child(div().w_2().h_2().rounded_full().bg(theme.accent));
     }
     row.child(
         div()
@@ -477,16 +471,15 @@ fn footer(theme: &Theme, state: &BranchSwitchState) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        fill_count, BranchItem, BranchSwitchState, CONFIRM, COPY_BRANCH_NAME, NOT_DELIVERED,
-        NO_BRANCHES, RENDER_LIMIT, RENDER_LIMIT_HINT, TITLE,
+        fill_count, main_area, render, BranchItem, BranchSwitchState, CANCEL, CONFIRM,
+        COPY_BRANCH_NAME, DIRTY_BLOCKED, DIRTY_COMMIT_PREFIX, DIRTY_COMMIT_SUFFIX, DIRTY_DISCARD,
+        DIRTY_RECOMMEND, DIRTY_STASH, FAILED, LOCAL_BRANCHES, NOTICE_CURRENT_MIDDLE, NOTICE_PREFIX,
+        NOTICE_SELECTED_MIDDLE, NOTICE_SUFFIX, NOT_DELIVERED, NO_BRANCHES, REMOTE_BRANCHES,
+        RENDER_LIMIT, RENDER_LIMIT_HINT, SEARCH_PLACEHOLDER, TITLE,
     };
     use gpui_kit::component::Theme;
 
-    fn delivered(
-        items: Vec<BranchItem>,
-        selected: Option<&str>,
-        dirty: bool,
-    ) -> BranchSwitchState {
+    fn delivered(items: Vec<BranchItem>, selected: Option<&str>, dirty: bool) -> BranchSwitchState {
         BranchSwitchState::Delivered {
             items,
             selected: selected.map(str::to_string),
@@ -565,7 +558,10 @@ mod tests {
     #[test]
     fn initial_state_is_fail_closed_not_delivered() {
         assert!(BranchSwitchState::initial().is_not_delivered());
-        assert_eq!(BranchSwitchState::default(), BranchSwitchState::NotDelivered);
+        assert_eq!(
+            BranchSwitchState::default(),
+            BranchSwitchState::NotDelivered
+        );
         assert_eq!(NOT_DELIVERED, "未下发");
     }
 
@@ -600,5 +596,71 @@ mod tests {
         assert_eq!(COPY_BRANCH_NAME, "复制分支名");
         assert_eq!(CONFIRM, "确认");
         assert_eq!(RENDER_LIMIT_HINT, "仅展示前 {count} 个分支，可搜索缩小范围");
+    }
+
+    #[test]
+    fn overlay_copy_is_verbatim_full_battery() {
+        assert_eq!(CANCEL, "取消");
+        assert_eq!(NO_BRANCHES, "未找到分支");
+        assert_eq!(SEARCH_PLACEHOLDER, "搜索分支");
+        assert_eq!(LOCAL_BRANCHES, "本地分支");
+        assert_eq!(REMOTE_BRANCHES, "远程分支");
+        assert_eq!(FAILED, "切换分支失败，请重试。");
+        assert_eq!(
+            DIRTY_BLOCKED,
+            "当前工作空间存在未提交改动，无法切换分支，请先处理后重试。"
+        );
+        assert_eq!(DIRTY_STASH, "暂存，包含未跟踪文件。");
+        assert_eq!(DIRTY_DISCARD, "丢弃，此操作无法撤销。");
+        assert_eq!(DIRTY_RECOMMEND, "推荐");
+        // 拼接段逐字保留首尾空格
+        assert_eq!(NOTICE_PREFIX, "当前 ");
+        assert_eq!(NOTICE_CURRENT_MIDDLE, " 空间内容归属 ");
+        assert_eq!(NOTICE_SELECTED_MIDDLE, " 分支。本次任务已选择 ");
+        assert_eq!(NOTICE_SUFFIX, " 分支。确认后，将切换分支并创建任务。");
+        assert_eq!(DIRTY_COMMIT_PREFIX, "提交至 ");
+        assert_eq!(DIRTY_COMMIT_SUFFIX, " 分支");
+    }
+
+    #[test]
+    fn fail_closed_state_never_fabricates_content() {
+        let state = BranchSwitchState::initial();
+        assert_eq!(state.total_count(), 0);
+        assert!(state.visible_items().is_empty());
+        assert_eq!(state.notice(), None);
+        assert!(state.dirty_options().is_empty());
+        assert_eq!(state.limit_hint(), None);
+        assert!(!state.render_limited());
+    }
+
+    #[test]
+    fn render_covers_all_states_without_panic() {
+        let theme = Theme::default();
+        let mut current = BranchItem::local("main");
+        current.is_current = true;
+        let states = vec![
+            BranchSwitchState::initial(),
+            BranchSwitchState::DirtyBlocked,
+            BranchSwitchState::Failed,
+            delivered(vec![], None, false),
+            delivered(
+                vec![current, BranchItem::remote("origin/dev")],
+                Some("origin/dev"),
+                false,
+            ),
+            delivered(vec![BranchItem::local("main")], Some("main"), true),
+            delivered(
+                (0..RENDER_LIMIT + 5)
+                    .map(|i| BranchItem::remote(format!("origin/b{i}")))
+                    .collect(),
+                Some("origin/b0"),
+                false,
+            ),
+        ];
+        assert_eq!(states.len(), 7);
+        for state in &states {
+            let _ = render(&theme, state);
+        }
+        let _ = main_area(&theme);
     }
 }
