@@ -177,14 +177,21 @@ fn discover_button(theme: &Theme, on_intent: Rc<dyn Fn(MenuIntent)>) -> impl Int
 
 #[cfg(test)]
 mod tests {
-    use super::{title_bar, DISCOVER_APPS, MENUS};
+    // 显式导入（⛔ 不用 `use super::*`）：父模块 `use gpui_kit::*` 里的 GPUI
+    // `test` 属性宏会遮蔽标准库 `#[test]` ⇒ recursion limit。
+    use super::{
+        app_name, intent_from_word, title_bar, title_bar_with, MenuIntent,
+        DEEPLINK_VERSION_REQUIRED, DISCOVER_APPS, MENUS, MENU_INTENTS, NOT_DELIVERED,
+        PREVIEW_BANNER, PREVIEW_BANNER_HINT, PREVIEW_EXIT, PREVIEW_OPEN_FAILED,
+        SWITCH_DIALOG_CONTENT, SWITCH_DIALOG_CONTENT_UNKNOWN, SWITCH_DIALOG_TITLE,
+        SWITCH_EXIT_CONTENT, SWITCH_EXIT_CONTENT_UNKNOWN, SWITCH_EXIT_TITLE, SWITCH_FAILED,
+        SWITCH_GENERAL_NAME, SWITCH_UNKNOWN_NAME,
+    };
     use gpui_kit::component::Theme;
 
     #[test]
     fn menus_verbatim() {
-        assert_eq!(MENUS.len(), 5);
-        assert_eq!(MENUS[0], "文件");
-        assert_eq!(MENUS[4], "关于");
+        assert_eq!(MENUS, ["文件", "编辑", "窗口", "帮助", "关于"]);
     }
 
     #[test]
@@ -193,7 +200,71 @@ mod tests {
     }
 
     #[test]
+    fn menu_words_align_with_intents() {
+        for (idx, word) in MENUS.iter().enumerate() {
+            assert_eq!(intent_from_word(word), Some(MENU_INTENTS[idx]));
+            assert_eq!(MENU_INTENTS[idx].label(), *word);
+        }
+        assert_eq!(MenuIntent::DiscoverApps.label(), DISCOVER_APPS);
+    }
+
+    #[test]
+    fn unknown_word_is_not_an_intent() {
+        assert_eq!(
+            intent_from_word("设置"),
+            None,
+            "fail-closed：不认识的词不上报"
+        );
+    }
+
+    #[test]
+    fn app_name_missing_shows_placeholder() {
+        assert_eq!(app_name(None), "未下发");
+        assert_eq!(app_name(None), NOT_DELIVERED);
+    }
+
+    #[test]
+    fn app_name_delivered_passes_through() {
+        assert_eq!(app_name(Some("通用版")), "通用版");
+    }
+
+    #[test]
+    fn switch_texts_verbatim() {
+        assert_eq!(SWITCH_DIALOG_TITLE, "确认切换 Buddy 应用");
+        assert_eq!(SWITCH_DIALOG_CONTENT, "将切换到「{name}」，确认是否前往？");
+        assert_eq!(
+            SWITCH_DIALOG_CONTENT_UNKNOWN,
+            "将切换到会话所属的 Buddy 应用，确认是否前往？"
+        );
+        assert_eq!(SWITCH_EXIT_TITLE, "确认退出当前 Buddy 应用");
+        assert_eq!(
+            SWITCH_EXIT_CONTENT,
+            "将退出「{name}」并前往 WorkBuddy，确认继续？"
+        );
+        assert_eq!(
+            SWITCH_EXIT_CONTENT_UNKNOWN,
+            "将退出当前 Buddy 应用并前往 WorkBuddy，确认继续？"
+        );
+        assert_eq!(SWITCH_FAILED, "切换 Buddy 应用失败，请稍后重试");
+        assert_eq!(SWITCH_GENERAL_NAME, "通用版");
+        assert_eq!(SWITCH_UNKNOWN_NAME, "该对话所属的 Buddy 应用");
+        assert_eq!(
+            DEEPLINK_VERSION_REQUIRED,
+            "Buddy 应用仅 5.5.0 以上版本开放，请升级到最新版本"
+        );
+    }
+
+    #[test]
+    fn preview_texts_verbatim() {
+        assert_eq!(PREVIEW_BANNER, "正在预览调试未发布配置");
+        assert_eq!(PREVIEW_BANNER_HINT, "点右侧退出，或重启客户端");
+        assert_eq!(PREVIEW_EXIT, "退出预览调试");
+        assert_eq!(PREVIEW_OPEN_FAILED, "预览调试打开失败，请稍后重试");
+    }
+
+    #[test]
     fn build_not_panic() {
         let _ = title_bar(&Theme::default());
+        let _ = title_bar_with(&Theme::default(), Some("通用版"), |_| ());
     }
 }
