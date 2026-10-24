@@ -1,7 +1,8 @@
 //! 语音输入状态浮层（波次 6，卡 `ui-overlay-voice-states`）。
 //!
 //! 分层约定（同 `panel_views`）：纯数据层（[`VoiceState`] / [`VoiceStatesModel`]）
-//! + GPUI 层（[`main_area`]）。
+//! 叠加 GPUI 层（[`main_area`]）。
+//!
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `voice`。
 //! 数据源在运行时侧：[`demo`] 是规格枚举的分支清单，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
@@ -229,8 +230,9 @@ fn action_row(theme: &Theme) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        demo, main_area, VoiceState, VoiceStatesModel, BTN_CANCEL, BTN_START, BTN_STOP,
-        EMPTY_RESULT, NOT_DELIVERED, PROCESSING, SPEC_BRANCHES, TITLE,
+        action_row, badge, branch_row, demo, main_area, overlay_body, VoiceState, VoiceStatesModel,
+        BTN_CANCEL, BTN_START, BTN_STOP, EMPTY_RESULT, NOT_DELIVERED, PROCESSING, SPEC_BRANCHES,
+        TITLE,
     };
     use gpui_kit::component::Theme;
 
@@ -293,5 +295,28 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn overlay_body_covers_all_three_branches_without_panic() {
+        let theme = Theme::default();
+        // 未下发（fail-closed）
+        let _ = overlay_body(&theme, &VoiceStatesModel::not_delivered());
+        // 空态（空输入 ⇒ 占位文案，不是空列表）
+        let _ = overlay_body(&theme, &VoiceStatesModel::delivered(Vec::new()));
+        // 清单行（规格枚举四分支）
+        let _ = overlay_body(&theme, &demo());
+    }
+
+    #[test]
+    fn row_and_action_nodes_build_without_panic() {
+        let theme = Theme::default();
+        for state in SPEC_BRANCHES {
+            let _ = branch_row(&theme, *state);
+        }
+        let _ = branch_row(&theme, VoiceState::Processing);
+        let _ = branch_row(&theme, VoiceState::EmptyResult);
+        let _ = badge(&theme, PROCESSING);
+        let _ = action_row(&theme);
     }
 }
