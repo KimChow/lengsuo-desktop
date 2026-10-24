@@ -1,16 +1,206 @@
-//! 快捷键速查浮层（波次 7，卡 `ui-overlay-shortcut-cheatsheet`，条目 A57）。
+//! 快捷键速查浮层（波次 7，卡 `ui-overlay-shortcut-cheatsheet`，条目 A55）。
 //!
 //! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `settings.keyboardShortcuts`。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 键位绑定运行时未下发：目录（动作名/分组/列头）为静态逐字数据，绑定列如实空置并显式提示「未下发」。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
+
+// ==================== 纯数据层（无 GPUI 依赖） ====================
+
 /// 视图标题（逐字取自界面文案全表）。
 pub const TITLE: &str = "快捷键速查";
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
+/// 搜索框占位符（逐字）。
+pub const SEARCH_PLACEHOLDER: &str = "搜索快捷键";
+/// 搜索无命中时的空态文案（逐字；⛔ 不得渲染成空列表）。
+pub const NO_RESULTS: &str = "没有匹配的快捷键";
+/// 列头「命令」（逐字）。
+pub const COLUMN_COMMAND: &str = "命令";
+/// 列头「按键绑定」（逐字）。
+pub const COLUMN_BINDING: &str = "按键绑定";
+/// 计数行模板（逐字，`{count}` 为占位符）。
+pub const TOTAL_COUNT_TEMPLATE: &str = "共 {count} 条";
+/// 冲突提示模板（逐字，`{keys}`/`{label}` 为占位符）。
+pub const CONFLICT_TEMPLATE: &str = "“{keys}”已被“{label}”使用";
+/// 分组标题（逐字取自 `category.*`）。
+pub const CATEGORY_GENERAL: &str = "通用";
+/// 分组标题（逐字取自 `category.editing`）。
+pub const CATEGORY_EDITING: &str = "聊天";
+/// 分组标题（逐字取自 `category.navigation`）。
+pub const CATEGORY_NAVIGATION: &str = "任务";
+/// 分组标题（逐字取自 `category.window`）。
+pub const CATEGORY_WINDOW: &str = "面板·窗口";
+
+/// 单条快捷键：动作名 + 键位组合（未下发时为 `None`，⛔ 不伪造键位）。
+pub struct ShortcutEntry {
+    /// 动作名（逐字取自 `actions.*`）。
+    pub action: &'static str,
+    /// 键位组合；绑定源未下发 ⇒ `None`。
+    pub combo: Option<&'static str>,
+}
+
+/// 分组：分组标题 + 条目清单。
+pub struct ShortcutGroup {
+    /// 分组标题（逐字取自 `category.*`）。
+    pub title: &'static str,
+    /// 组内快捷键条目。
+    pub entries: &'static [ShortcutEntry],
+}
+
+const fn entry(action: &'static str) -> ShortcutEntry {
+    ShortcutEntry {
+        action,
+        combo: None,
+    }
+}
+
+/// 静态目录：25 个动作按 4 个分组编排，动作名与分组标题全部逐字取自文案表。
+pub static CATALOG: &[ShortcutGroup] = &[
+    ShortcutGroup {
+        title: CATEGORY_GENERAL,
+        entries: &[
+            entry("新建标签页"),
+            entry("关闭标签页"),
+            entry("打开设置"),
+            entry("打开全局搜索"),
+            entry("全局搜索"),
+            entry("按住后点击，始终外部打开"),
+        ],
+    },
+    ShortcutGroup {
+        title: CATEGORY_EDITING,
+        entries: &[
+            entry("新建对话"),
+            entry("新建快速问答"),
+            entry("发送消息"),
+            entry("输入时换行"),
+            entry("停止生成"),
+            entry("对话内搜索"),
+            entry("放大内容字号"),
+            entry("缩小内容字号"),
+            entry("重置内容字号"),
+            entry("唤起斜杠命令"),
+        ],
+    },
+    ShortcutGroup {
+        title: CATEGORY_NAVIGATION,
+        entries: &[
+            entry("下一个任务"),
+            entry("上一个任务"),
+            entry("定位当前任务"),
+        ],
+    },
+    ShortcutGroup {
+        title: CATEGORY_WINDOW,
+        entries: &[
+            entry("切换左侧栏"),
+            entry("切换右侧栏"),
+            entry("进入/退出全屏"),
+            entry("唤起/隐藏主窗口"),
+            entry("语音录制开关"),
+            entry("唤起选择器"),
+        ],
+    },
+];
+
+/// 键位绑定数据的下发状态（fail-closed：未下发就明说，不拿空列表冒充）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BindingState {
+    /// 键位绑定未下发（当前真值：目录里没有任何键位组合）。
+    NotDelivered,
+    /// 键位绑定已下发（每条动作都带键位组合）。
+    Delivered,
+}
+
+/// 纯函数：目录条目全部带键位组合 ⇒ `Delivered`；任一缺失或目录为空 ⇒ `NotDelivered`。
+pub fn binding_state(catalog: &[ShortcutGroup]) -> BindingState {
+    let any_entry = catalog.iter().any(|g| !g.entries.is_empty());
+    let all_delivered = catalog
+        .iter()
+        .flat_map(|g| g.entries.iter())
+        .all(|e| e.combo.is_some());
+    if any_entry && all_delivered {
+        BindingState::Delivered
+    } else {
+        BindingState::NotDelivered
+    }
+}
+
+/// 搜索结果：命中分组 + 命中总数 + 是否进入空态。
+pub struct SearchOutcome<'a> {
+    /// 命中分组（分组标题 + 命中条目）。
+    pub groups: Vec<(&'a str, Vec<&'a ShortcutEntry>)>,
+    /// 命中条目总数。
+    pub total: usize,
+    /// 空态标志：查询非空且零命中时为 `true`（渲染层须显式画空态，⛔ 不是空列表）。
+    pub no_match: bool,
+}
+
+/// 纯函数搜索过滤：空/纯空白查询返回全量；否则按动作名与键位组合（忽略 ASCII 大小写）过滤。
+pub fn search<'a>(catalog: &'a [ShortcutGroup], query: &str) -> SearchOutcome<'a> {
+    let q = query.trim().to_lowercase();
+    let mut groups = Vec::new();
+    let mut total = 0usize;
+    for group in catalog {
+        let hits: Vec<&ShortcutEntry> = if q.is_empty() {
+            group.entries.iter().collect()
+        } else {
+            group
+                .entries
+                .iter()
+                .filter(|e| {
+                    e.action.to_lowercase().contains(&q)
+                        || e.combo.map_or(false, |c| c.to_lowercase().contains(&q))
+                })
+                .collect()
+        };
+        total += hits.len();
+        if !hits.is_empty() {
+            groups.push((group.title, hits));
+        }
+    }
+    let no_match = !q.is_empty() && total == 0;
+    SearchOutcome {
+        groups,
+        total,
+        no_match,
+    }
+}
+
+/// 冲突提示文案：模板逐字，仅替换 `{keys}`/`{label}` 占位符。
+pub fn conflict_text(keys: &str, label: &str) -> String {
+    CONFLICT_TEMPLATE
+        .replace("{keys}", keys)
+        .replace("{label}", label)
+}
+
+/// 纯函数冲突检测：同一键位组合被多条动作使用时产出冲突提示行（无组合数据 ⇒ 无冲突可报）。
+pub fn detect_conflicts(catalog: &[ShortcutGroup]) -> Vec<String> {
+    let mut seen: Vec<(&'static str, &'static str)> = Vec::new();
+    let mut conflicts = Vec::new();
+    for group in catalog {
+        for e in group.entries {
+            if let Some(combo) = e.combo {
+                if let Some(&(_, first)) = seen.iter().find(|(c, _)| *c == combo) {
+                    conflicts.push(conflict_text(combo, first));
+                } else {
+                    seen.push((combo, e.action));
+                }
+            }
+        }
+    }
+    conflicts
+}
+
+/// 计数行文案：模板逐字，仅替换 `{count}` 占位符。
+pub fn total_count_line(count: usize) -> String {
+    TOTAL_COUNT_TEMPLATE.replace("{count}", &count.to_string())
+}
+
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
@@ -42,7 +232,7 @@ pub fn main_area(theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{binding_state, main_area, BindingState, CATALOG, NOT_DELIVERED, TITLE};
     use gpui_kit::component::Theme;
     #[test]
     fn title_is_taken_verbatim_and_not_blank() {
@@ -56,5 +246,12 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+    #[test]
+    fn catalog_is_four_groups_twenty_five_actions_fail_closed() {
+        assert_eq!(CATALOG.len(), 4);
+        assert_eq!(CATALOG.iter().map(|g| g.entries.len()).sum::<usize>(), 25);
+        assert!(CATALOG.iter().all(|g| !g.entries.is_empty()));
+        assert_eq!(binding_state(CATALOG), BindingState::NotDelivered);
     }
 }
