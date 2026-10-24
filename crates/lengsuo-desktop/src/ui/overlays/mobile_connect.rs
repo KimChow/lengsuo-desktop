@@ -117,16 +117,76 @@ use gpui_kit::*;
 
 /// 主区渲染（浮层不占主区，保持签名；默认模型 = 未下发 fail-closed 分支）。
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render(theme, &MobileConnect::default())
+}
+
+/// 标题行 + 正文分支（视图 = 模型的纯函数）。
+fn render(theme: &Theme, model: &MobileConnect) -> Div {
+    let col = div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
-        .child(
-            div()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        )
+        .child(div().text_color(theme.foreground).child(TITLE));
+    match body_text(model.state) {
+        // 非正常态：如实文案（空态 / 未下发），⛔ 不伪造条目。
+        Some(text) => col.child(div().text_color(theme.muted_foreground).child(text)),
+        None => col.child(normal_body(theme, model)),
+    }
+}
+
+/// 正常态正文：Tab 行 + 二维码行 + 开关行（≥3 个内容节点）。
+fn normal_body(theme: &Theme, model: &MobileConnect) -> Div {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(tabs_row(theme, model.tab))
+        .child(qr_row(theme, model.tab));
+    if let Some(rows) = model.switch_rows() {
+        for (label, on) in rows {
+            col = col.child(switch_row(theme, label, on));
+        }
+    }
+    col
+}
+
+/// 双 Tab 行：当前 Tab 高亮，另一个弱化。
+fn tabs_row(theme: &Theme, active: ConnectTab) -> Div {
+    let mut row = div().flex().gap_2();
+    for tab in [ConnectTab::App, ConnectTab::Miniprogram] {
+        let color = if tab == active {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        };
+        row = row.child(div().text_color(color).child(tab.label()));
+    }
+    row
+}
+
+/// 二维码行：占位框（等真实二维码下发后填充）+ 当前 Tab 的说明。
+fn qr_row(theme: &Theme, tab: ConnectTab) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(div().size_20().rounded_md().border_1().border_color(theme.border))
+        .child(div().text_color(theme.muted_foreground).child(tab.qr_desc()))
+}
+
+/// 开关行：指示块（开 = accent / 关 = muted）+ 文案。
+fn switch_row(theme: &Theme, label: &'static str, on: bool) -> Div {
+    let indicator = if on {
+        div().size_4().rounded_sm().bg(theme.accent)
+    } else {
+        div().size_4().rounded_sm().bg(theme.muted)
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(indicator)
+        .child(div().text_color(theme.foreground).child(label))
 }
 #[cfg(test)]
 mod tests {
