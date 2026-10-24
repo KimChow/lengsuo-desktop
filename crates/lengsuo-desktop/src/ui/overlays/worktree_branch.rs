@@ -235,32 +235,243 @@ impl BranchSwitchState {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`BranchSwitchState::initial`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &BranchSwitchState::initial())
+}
+
+/// 按状态渲染整层：标题行 + 中央内容（清单/空态/未下发/失败/被拒）+ 底部操作条。
+fn render(theme: &Theme, state: &BranchSwitchState) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme))
+        .child(body(theme, state))
+        .child(footer(theme, state))
+}
+
+/// 标题行（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 中央内容：未下发 / 空态 / 失败 / 被拒 ⇒ 居中弱文案；已下发 ⇒ 分组清单。
+fn body(theme: &Theme, state: &BranchSwitchState) -> Div {
+    match state {
+        BranchSwitchState::NotDelivered => centered_muted(theme, NOT_DELIVERED),
+        BranchSwitchState::DirtyBlocked => centered_muted(theme, DIRTY_BLOCKED),
+        BranchSwitchState::Failed => centered_muted(theme, FAILED),
+        BranchSwitchState::Delivered { items, .. } if items.is_empty() => {
+            centered_muted(theme, NO_BRANCHES)
+        }
+        BranchSwitchState::Delivered { .. } => delivered_body(theme, state),
+    }
+}
+
+/// 居中弱文案（未下发 / 空态 / 失败 / 被拒）。
+fn centered_muted(theme: &Theme, text: &str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text.to_string())
+}
+
+/// 已下发且有内容：说明句 + 搜索行 + 本地/远程分组清单 + 脏区选项 + 上限提示。
+fn delivered_body(theme: &Theme, state: &BranchSwitchState) -> Div {
+    let visible = state.visible_items();
+    let selected = state.selected_branch();
+    let (locals, remotes): (Vec<&BranchItem>, Vec<&BranchItem>) =
+        visible.iter().partition(|item| !item.is_remote);
+    let mut col = div().flex_1().flex().flex_col();
+    if let Some(notice) = state.notice() {
+        col = col.child(muted_line(theme, &notice));
+    }
+    col = col.child(search_row(theme));
+    for group in [&locals, &remotes] {
+        if let Some(first) = group.first() {
+            col = col.child(group_header(theme, first.group_label()));
+            for item in group {
+                col = col.child(branch_row(theme, item, selected));
+            }
+        }
+    }
+    for (label, recommended) in state.dirty_options() {
+        col = col.child(dirty_option_row(theme, &label, recommended));
+    }
+    if let Some(hint) = state.limit_hint() {
+        col = col.child(muted_line(theme, &hint));
+    }
+    col
+}
+
+/// 弱说明行（说明句 / 上限提示）。
+fn muted_line(theme: &Theme, text: &str) -> Div {
+    div()
+        .px_4()
+        .py_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(text.to_string())
+}
+
+/// 搜索行（占位文案即无障碍标签；配合上限提示缩小范围）。
+fn search_row(theme: &Theme) -> Div {
+    div()
+        .mx_4()
+        .mt_2()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(SEARCH_PLACEHOLDER)
+}
+
+/// 分组标题（本地分支 / 远程分支）。
+fn group_header(theme: &Theme, label: &str) -> Div {
+    div()
+        .px_4()
+        .pt_2()
+        .pb_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(label.to_string())
+}
+
+/// 清单行：当前项带标记点，选中项描边高亮，行尾「复制分支名」。
+fn branch_row(theme: &Theme, item: &BranchItem, selected: Option<&str>) -> Div {
+    let is_selected = selected == Some(item.name.as_str());
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .mx_4()
+        .px_2()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if is_selected {
+            theme.accent
+        } else {
+            theme.border
+        });
+    if item.is_current {
+        row = row.child(
+            div()
+                .w_2()
+                .h_2()
+                .rounded_full()
+                .bg(theme.accent),
+        );
+    }
+    row.child(
+        div()
+            .flex_1()
+            .text_sm()
+            .text_color(if item.is_current || is_selected {
+                theme.foreground
+            } else {
+                theme.muted_foreground
+            })
+            .child(item.name.clone()),
+    )
+    .child(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(COPY_BRANCH_NAME),
+    )
+}
+
+/// 脏工作区处理选项行（推荐项带徽标）。
+fn dirty_option_row(theme: &Theme, label: &str, recommended: bool) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(label.to_string());
+    if recommended {
+        row = row.child(badge(theme, DIRTY_RECOMMEND));
+    }
+    row
+}
+
+/// 小徽标（推荐）。
+fn badge(theme: &Theme, label: &str) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .text_xs()
+        .text_color(theme.accent)
+        .border_1()
+        .border_color(theme.accent)
+        .child(label.to_string())
+}
+
+/// 底部操作条：取消 + 确认（仅已下发且有分支；未下发不伪造可执行态）。
+fn footer(theme: &Theme, state: &BranchSwitchState) -> Div {
+    if state.is_empty_delivered() || !matches!(state, BranchSwitchState::Delivered { .. }) {
+        return div();
+    }
+    let can_confirm = state.selected_branch().is_some();
+    div()
+        .flex()
+        .justify_end()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
         .child(
             div()
                 .px_4()
                 .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
                 .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
+                .text_color(theme.muted_foreground)
+                .child(CANCEL),
         )
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
+                .px_4()
+                .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(if can_confirm {
+                    theme.accent
+                } else {
+                    theme.border
+                })
                 .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .text_color(if can_confirm {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                })
+                .child(CONFIRM),
         )
 }
 #[cfg(test)]
