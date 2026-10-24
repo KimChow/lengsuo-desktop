@@ -2,6 +2,8 @@
 //! 分层约定（同 `automation_ds_form`）：纯数据层（文案表/状态机/校验）先行，GPUI 层只做映射。
 //! 硬约束：fail-closed；⛔ 不伪造模板数据；文案逐字取自命名空间 `automation.templates`（40 键全量）。
 #![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 // ── 纯数据层（无 GPUI 依赖） ─────────────────────────────────────────
 
@@ -303,13 +305,110 @@ impl TemplatesPanel {
     }
 }
 
+// ── GPUI 层（颜色一律 theme token，⛔ 不硬编码色值） ─────────────────
+
+/// 按短名取文案；未命中 ⇒ 「未下发」（fail-closed 兜底）。
+fn ns(name: &str) -> &'static str {
+    text(&format!("{NS_PREFIX}.{name}")).unwrap_or(NOT_DELIVERED)
+}
+
+/// 动作 chip（颜色一律 theme token）。
+fn chip(theme: &Theme, label: impl Into<SharedString>) -> Div {
+    div()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_color(theme.muted_foreground)
+        .child(label.into())
+}
+
+/// 静态说明行（弱化文案）。
+fn hint(theme: &Theme, line: impl Into<SharedString>) -> Div {
+    div().text_color(theme.muted_foreground).child(line.into())
+}
+
+/// 纵向堆叠容器（子节点列表）。
+fn stack(children: impl IntoIterator<Item = Div>) -> Div {
+    div().flex().flex_col().gap_1().children(children)
+}
+
+/// 分区卡：标题行 + 主体（结构对齐 `automation_ds_form` 的 section）。
+fn section(theme: &Theme, heading: impl Into<SharedString>, body: Div) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_3()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .child(div().text_color(theme.foreground).child(heading.into()))
+        .child(body)
+}
+
+/// 模板卡：标题（前景色）+ 一句话说明 + 提示词正文（弱化色）；
+/// 缺键 ⇒ 「未下发」（fail-closed，⛔ 不静默缺行）。
+fn template_card(theme: &Theme, tpl: &Template) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_3()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(tpl.title().unwrap_or(NOT_DELIVERED)),
+        )
+        .child(hint(theme, tpl.content().unwrap_or(NOT_DELIVERED)))
+        .child(hint(theme, tpl.prompt().unwrap_or(NOT_DELIVERED)))
+}
+
+/// 模板列表区：分区标题（`sectionTitle`）+ 12 张模板卡 + 「添加」动作。
+fn template_list(theme: &Theme) -> Div {
+    let body =
+        stack(ALL_TEMPLATES.iter().map(|t| template_card(theme, t))).child(chip(theme, ns("add")));
+    section(theme, ns("sectionTitle"), body)
+}
+
+/// 分支渲染：加载中 / 失败（fail-closed，可见报错）/ 空态 / 正常（模板列表）。
+pub fn render(theme: &Theme, panel: &TemplatesPanel) -> AnyElement {
+    let heading = div().text_color(theme.foreground).child(ns("title"));
+    let body = match panel.view {
+        TemplatesView::Loading => hint(theme, LOADING_TEXT),
+        TemplatesView::Failed => hint(theme, LOAD_FAILED_TEXT),
+        TemplatesView::Empty => hint(theme, ns("emptyStateTitle")),
+        TemplatesView::Ready => template_list(theme),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(heading)
+        .child(body)
+        .into_any_element()
+}
+
+/// 主区渲染（静态表；校验失败自动落入 fail-closed 分支，不渲染半张表）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render(theme, &TemplatesPanel::from_static())
+}
+
 #[cfg(test)]
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        resolve, text, Delivery, TemplatesPanel, TemplatesView, ALL_TEMPLATES, NS_PREFIX, TEXTS,
+        main_area, resolve, text, Delivery, TemplatesPanel, TemplatesView, ALL_TEMPLATES,
+        NS_PREFIX, TEXTS,
     };
+    use gpui_kit::component::Theme;
 
     /// ① 全表 40 键、不重复、键值非空，短名拼前缀后仍可解析。
     #[test]
@@ -421,5 +520,11 @@ mod tests {
         assert_eq!(LOADING_TEXT, "加载中...");
         assert_eq!(LOAD_FAILED_TEXT, "加载定时任务数据失败");
         assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    /// ④ `main_area(&Theme::default())` 不 panic（静态表 ⇒ 正常分支）。
+    #[test]
+    fn main_area_renders_without_panic() {
+        let _ = main_area(&Theme::default());
     }
 }
