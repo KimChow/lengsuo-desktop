@@ -341,7 +341,8 @@ mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        main_area, render_state, zh, CreateForm, SubtodoItem, SubtodoState, NS_PREFIX, TEXTS, TITLE,
+        content_node_count, depth_limit_text, main_area, render_state, submit_label, zh,
+        CreateForm, SubtodoItem, SubtodoState, NS_PREFIX, TEXTS, TITLE,
     };
     use gpui_kit::component::Theme;
 
@@ -395,5 +396,109 @@ mod tests {
         let _ = render_state(&SubtodoState::Loading, &CreateForm::default(), &theme);
         let _ = render_state(&SubtodoState::Failed, &CreateForm::default(), &theme);
         let _ = render_state(&SubtodoState::Empty, &CreateForm::default(), &theme);
+    }
+
+    /// 文案逐字一致（摘录 12 键全量；模板键占位符原样保留）。
+    #[test]
+    fn texts_verbatim_twelve() {
+        let expect = [
+            ("collab.plan.subtodo.addEntry", "添加子待办"),
+            ("collab.plan.subtodo.config.fields", "展示字段"),
+            ("collab.plan.subtodo.config.sort", "排序"),
+            ("collab.plan.subtodo.configAria", "配置子待办展示"),
+            (
+                "collab.plan.subtodo.create.attachmentsExist",
+                "所选附件已存在",
+            ),
+            ("collab.plan.subtodo.create.cancel", "取消"),
+            (
+                "collab.plan.subtodo.create.dateMenuAria",
+                "设置开始/截止日期",
+            ),
+            (
+                "collab.plan.subtodo.create.depthLimit",
+                "子待办最多支持 {max} 层",
+            ),
+            ("collab.plan.subtodo.create.descPlaceholder", "添加描述"),
+            ("collab.plan.subtodo.create.submit", "提交"),
+            ("collab.plan.subtodo.create.submitting", "提交中"),
+            ("collab.plan.subtodo.create.titlePlaceholder", "输入标题"),
+        ];
+        for (key, want) in expect {
+            assert_eq!(zh(key), want, "键 {key} 必须逐字");
+        }
+    }
+
+    /// 模板与表单纯函数：`{max}` 逐字替换；submit/submitting 切换；上限未下发不呈现。
+    #[test]
+    fn templates_and_form_labels() {
+        assert_eq!(depth_limit_text(3), "子待办最多支持 3 层");
+        assert_eq!(depth_limit_text(10), "子待办最多支持 10 层");
+        assert_eq!(submit_label(false), "提交");
+        assert_eq!(submit_label(true), "提交中");
+        let mut form = CreateForm::default();
+        assert_eq!(form.depth_limit_caption(), None, "max 未下发 ⇒ 不呈现");
+        assert!(!form.shows_attachments_exist());
+        form.next_depth = 4;
+        form.max_depth = 3;
+        form.attachments_exist = true;
+        assert_eq!(
+            form.depth_limit_caption(),
+            Some("子待办最多支持 3 层".to_string())
+        );
+        assert!(form.shows_attachments_exist());
+        form.next_depth = 3;
+        assert_eq!(form.depth_limit_caption(), None, "未超上限 ⇒ 不呈现");
+    }
+
+    /// 节点数与渲染分支一一对应；空态/失败态 ⛔ 不是 0 节点的空列表。
+    #[test]
+    fn branch_node_counts_fail_closed() {
+        let items = vec![
+            SubtodoItem {
+                title: zh("collab.plan.subtodo.addEntry").to_string(),
+                done: false,
+                depth: 1,
+            },
+            SubtodoItem {
+                title: zh("collab.plan.subtodo.create.cancel").to_string(),
+                done: true,
+                depth: 2,
+            },
+        ];
+        assert_eq!(content_node_count(&SubtodoState::Loading), 1);
+        assert_eq!(content_node_count(&SubtodoState::Failed), 1);
+        assert_eq!(
+            content_node_count(&SubtodoState::Empty),
+            2,
+            "空态有显式节点"
+        );
+        assert_eq!(content_node_count(&SubtodoState::Ready(items)), 4);
+        assert_eq!(
+            SubtodoState::from_fetch(Some(Err(()))),
+            SubtodoState::Failed,
+            "拉取失败必须显式 Failed"
+        );
+    }
+
+    /// 表单条件分支整树构造不 panic（附件警示/层级上限/提交中全开）。
+    #[test]
+    fn render_form_variants_smoke() {
+        let theme = Theme::default();
+        let form = CreateForm {
+            title: zh("collab.plan.subtodo.create.titlePlaceholder").to_string(),
+            desc: String::new(),
+            submitting: true,
+            attachments_exist: true,
+            next_depth: 5,
+            max_depth: 4,
+        };
+        let state = SubtodoState::from_fetch(Some(Ok(vec![SubtodoItem {
+            title: form.title.clone(),
+            done: false,
+            depth: 3,
+        }])));
+        let _ = render_state(&state, &form, &theme);
+        let _ = render_state(&SubtodoState::Empty, &form, &theme);
     }
 }
