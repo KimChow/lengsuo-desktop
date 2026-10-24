@@ -405,7 +405,7 @@ mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        main_area, resolve, text, Delivery, TemplatesPanel, TemplatesView, ALL_TEMPLATES,
+        main_area, render, resolve, text, Delivery, TemplatesPanel, TemplatesView, ALL_TEMPLATES,
         NS_PREFIX, TEXTS,
     };
     use gpui_kit::component::Theme;
@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(TemplatesPanel::from_static().view, TemplatesView::Ready);
     }
 
-    /// 校验通过 + 12 模板三段齐（含占位符模板原样保留）。
+    /// 校验通过 + 12 模板三段齐（含 `{date}`/`{time}` 变量原样保留）。
     #[test]
     fn validate_passes_and_templates_complete() {
         use super::validate;
@@ -526,5 +526,27 @@ mod tests {
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+
+    /// ④ 四分支渲染均不 panic：逐态构造面板，`render` 只构建元素树。
+    #[test]
+    fn render_covers_every_branch_without_panic() {
+        let theme = Theme::default();
+        let panel = |view: TemplatesView| TemplatesPanel { view };
+        let _ = render(&theme, &panel(TemplatesView::Loading));
+        let _ = render(&theme, &panel(TemplatesView::Failed));
+        let _ = render(&theme, &panel(TemplatesView::Empty));
+        let _ = render(&theme, &panel(TemplatesView::Ready));
+    }
+
+    /// ⑥ 全表无品牌词（验收红线）。
+    #[test]
+    fn table_contains_no_brand_words() {
+        for (_, value) in TEXTS {
+            let lower = value.to_lowercase();
+            for brand in ["claude", "anthropic", "openai", "chatgpt"] {
+                assert!(!lower.contains(brand), "brand word {brand} in: {value}");
+            }
+        }
     }
 }
