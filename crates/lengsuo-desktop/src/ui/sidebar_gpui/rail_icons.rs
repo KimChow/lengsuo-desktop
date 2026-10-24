@@ -215,8 +215,9 @@ pub fn rail_row<F>(theme: &Theme, item: &RailItem, on_intent: F) -> impl IntoEle
 where
     F: Fn(RailIntent) + 'static,
 {
+    let intent = item.intent;
     let mut row = div()
-        .id(item.intent.as_id())
+        .id(intent.as_id())
         .relative()
         .flex()
         .items_center()
@@ -225,19 +226,17 @@ where
         .h(px(ROW_HEIGHT))
         .px_2()
         .text_color(theme.sidebar_foreground)
-        .on_click(move |_| on_intent(item.intent));
+        .on_click(move |_event, _window, _app| on_intent(intent));
     if item.selected {
-        row = row
-            .bg(theme.sidebar_border)
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top_0()
-                    .bottom_0()
-                    .w(px(3.))
-                    .bg(theme.sidebar_foreground),
-            );
+        row = row.bg(theme.sidebar_border).child(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .bottom_0()
+                .w(px(3.))
+                .bg(theme.sidebar_foreground),
+        );
     }
     row.child(rail_icon(item.intent, theme))
         .child(div().text_sm().child(item.display_label()))
@@ -249,12 +248,11 @@ pub fn rail<F>(theme: &Theme, items: &[RailItem], on_intent: F) -> Div
 where
     F: Fn(RailIntent) + Clone + 'static,
 {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .p_1()
-        .children(items.iter().map(|item| rail_row(theme, item, on_intent.clone())))
+    div().flex().flex_col().gap_1().p_1().children(
+        items
+            .iter()
+            .map(|item| rail_row(theme, item, on_intent.clone())),
+    )
 }
 
 #[cfg(test)]
@@ -295,12 +293,18 @@ mod tests {
 
     #[test]
     fn fail_closed_undelivered() {
-        assert_eq!(RailItem::undelivered(RailIntent::Library).display_label(), "未下发");
+        assert_eq!(
+            RailItem::undelivered(RailIntent::Library).display_label(),
+            "未下发"
+        );
         assert_eq!(
             RailItem::undelivered(RailIntent::Library).display_label(),
             NOT_DELIVERED
         );
-        assert_eq!(RailItem::new(RailIntent::NewTask).display_label(), "新建任务");
+        assert_eq!(
+            RailItem::new(RailIntent::NewTask).display_label(),
+            "新建任务"
+        );
     }
 
     #[test]
@@ -320,8 +324,7 @@ mod tests {
         #[test]
         fn builds_all_rows_with_sink() {
             let theme = Theme::default();
-            let items: Vec<RailItem> =
-                RailIntent::ALL.iter().map(|k| RailItem::new(*k)).collect();
+            let items: Vec<RailItem> = RailIntent::ALL.iter().map(|k| RailItem::new(*k)).collect();
             let sink: Rc<RefCell<Vec<RailIntent>>> = Rc::new(RefCell::new(Vec::new()));
             let on_intent = {
                 let sink = sink.clone();
