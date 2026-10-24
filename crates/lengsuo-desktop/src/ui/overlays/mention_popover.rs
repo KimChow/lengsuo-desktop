@@ -189,16 +189,18 @@ fn title_row(theme: &Theme) -> Div {
 
 /// 页签行：当前页签高亮，其余弱化；颜色一律取主题 token。
 fn category_tabs(theme: &Theme, model: &MentionPopover) -> Div {
-    div().flex().flex_row().gap_3().children(
-        Category::ALL.iter().map(|&category| {
+    div()
+        .flex()
+        .flex_row()
+        .gap_3()
+        .children(Category::ALL.iter().map(|&category| {
             let color = if category == model.category {
                 theme.accent
             } else {
                 theme.muted_foreground
             };
             div().text_color(color).child(category.label())
-        }),
-    )
+        }))
 }
 
 /// 页签头：描述一行 + 搜索占位一行（无下发文案的页签如实省略）。
@@ -244,7 +246,9 @@ fn content_area(theme: &Theme, model: &MentionPopover, entries: &[ColleagueEntry
 
 /// 「未下发」一行（fail-closed 分支）。
 fn not_delivered_line(theme: &Theme) -> Div {
-    div().text_color(theme.muted_foreground).child(NOT_DELIVERED)
+    div()
+        .text_color(theme.muted_foreground)
+        .child(NOT_DELIVERED)
 }
 
 /// 单条助理行：名称 + 忙闲状态。
@@ -267,18 +271,179 @@ fn colleague_row(theme: &Theme, entry: &ColleagueEntry) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::{
+        content_area, main_area, popover_area, Availability, Category, ColleagueEntry,
+        MentionPopover, State, APPLICATION_NAME, COLLEAGUE_DESCRIPTION, COLLEAGUE_NAME,
+        COLLEAGUE_PLACEHOLDER, COLLEAGUE_SEARCH_EMPTY, FILE_DESCRIPTION, FILE_EMPTY_INITIAL,
+        FILE_PLACEHOLDER, FILE_SEARCH_EMPTY, FILE_SESSION_GROUP, STATUS_BUSY, STATUS_IDLE,
+        STATUS_UNAVAILABLE, TITLE,
+    };
     use gpui_kit::component::Theme;
+
+    fn entry(name: &str, availability: Availability) -> ColleagueEntry {
+        ColleagueEntry {
+            name: name.to_string(),
+            availability,
+        }
+    }
+
+    fn model(state: State, category: Category, query: &str) -> MentionPopover {
+        MentionPopover {
+            state,
+            category,
+            query: query.to_string(),
+        }
+    }
+
+    /// ① 过滤计数正确：空词全匹配、大小写不敏感、无果为 0。
     #[test]
-    fn default_state_is_not_delivered() {
+    fn colleague_matches_filters_and_counts() {
+        let entries = vec![
+            entry("张三", Availability::Idle),
+            entry("李四", Availability::Busy),
+            entry("Zoe", Availability::Unavailable),
+        ];
+        assert_eq!(
+            model(State::Normal, Category::Colleague, "")
+                .colleague_matches(&entries)
+                .len(),
+            3
+        );
+        assert_eq!(
+            model(State::Normal, Category::Colleague, "zoe")
+                .colleague_matches(&entries)
+                .len(),
+            1
+        );
+        assert_eq!(
+            model(State::Normal, Category::Colleague, "王五")
+                .colleague_matches(&entries)
+                .len(),
+            0
+        );
+    }
+
+    /// ① 默认模型 fail-closed。
+    #[test]
+    fn default_model_is_fail_closed() {
         assert_eq!(State::default(), State::NotDelivered);
+        assert!(MentionPopover::default().is_not_delivered());
+        assert!(MentionPopover::not_delivered().is_not_delivered());
+        assert_eq!(Category::default(), Category::Colleague);
     }
+
+    /// ② 空输入 ⇒ 空态文案（不是空列表）。
     #[test]
-    fn title_not_empty() {
-        assert!(!TITLE.is_empty());
+    fn empty_input_yields_empty_state_label() {
+        let file = model(State::Normal, Category::File, "");
+        assert_eq!(file.empty_label(), Some(FILE_EMPTY_INITIAL));
+        let colleague = model(State::Normal, Category::Colleague, "不存在的人");
+        assert_eq!(colleague.colleague_matches(&[]).len(), 0);
+        assert_eq!(colleague.empty_label(), Some(COLLEAGUE_SEARCH_EMPTY));
     }
+
+    /// ② 文件页搜索空态 ≠ 初始空态；应用页无空态文案如实为 None。
+    #[test]
+    fn empty_label_varies_by_category_and_query() {
+        assert_eq!(
+            model(State::Normal, Category::File, "x").empty_label(),
+            Some(FILE_SEARCH_EMPTY)
+        );
+        assert_eq!(
+            model(State::Normal, Category::Application, "x").empty_label(),
+            None
+        );
+    }
+
+    /// ③ 文案逐字一致（≥3 键）。
+    #[test]
+    fn copy_is_verbatim_from_table() {
+        assert_eq!(TITLE, "@提及弹层");
+        assert_eq!(COLLEAGUE_NAME, "助理");
+        assert_eq!(COLLEAGUE_PLACEHOLDER, "搜索助理");
+        assert_eq!(COLLEAGUE_SEARCH_EMPTY, "未找到助理");
+        assert_eq!(APPLICATION_NAME, "应用");
+        assert_eq!(FILE_EMPTY_INITIAL, "当前对话中暂无文件");
+        assert_eq!(STATUS_BUSY, "工作中");
+        assert_eq!(STATUS_IDLE, "空闲");
+        assert_eq!(STATUS_UNAVAILABLE, "未就绪");
+    }
+
+    /// ③ 命名空间 13 键全部下发、无一为空。
+    #[test]
+    fn all_thirteen_namespace_keys_delivered() {
+        let delivered = [
+            COLLEAGUE_NAME,
+            COLLEAGUE_DESCRIPTION,
+            COLLEAGUE_PLACEHOLDER,
+            COLLEAGUE_SEARCH_EMPTY,
+            STATUS_BUSY,
+            STATUS_IDLE,
+            STATUS_UNAVAILABLE,
+            APPLICATION_NAME,
+            FILE_DESCRIPTION,
+            FILE_EMPTY_INITIAL,
+            FILE_PLACEHOLDER,
+            FILE_SEARCH_EMPTY,
+            FILE_SESSION_GROUP,
+        ];
+        assert_eq!(delivered.len(), 13);
+        assert!(delivered.iter().all(|copy| !copy.is_empty()));
+    }
+
+    /// ① 三页签齐备且逐字命名。
+    #[test]
+    fn category_tabs_are_three_and_labeled_verbatim() {
+        assert_eq!(Category::ALL.len(), 3);
+        let labels: Vec<&str> = Category::ALL.iter().map(|&c| c.label()).collect();
+        assert_eq!(
+            labels,
+            vec![COLLEAGUE_NAME, APPLICATION_NAME, FILE_SESSION_GROUP]
+        );
+    }
+
+    /// ④ 默认主题下主区渲染不 panic。
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+
+    /// ⑤ 状态分支：非 Normal 一律视为未下发，Normal 不算。
+    #[test]
+    fn state_branches_classify_not_delivered() {
+        for state in [State::Loading, State::Failed, State::NotDelivered] {
+            assert!(model(state, Category::Colleague, "").is_not_delivered());
+        }
+        assert!(!model(State::Normal, Category::Colleague, "").is_not_delivered());
+    }
+
+    /// ⑤ 渲染分支全覆盖：三个未下发分支、条目分支、三类空态分支、全页签。
+    #[test]
+    fn render_paths_cover_all_branches() {
+        let theme = Theme::default();
+        let entries = vec![entry("张三", Availability::Idle)];
+        for state in [State::NotDelivered, State::Loading, State::Failed] {
+            let _ = content_area(&theme, &model(state, Category::Colleague, ""), &entries);
+        }
+        let _ = content_area(
+            &theme,
+            &model(State::Normal, Category::Colleague, ""),
+            &entries,
+        );
+        let _ = content_area(
+            &theme,
+            &model(State::Normal, Category::Colleague, "无"),
+            &entries,
+        );
+        let _ = content_area(&theme, &model(State::Normal, Category::File, ""), &entries);
+        let _ = content_area(
+            &theme,
+            &model(State::Normal, Category::Application, ""),
+            &entries,
+        );
+        for &category in Category::ALL.iter() {
+            let _ = popover_area(&theme, &model(State::Normal, category, ""), &entries);
+            let _ = popover_area(&theme, &model(State::NotDelivered, category, ""), &entries);
+        }
     }
 }
