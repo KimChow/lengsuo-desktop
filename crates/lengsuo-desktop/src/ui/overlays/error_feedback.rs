@@ -136,31 +136,166 @@ impl OverlayState {
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render_overlay(theme, &OverlayState::NotDelivered)
+}
+
+/// 按纯数据层状态渲染整层：标题行 + 三分支内容区。
+fn render_overlay(theme: &Theme, state: &OverlayState) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(header_row(theme))
+        .child(body(theme, state))
+}
+
+/// 标题行：视图标题。
+fn header_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(TITLE),
         )
+}
+
+/// 内容区三分支：未下发（fail-closed）/ 无错误隐藏 / 错误条清单。
+fn body(theme: &Theme, state: &OverlayState) -> Div {
+    match state {
+        OverlayState::NotDelivered => centered_note(theme, NOT_DELIVERED),
+        OverlayState::Hidden => div().flex_1(),
+        OverlayState::Banner(rows) => banner_list(theme, rows),
+    }
+}
+
+/// 居中说明（未下发）。
+fn centered_note(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 错误条清单：逐条渲染 异常提示条。
+fn banner_list(theme: &Theme, rows: &[BannerRow]) -> Div {
+    let mut list = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .pb_4();
+    for row in rows {
+        list = list.child(banner_row(theme, row.kind));
+    }
+    list
+}
+
+/// 单条异常提示条：错误图标 + 标题 + 说明段 + 动作按钮 + 关闭按钮。
+fn banner_row(theme: &Theme, kind: ErrorKind) -> Div {
+    div()
+        .flex()
+        .items_start()
+        .gap_2()
+        .px_3()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md()
+        .child(error_icon(theme))
         .child(
             div()
-                .flex_1()
                 .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .flex_col()
+                .gap_1()
+                .flex_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(kind.title()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(kind.detail()),
+                )
+                .child(actions_row(theme, kind.actions())),
         )
+        .child(close_button(theme))
+}
+
+/// 错误图标：danger 底 + 感叹号字形。
+fn error_icon(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w_4()
+        .h_4()
+        .rounded_full()
+        .bg(theme.danger)
+        .text_xs()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(ERROR_ICON)
+}
+
+/// 动作按钮行；主动作（首个）强调色描边。
+fn actions_row(theme: &Theme, actions: &'static [Action]) -> Div {
+    let mut row = div().flex().items_center().gap_2().flex_wrap();
+    for (index, &action) in actions.iter().enumerate() {
+        row = row.child(action_chip(theme, action, index == 0));
+    }
+    row
+}
+
+/// 动作按钮 chip；颜色一律主题 token，⛔ 不硬编码色值。
+fn action_chip(theme: &Theme, action: Action, primary: bool) -> Div {
+    let color = if primary {
+        theme.accent
+    } else {
+        theme.muted_foreground
+    };
+    div()
+        .px_2()
+        .py_1()
+        .border_1()
+        .border_color(color)
+        .rounded_sm()
+        .text_xs()
+        .text_color(color)
+        .child(action.label())
+}
+
+/// 关闭按钮（✕ 字形；读屏文案 [`CLOSE_ARIA`] 由运行时侧接线）。
+fn close_button(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w_6()
+        .h_6()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_sm()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(CLOSE_ICON)
 }
 #[cfg(test)]
 mod tests {
