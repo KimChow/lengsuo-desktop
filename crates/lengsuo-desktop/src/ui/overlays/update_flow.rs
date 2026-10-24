@@ -188,24 +188,47 @@ impl UpdateFlow {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`UpdateFlow::initial`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render(theme, &UpdateFlow::initial())
+}
+
+/// 按状态渲染整层：标题行 + 徽标/副标题/清单行 + 底部操作条。
+fn render(theme: &Theme, flow: &UpdateFlow) -> Div {
+    let mut col = div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
-        .child(
-            div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
+        .child(title_row(theme));
+    if flow.is_delivered() {
+        col = col.child(badge(theme, flow.badge_text()));
+        if let Some(text) = flow.subtitle() {
+            col = col.child(
+                div()
+                    .px_4()
+                    .pt_2()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(text),
+            );
+        }
+        for row in flow.rows() {
+            col = col.child(
+                div()
+                    .px_4()
+                    .py_1()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(row),
+            );
+        }
+        col = col.child(div().flex_1());
+        col = col.child(action_bar(theme, flow));
+    } else {
+        col = col.child(
             div()
                 .flex_1()
                 .flex()
@@ -214,7 +237,73 @@ pub fn main_area(theme: &Theme) -> Div {
                 .text_sm()
                 .text_color(theme.muted_foreground)
                 .child(NOT_DELIVERED),
-        )
+        );
+    }
+    col
+}
+
+/// 标题行（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 徽标（已下发态的状态标题；未下发没有徽标）。
+fn badge(theme: &Theme, text: Option<&'static str>) -> Div {
+    let mut row = div().flex().items_center().px_4().pt_2();
+    if let Some(text) = text {
+        row = row.child(
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.accent)
+                .text_xs()
+                .text_color(theme.foreground)
+                .child(text),
+        );
+    }
+    row
+}
+
+/// 底部操作条（⛔ 未下发不进这里，不伪造按钮）。
+fn action_bar(theme: &Theme, flow: &UpdateFlow) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border);
+    for (i, label) in flow.actions().iter().enumerate() {
+        row = row.child(action_button(theme, label, i == flow.primary_action()));
+    }
+    row
+}
+
+/// 单个动作按钮：主操作用强调边框，其余弱样式。
+fn action_button(theme: &Theme, label: &'static str, primary: bool) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if primary { theme.accent } else { theme.border })
+        .text_sm()
+        .text_color(if primary {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(label)
 }
 #[cfg(test)]
 mod tests {
