@@ -291,22 +291,188 @@ pub fn shows_empty_hint(state: &State) -> bool {
 }
 
 // ===== GPUI 层 =====
-/// 主区/浮层呈现入口（fail-closed：无数据源 ⇒ 未下发）。
+/// 主区/浮层呈现入口（fail-closed：无数据源 ⇒ 未下发；签名不变）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let state = resolve(None);
-    let body = match &state {
-        State::Ready(_) => zh("collab.plan.filter.popover.title"),
-        State::LoadFailed => zh("collab.plan.filter.temp.applyFailed"),
-        State::NotDelivered => NOT_DELIVERED,
+    render_state(&resolve(None), theme)
+}
+
+/// 按状态渲染：标题行 + 状态分支主体；颜色一律取 `theme.*`（⛔ 不硬编码色值）。
+fn render_state(state: &State, theme: &Theme) -> AnyElement {
+    let header = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(div().text_sm().text_color(theme.foreground).child(TITLE))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.filter.collapse")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.filter.pin")),
+        );
+    let body = match state {
+        State::NotDelivered => div()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED)
+            .into_any_element(),
+        State::LoadFailed => div()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(zh("collab.plan.filter.temp.applyFailed"))
+            .into_any_element(),
+        State::Ready(m) => ready_node(m, theme),
     };
     div()
         .flex()
         .flex_col()
         .gap_2()
-        .text_color(theme.muted_foreground)
-        .child(TITLE)
+        .child(header)
         .child(body)
         .into_any_element()
+}
+
+/// 已下发主体：子标题行 + 连接方式行 + 条件区（空 ⇒ 空态节点）+ 添加行 + 临时态脚注。
+/// 直属内容节点数与 [`content_node_count`] 的 `Ready` 分支一一对应（4 + max(n,1)）。
+fn ready_node(m: &FilterModel, theme: &Theme) -> AnyElement {
+    let mut head = div().flex().items_center().gap_2().child(
+        div()
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(zh("collab.plan.filter.popover.title")),
+    );
+    if m.conditions.len() > 1 {
+        let summary = summary_count_text(first_field_label(m), m.conditions.len() - 1);
+        head = head.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(summary)),
+        );
+    }
+    if let Some(n) = m.todo_count {
+        head = head.child(
+            div()
+                .text_xs()
+                .text_color(theme.accent)
+                .child(SharedString::from(todo_count_text(n))),
+        );
+    }
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(head)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(m.conjunction.prefix()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(m.conjunction.label()),
+                ),
+        );
+    if m.conditions.is_empty() {
+        col = col.child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.filter.search.empty")),
+        );
+    } else {
+        for c in &m.conditions {
+            col = col.child(condition_row(c, theme));
+        }
+    }
+    col.child(
+        div()
+            .text_sm()
+            .text_color(theme.accent)
+            .child(zh("collab.plan.filter.addCondition")),
+    )
+    .child(
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(zh("collab.plan.filter.temp.onlyYouSee")),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(zh("collab.plan.filter.temp.more")),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.foreground)
+                    .child(zh("collab.plan.filter.temp.reset")),
+            ),
+    )
+    .into_any_element()
+}
+
+/// 单条条件行：字段 + 运算符 + 值（未选 ⇒ 「未设置」；无值槽运算不设值槽）+ 删除条件。
+fn condition_row(c: &Condition, theme: &Theme) -> AnyElement {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(c.field.label()),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(c.op.label()),
+        );
+    if c.op.needs_value() {
+        let value = c.value.unwrap_or_else(|| zh("collab.plan.filter.unset"));
+        row = row.child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(value),
+        );
+    }
+    row.child(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(zh("collab.plan.filter.removeCondition")),
+    )
+    .into_any_element()
+}
+
+/// 摘要 chip 的首条件字段名（无条件 ⇒ 「未设置」兜底，逐字）。
+fn first_field_label(m: &FilterModel) -> &'static str {
+    m.conditions
+        .first()
+        .map(|c| c.field.label())
+        .unwrap_or_else(|| zh("collab.plan.filter.unset"))
 }
 
 #[cfg(test)]
