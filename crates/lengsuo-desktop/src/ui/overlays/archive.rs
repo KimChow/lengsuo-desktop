@@ -1,51 +1,192 @@
 //! 归档任务确认浮层（波次 8，卡 `ui-overlay-archive`）。
 //!
-//! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
-//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 分层约定（同 `panel_views`）：纯数据层（[`copy`] 全量文案 + [`ArchiveOverlay`]
+//! 状态模型）+ GPUI 层（[`main_area`]）。
+//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `archive`。
+//! 数据源在运行时侧：未接入前 [`main_area`] 渲染诚实默认态（未下发）。
 #![cfg(feature = "ui")]
 use gpui_kit::component::Theme;
 use gpui_kit::*;
-/// 视图标题（逐字取自界面文案全表）。
-pub const TITLE: &str = "归档任务确认浮层";
+
+/// 命名空间 `archive` 的界面文案（逐字，共 17 键）。
+pub mod copy {
+    /// `archive.dialog.cancel`
+    pub const DIALOG_CANCEL: &str = "取消";
+    /// `archive.dialog.confirm`
+    pub const DIALOG_CONFIRM: &str = "确认归档";
+    /// `archive.dialog.content`
+    pub const DIALOG_CONTENT: &str =
+        "确认将该任务归档吗？归档后可在「系统设置-数据管理」中查看已归档任务。";
+    /// `archive.dialog.content.cloud`
+    pub const DIALOG_CONTENT_CLOUD: &str = "确认将该任务归档吗？";
+    /// `archive.dialog.title`
+    pub const DIALOG_TITLE: &str = "归档任务";
+    /// `archive.disabled.reason`
+    pub const DISABLED_REASON: &str = "任务进行中，无法归档";
+    /// `archive.inline.confirm`
+    pub const INLINE_CONFIRM: &str = "确认";
+    /// `archive.page.empty`
+    pub const PAGE_EMPTY: &str = "暂无归档内容";
+    /// `archive.page.title`
+    pub const PAGE_TITLE: &str = "已归档任务";
+    /// `archive.toast.failed`
+    pub const TOAST_FAILED: &str = "归档失败，请重试";
+    /// `archive.toast.success`（键值尾随半角空格，原样保留）
+    pub const TOAST_SUCCESS: &str = "任务已归档，可在 ";
+    /// `archive.toast.success.cloud`
+    pub const TOAST_SUCCESS_CLOUD: &str = "任务已归档";
+    /// `archive.toast.successLink`
+    pub const TOAST_SUCCESS_LINK: &str = "设置";
+    /// `archive.toast.successSuffix`（键值前导半角空格，原样保留）
+    pub const TOAST_SUCCESS_SUFFIX: &str = " 中查看";
+    /// `archive.unarchive`
+    pub const UNARCHIVE: &str = "取消归档";
+    /// `archive.unarchive.failed`
+    pub const UNARCHIVE_FAILED: &str = "恢复失败，请重试";
+    /// `archive.unarchive.success`
+    pub const UNARCHIVE_SUCCESS: &str = "任务已恢复";
+    /// 全量键位数组（防丢键：长度恒为 17）。
+    pub const ALL: [&str; 17] = [
+        DIALOG_CANCEL,
+        DIALOG_CONFIRM,
+        DIALOG_CONTENT,
+        DIALOG_CONTENT_CLOUD,
+        DIALOG_TITLE,
+        DISABLED_REASON,
+        INLINE_CONFIRM,
+        PAGE_EMPTY,
+        PAGE_TITLE,
+        TOAST_FAILED,
+        TOAST_SUCCESS,
+        TOAST_SUCCESS_CLOUD,
+        TOAST_SUCCESS_LINK,
+        TOAST_SUCCESS_SUFFIX,
+        UNARCHIVE,
+        UNARCHIVE_FAILED,
+        UNARCHIVE_SUCCESS,
+    ];
+}
+
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
+
 /// 浮层状态（默认 `NotDelivered`：数据未拉取过 ≠ 空集，⛔ 不伪造）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum State {
     /// 已下发且可用。
     Normal,
+    /// 拉取中（不显示条目，也不宣称空集）。
     Loading,
+    /// 下发/操作失败（提示失败文案）。
     Failed,
     /// 数据未下发（无数据源时的诚实默认态）。
     #[default]
     NotDelivered,
 }
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；本卡负责补全真实视图）。
+
+/// 归档任务确认浮层的纯数据模型（无 GPUI 依赖；视图是它的纯函数）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ArchiveOverlay {
+    /// 浮层状态。
+    pub state: State,
+    /// 云端环境：正文与成功 toast 用短文案（无「设置」链接段）。
+    pub cloud: bool,
+    /// 任务进行中：确认入口禁用，正文替换为禁用原因。
+    pub task_running: bool,
+    /// 已归档任务名（数据源未接入前恒为空 ⇒ 归档页空态）。
+    pub archived_tasks: Vec<String>,
+}
+
+impl ArchiveOverlay {
+    /// 确认对话框正文：任务进行中 ⇒ 禁用原因；云端 ⇒ 短文案；否则完整文案。
+    pub fn dialog_content(&self) -> &'static str {
+        if self.task_running {
+            copy::DISABLED_REASON
+        } else if self.cloud {
+            copy::DIALOG_CONTENT_CLOUD
+        } else {
+            copy::DIALOG_CONTENT
+        }
+    }
+
+    /// 成功 toast：本地版由三键拼装（含「设置」链接段），云端版无链接段。
+    pub fn toast_success(&self) -> String {
+        if self.cloud {
+            copy::TOAST_SUCCESS_CLOUD.to_string()
+        } else {
+            format!(
+                "{}{}{}",
+                copy::TOAST_SUCCESS,
+                copy::TOAST_SUCCESS_LINK,
+                copy::TOAST_SUCCESS_SUFFIX
+            )
+        }
+    }
+
+    /// 状态提示行：未下发/失败时向用户言明，其余为 `None`。
+    pub fn status_notice(&self) -> Option<&'static str> {
+        match self.state {
+            State::NotDelivered => Some(NOT_DELIVERED),
+            State::Failed => Some(copy::TOAST_FAILED),
+            State::Loading | State::Normal => None,
+        }
+    }
+
+    /// 确认按钮是否可用（任务进行中禁用）。
+    pub fn confirm_enabled(&self) -> bool {
+        !self.task_running
+    }
+
+    /// 归档页已归档条数。
+    pub fn archived_count(&self) -> usize {
+        self.archived_tasks.len()
+    }
+
+    /// 归档页是否渲染空态：已下发且为空集才算空态；
+    /// 未下发 ≠ 空集（三态契约），走 fail-closed 提示而不是空态。
+    pub fn archived_page_empty(&self) -> bool {
+        self.state != State::NotDelivered && self.archived_tasks.is_empty()
+    }
+}
+
+/// 主区渲染（数据源未接入：渲染诚实默认态 = 标题 + 正文 + 未下发提示）。
 pub fn main_area(theme: &Theme) -> Div {
+    let overlay = ArchiveOverlay::default();
     div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
+        .child(div().text_color(theme.foreground).child(copy::DIALOG_TITLE))
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(overlay.dialog_content()),
+        )
         .child(
             div()
                 .text_color(theme.muted_foreground)
                 .child(NOT_DELIVERED),
         )
 }
+
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::copy;
+    use super::{ArchiveOverlay, State, NOT_DELIVERED};
     use gpui_kit::component::Theme;
+
     #[test]
     fn default_state_is_not_delivered() {
-        assert_eq!(State::default(), State::NotDelivered);
+        let overlay = ArchiveOverlay::default();
+        assert_eq!(overlay.state, State::NotDelivered);
+        assert_eq!(overlay.status_notice(), Some(NOT_DELIVERED));
     }
+
     #[test]
-    fn title_not_empty() {
-        assert!(!TITLE.is_empty());
+    fn copy_all_has_17_keys() {
+        assert_eq!(copy::ALL.len(), 17);
     }
+
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
