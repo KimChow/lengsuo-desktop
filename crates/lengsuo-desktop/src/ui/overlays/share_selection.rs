@@ -88,18 +88,34 @@ impl ShareSelectionState {
 // ---------- GPUI 层 ----------
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 恒以 [`ShareSelectionState::initial`]（未下发）渲染 —— fail-closed。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &ShareSelectionState::initial())
+}
+
+/// 按状态渲染整层：标题行 + 渠道组标题 + 渠道行（工具/平台）+ 文案模板行。
+fn render(theme: &Theme, state: &ShareSelectionState) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(title_row(theme))
+        .child(content(theme, state))
+}
+
+/// 标题行：标题 + 退出分享（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
@@ -107,14 +123,96 @@ pub fn main_area(theme: &Theme) -> Div {
         )
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(CLOSE),
+        )
+}
+
+/// 内容区：渠道组标题 + 渠道行 + 文案模板行 + 计数提示（未下发不伪造数值）。
+fn content(theme: &Theme, state: &ShareSelectionState) -> Div {
+    let mut col = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_4()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(CHANNEL_GROUP_LABEL),
+        )
+        .child(channel_row(theme, TOOL_CHANNELS))
+        .child(channel_row(theme, PLATFORM_CHANNELS))
+        .child(template_rows_view(theme, state));
+    if let Some(hint) = state.max_pairs_hint() {
+        col = col.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(hint),
+        );
+    }
+    col
+}
+
+/// 渠道行：一组渠道徽标（换行排布）。
+fn channel_row(theme: &Theme, labels: &[&str]) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .gap_2()
+        .children(labels.iter().map(|label| channel_badge(theme, label)))
+}
+
+/// 渠道徽标（文案即无障碍标签）。
+fn channel_badge(theme: &Theme, label: &str) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .bg(theme.muted)
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(label.to_string())
+}
+
+/// 文案模板行：未下发/空 ⇒ 如实显示「未下发」（fail-closed，不是空列表）。
+fn template_rows_view(theme: &Theme, state: &ShareSelectionState) -> Div {
+    let mut col = div().flex().flex_col().gap_2();
+    match state.template_rows() {
+        Some(rows) => {
+            col = col.children(rows.iter().map(|row| template_row(theme, row.clone())));
+        }
+        None => col = col.child(
+            div()
+                .px_4()
+                .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
                 .text_sm()
                 .text_color(theme.muted_foreground)
                 .child(NOT_DELIVERED),
-        )
+        ),
+    }
+    col
+}
+
+/// 单条文案模板行（运行时下发内容）。
+fn template_row(theme: &Theme, text: String) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(text)
 }
 #[cfg(test)]
 mod tests {
