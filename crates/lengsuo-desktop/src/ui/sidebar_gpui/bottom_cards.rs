@@ -4,6 +4,7 @@
 //! 用户头像行（圆头像占位 + 名字 + 两个小图标钮）。
 //! 文案逐字 `welcome.activity.*`；数据缺失如实「未下发」，不伪造。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
@@ -70,11 +71,21 @@ fn activity_banner(
         .flex_col()
         .gap_2()
         .p_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.sidebar_border)
         .child(
             div()
                 .flex()
+                .items_center()
                 .gap_2()
-                .child(div().size_10())
+                // 图占位块（图片资产未下发）：主题色浅底。
+                .child(
+                    div()
+                        .size_10()
+                        .rounded_sm()
+                        .bg(theme.sidebar_accent.opacity(0.35)),
+                )
                 .child(
                     div()
                         .flex()
@@ -83,12 +94,18 @@ fn activity_banner(
                         .gap_1()
                         .child(
                             div()
+                                .px_1()
+                                .text_xs()
                                 .text_color(theme.sidebar_accent_foreground)
+                                .bg(theme.sidebar_accent.opacity(0.35))
+                                .rounded_sm()
                                 .child(ACTIVITY_LABEL),
                         )
                         // ponytail: 此版 gpui 无 line_clamp ⇒ 标题先单行省略，两行省略待上游
                         .child(
                             div()
+                                .text_sm()
+                                .font_bold()
                                 .text_color(theme.sidebar_foreground)
                                 .truncate()
                                 .child(SharedString::from(or_not_delivered(
@@ -97,6 +114,7 @@ fn activity_banner(
                         )
                         .child(
                             div()
+                                .text_xs()
                                 .text_color(theme.muted_foreground)
                                 .child(MODEL_SWITCHED),
                         ),
@@ -106,6 +124,12 @@ fn activity_banner(
             div().flex().justify_end().child(
                 div()
                     .id("bottom-card-activity-cta")
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(theme.sidebar_accent)
+                    .text_xs()
                     .text_color(theme.sidebar_accent_foreground)
                     .cursor_pointer()
                     .child(ACTIVITY_ACTION)
@@ -130,19 +154,33 @@ fn user_row(
         .gap_2()
         .px_2()
         .py_1()
-        .child(div().size_6())
+        // 圆头像占位（头像资产未下发）：主题色浅底。
+        .child(
+            div()
+                .size_6()
+                .rounded_full()
+                .bg(theme.sidebar_accent.opacity(0.35)),
+        )
         .child(
             div()
                 .flex_1()
+                .text_sm()
                 .text_color(theme.sidebar_foreground)
                 .truncate()
                 .child(SharedString::from(or_not_delivered(
                     data.user_name.as_deref(),
                 ))),
         )
+        // 小图标钮 1：「通知」（文案已下发 ⇒ 带字胶囊）。
         .child(
             div()
                 .id("bottom-card-notice")
+                .px_1()
+                .py_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.sidebar_border)
+                .text_xs()
                 .text_color(theme.muted_foreground)
                 .cursor_pointer()
                 .child(NOTICE_LABEL)
@@ -150,10 +188,14 @@ fn user_row(
                     notice(BottomCardIntent::OpenNotice)
                 }),
         )
+        // 小图标钮 2：图标资产未下发 ⇒ 空占位方块，只上报意图。
         .child(
             div()
                 .id("bottom-card-settings")
                 .size_6()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.sidebar_border)
                 .cursor_pointer()
                 .on_click(move |_event, _window, _app| {
                     settings(BottomCardIntent::OpenSettings)
