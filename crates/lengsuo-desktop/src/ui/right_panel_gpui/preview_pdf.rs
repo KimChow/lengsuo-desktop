@@ -180,11 +180,7 @@ fn render_page_area(path: &str, theme: &gpui_kit::component::Theme) -> AnyElemen
 }
 
 /// 占位区变体：`note` 为诚实说明（未下发原因 / 解码失败原因）。
-fn render_page_area_note(
-    path: &str,
-    theme: &gpui_kit::component::Theme,
-    note: &str,
-) -> AnyElement {
+fn render_page_area_note(path: &str, theme: &gpui_kit::component::Theme, note: &str) -> AnyElement {
     div()
         .flex_1()
         .m_3()
@@ -225,7 +221,10 @@ fn render_page_area_note(
 pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
     let owned;
     let (data, oversized) = if let Some(bytes) = bytes {
-        (&bytes[..bytes.len().min(MAX_BYTES)], bytes.len() > MAX_BYTES)
+        (
+            &bytes[..bytes.len().min(MAX_BYTES)],
+            bytes.len() > MAX_BYTES,
+        )
     } else {
         match read_capped(path) {
             Ok((buf, over)) => {
@@ -277,10 +276,7 @@ fn decode_pdf(data: &[u8], oversized: bool) -> Result<PdfPayload, DecodeError> {
             page_text.push(String::new());
             continue;
         }
-        let mut shows = doc
-            .get_page_content(page_id)
-            .map(|content| extract_shows(&content))
-            .unwrap_or_default();
+        let mut shows = page_shows(&doc, page_id);
         if shows.len() > budget {
             shows.truncate(budget);
             truncated = true;
@@ -319,8 +315,10 @@ fn pdf_title(doc: &lopdf::Document) -> Option<String> {
 fn decode_pdf_text(bytes: &[u8]) -> String {
     if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         let units = bytes[2..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair))
             .collect::<Vec<_>>();
         String::from_utf16(&units).unwrap_or_default()
     } else {
@@ -328,170 +326,51 @@ fn decode_pdf_text(bytes: &[u8]) -> String {
     }
 }
 
-/// 从一页 content stream 抽出文本「show」序列：只认 `Tj` / `TJ`，字符串操作数按
-/// 出现顺序拼接（尽力抽取，⛔ 不伪造 —— 非文本指令 / 跳变一律忽略）。
-fn extract_shows(content: &[u8]) -> Vec<String> {
-    let b = content;
+/// 从一页的 content stream（可能多条）抽出文本「show」序列：lopdf 自带解析器解析
+/// 操作序列，只认 `Tj` / `TJ` 的字符串操作数（能抽则抽、⛔ 不伪造；其余指令忽略）。
+fn page_shows(doc: &lopdf::Document, page_id: lopdf::ObjectId) -> Vec<String> {
+    use lopdf::Object;
     let mut shows = Vec::new();
-    let mut pending: Vec<String> = Vec::new(); // 上一个操作符之前累计的字符串操作数
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'(' => {
-                let (text, next) = parse_literal_string(b, i);
-                pending.push(text);
-                i = next;
-            }
-            b'<' => {
-                if b.get(i + 1) == Some(&b'<') {
-                    i = skip_inline_dict(b, i); // 如 BDC 的属性字典：整段跳过
-                } else {
-                    let (text, next) = parse_hex_string(b, i);
-                    pending.push(text);
-                    i = next;
-                }
-            }
-            b'%' => {
-                while i < b.len() && b[i] != b'\n' && b[i] != b'\r' {
-                    i += 1;
-                }
-            }
-            b'/' => {
-                while i < b.len() && !is_delim(b[i]) && !b[i].is_ascii_whitespace() {
-                    i += 1;
-                }
-            }
-            c if c.is_ascii_whitespace() || matches!(c, b'[' | b']' | b'{' | b'}' | b')' | b'>') => {
-                i += 1;
-            }
-            _ => {
-                let start = i;
-                while i < b.len() && !is_delim(b[i]) && !b[i].is_ascii_whitespace() {
-                    i += 1;
-                }
-                match &b[start..i] {
-                    b"Tj" => {
-                        if let Some(text) = pending.pop() {
-                            shows.push(text);
-                        }
+    for content_id in doc.get_page_contents(page_id) {
+        let Ok(Object::Stream(stream)) = doc.get_object(content_id) else {
+            continue;
+        };
+        let Ok(ops) = stream.decode_content() else {
+            continue;
+        };
+        for op in &ops.operations {
+            match op.operator.as_str() {
+                "Tj" => {
+                    if let Some(Object::String(bytes, _)) = op.operands.first() {
+                        shows.push(decode_pdf_text(bytes));
                     }
-                    b"TJ" => {
-                        if !pending.is_empty() {
-                            shows.push(pending.concat());
-                        }
-                    }
-                    _ => {}
                 }
-                pending.clear();
+                "TJ" => {
+                    let text: Vec<String> = op
+                        .operands
+                        .iter()
+                        .flat_map(|operand| match operand {
+                            Object::String(bytes, _) => vec![decode_pdf_text(bytes)],
+                            Object::Array(items) => items
+                                .iter()
+                                .filter_map(|item| match item {
+                                    Object::String(bytes, _) => Some(decode_pdf_text(bytes)),
+                                    _ => None,
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        })
+                        .collect();
+                    let text = text.concat();
+                    if !text.is_empty() {
+                        shows.push(text);
+                    }
+                }
+                _ => {}
             }
         }
     }
     shows
-}
-
-/// PDF 分隔符（含注释符 `%` 与名字前导 `/`）。
-fn is_delim(c: u8) -> bool {
-    matches!(
-        c,
-        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
-    )
-}
-
-/// 解析 `(` 字面字符串：嵌套括号 + 反斜杠转义（`\n` 等 / 1~3 位八进制）；返回（文本, 结束下标）。
-fn parse_literal_string(b: &[u8], mut i: usize) -> (String, usize) {
-    i += 1;
-    let mut depth = 1usize;
-    let mut out: Vec<u8> = Vec::new();
-    while i < b.len() && depth > 0 {
-        match b[i] {
-            b'\\' => {
-                i += 1;
-                if i >= b.len() {
-                    break;
-                }
-                match b[i] {
-                    b'n' => out.push(b'\n'),
-                    b'r' => out.push(b'\r'),
-                    b't' => out.push(b'\t'),
-                    b'b' => out.push(0x08),
-                    b'f' => out.push(0x0C),
-                    b'0'..=b'7' => {
-                        let mut v = 0u32;
-                        let mut n = 0;
-                        while i < b.len() && n < 3 && (b'0'..=b'7').contains(&b[i]) {
-                            v = v * 8 + u32::from(b[i] - b'0');
-                            i += 1;
-                            n += 1;
-                        }
-                        out.push((v & 0xFF) as u8);
-                        continue;
-                    }
-                    other => out.push(other), // \( \) \\ 及其他字面
-                }
-                i += 1;
-            }
-            b'(' => {
-                depth += 1;
-                out.push(b'(');
-                i += 1;
-            }
-            b')' => {
-                depth -= 1;
-                if depth > 0 {
-                    out.push(b')');
-                }
-                i += 1;
-            }
-            c => {
-                out.push(c);
-                i += 1;
-            }
-        }
-    }
-    (decode_pdf_text(&out), i)
-}
-
-/// 解析 `<` 十六进制字符串（忽略空白，奇数位补 0）；返回（文本, 结束下标）。
-fn parse_hex_string(b: &[u8], mut i: usize) -> (String, usize) {
-    i += 1;
-    let mut nibbles: Vec<u8> = Vec::new();
-    while i < b.len() && b[i] != b'>' {
-        if let Some(v) = (b[i] as char).to_digit(16) {
-            nibbles.push(v as u8);
-        }
-        i += 1;
-    }
-    if i < b.len() {
-        i += 1; // 收掉 '>'
-    }
-    if nibbles.len() % 2 == 1 {
-        nibbles.push(0);
-    }
-    let bytes = nibbles
-        .chunks(2)
-        .map(|pair| (pair[0] << 4) | pair[1])
-        .collect::<Vec<_>>();
-    (decode_pdf_text(&bytes), i)
-}
-
-/// 跳过 `<< … >>` 内联字典（按 `<<`/`>>` 配对计数）。
-fn skip_inline_dict(b: &[u8], mut i: usize) -> usize {
-    let mut depth = 0usize;
-    while i < b.len() {
-        if b[i] == b'<' && b.get(i + 1) == Some(&b'<') {
-            depth += 1;
-            i += 2;
-        } else if b[i] == b'>' && b.get(i + 1) == Some(&b'>') {
-            depth -= 1;
-            i += 2;
-            if depth == 0 {
-                break;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    i
 }
 
 /// A14：带载荷渲染。`Pdf` ⇒ 工具栏页码接真页数 + 文本摘录正文；`NotDelivered` /
@@ -551,7 +430,11 @@ fn render_pdf_body(payload: &PdfPayload, theme: &gpui_kit::component::Theme) -> 
         col = col.child(render_page_excerpt(idx + 1, text, theme));
     }
     if payload.page_text.len() > EXCERPT_PAGES {
-        col = col.child(div().text_xs().child(format!("……仅显示前 {EXCERPT_PAGES} 页摘录")));
+        col = col.child(
+            div()
+                .text_xs()
+                .child(format!("……仅显示前 {EXCERPT_PAGES} 页摘录")),
+        );
     }
     div()
         .id("preview-pdf-body")
@@ -598,7 +481,11 @@ fn render_page_excerpt(no: usize, text: &str, theme: &gpui_kit::component::Theme
 
 #[cfg(test)]
 mod tests {
-    use super::{page_label, page_step, zoom_label, zoom_step, PdfPanelState};
+    use super::{
+        decode, page_label, page_step, render_with_payload, zoom_label, zoom_step, PdfPanelState,
+    };
+    use crate::state::preview_payload::{DecodeError, PreviewPayload, MAX_BYTES, MAX_LINES};
+    use gpui_kit::component::Theme;
 
     #[test]
     fn page_step_clamps_to_bounds() {
@@ -636,5 +523,160 @@ mod tests {
         assert_eq!(state.total, 0);
         assert_eq!(page_label(state.page, state.total), "– / –");
         assert_eq!(zoom_label(state.zoom), "100%");
+    }
+
+    /// 构造最小合法单页 PDF（xref 偏移实时记录，纯内存不落盘）：
+    /// `content` 为该页 content stream 原文；`title` 写入 `/Info` 的 `/Title`
+    /// （UTF-16BE + BOM，与真实生成器一致，走完整解码路径）。
+    fn pdf_bytes(title: Option<&str>, content: &str) -> Vec<u8> {
+        let mut objs: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>".to_vec(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            )
+            .into_bytes(),
+        ];
+        if let Some(title) = title {
+            let hex = std::iter::once(0xFEFFu16)
+                .chain(title.encode_utf16())
+                .map(|unit| format!("{unit:04X}"))
+                .collect::<String>();
+            objs.push(format!("<< /Title <{hex}> >>").into_bytes());
+        }
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::with_capacity(objs.len());
+        for (idx, body) in objs.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", idx + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_at = out.len();
+        let size = objs.len() + 1;
+        out.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        let info_ref = if title.is_some() {
+            format!("/Info {} 0 R ", objs.len())
+        } else {
+            String::new()
+        };
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {size} /Root 1 0 R {info_ref}>>\nstartxref\n{xref_at}\n%%EOF"
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    #[test]
+    fn decode_reads_payload_from_bytes_only() {
+        let bytes = pdf_bytes(Some("样本标题"), "(Hello) Tj [(W)-120(o)4(rld)] TJ");
+        match decode("ignored.pdf", Some(&bytes)) {
+            PreviewPayload::Pdf(p) => {
+                assert_eq!(p.pages, 1, "页数从 /Pages 树解出");
+                assert_eq!(
+                    p.title.as_deref(),
+                    Some("样本标题"),
+                    "/Title 经 UTF-16BE BOM 解码"
+                );
+                assert_eq!(
+                    p.page_text,
+                    vec!["Hello\nWorld".to_string()],
+                    "Tj 与 TJ 的字符串操作数都要抽到"
+                );
+                assert!(!p.truncated);
+            }
+            other => panic!("应为 Pdf 载荷，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_fail_closed_on_garbage() {
+        let junks: [&[u8]; 3] = [b"", b"not a pdf at all", b"%PDF-1.4 broken"];
+        for junk in junks {
+            assert!(
+                matches!(
+                    decode("g.pdf", Some(junk)),
+                    PreviewPayload::Failed(_) | PreviewPayload::NotDelivered { .. }
+                ),
+                "垃圾输入必须 fail-closed（不 panic、不伪造）：{junk:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_truncates_over_line_budget() {
+        let content = "(行) Tj ".repeat(MAX_LINES + 25);
+        let bytes = pdf_bytes(None, &content);
+        match decode("t.pdf", Some(&bytes)) {
+            PreviewPayload::Pdf(p) => {
+                assert!(p.truncated, "超过 MAX_LINES 必须如实标注截断");
+                assert_eq!(
+                    p.page_text[0].lines().count(),
+                    MAX_LINES,
+                    "行数夹紧到 MAX_LINES"
+                );
+                assert_eq!(p.pages, 1);
+            }
+            other => panic!("应为 Pdf 载荷，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_fail_closed_over_byte_cap() {
+        let oversized = vec![0u8; MAX_BYTES + 1];
+        assert!(
+            matches!(decode("h.pdf", Some(&oversized)), PreviewPayload::Failed(_)),
+            "超 MAX_BYTES 截断后无法解析 ⇒ Failed（不整包进内存、不伪造、不 panic）"
+        );
+    }
+
+    #[test]
+    fn render_with_payload_never_panics_for_all_branches() {
+        let theme = Theme::default();
+        let payload = decode("a.pdf", Some(&pdf_bytes(None, "(A) Tj")));
+        let _ = render_with_payload("a.pdf", &payload, &theme);
+        let _ = render_with_payload(
+            "a.pdf",
+            &PreviewPayload::NotDelivered {
+                reason: "内容解码尚未接入（A14）",
+            },
+            &theme,
+        );
+        let _ = render_with_payload(
+            "a.pdf",
+            &PreviewPayload::Failed(DecodeError::Io("file gone".into())),
+            &theme,
+        );
+        let _ = render_with_payload(
+            "a.pdf",
+            &PreviewPayload::Failed(DecodeError::TooLarge {
+                limit: MAX_BYTES,
+                actual: MAX_BYTES + 1,
+            }),
+            &theme,
+        );
+    }
+
+    #[test]
+    fn decode_handles_escapes_hex_and_octal() {
+        let bytes = pdf_bytes(None, "(\\(q\\) 100\\% \\101) Tj <48 69 21> Tj /F1 12 Tf");
+        match decode("e.pdf", Some(&bytes)) {
+            PreviewPayload::Pdf(p) => {
+                assert_eq!(
+                    p.page_text,
+                    vec!["(q) 100% A\nHi!".to_string()],
+                    "括号/百分号/八进制转义与十六进制串都要正确解码；非 show 指令不产出"
+                );
+            }
+            other => panic!("应为 Pdf 载荷，得到 {other:?}"),
+        }
     }
 }
