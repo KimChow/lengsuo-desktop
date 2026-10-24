@@ -405,17 +405,7 @@ pub fn render(theme: &Theme, acct: &CreditsAccount) -> Div {
             .child(TITLE),
     );
     if let Some(badge) = acct.state.badge() {
-        title = title.child(
-            div()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(badge),
-        );
+        title = title.child(chip(theme, badge));
     }
     div()
         .flex_1()
@@ -465,10 +455,237 @@ fn status_line(theme: &Theme, main: &'static str, desc: Option<&str>) -> Div {
     col
 }
 
-/// Ready 主体（诚实占位：完整卡片在 GPUI 层 commit 落地）。
+/// Ready 主体：概览 + 不足横幅 + 非最新提示 + 权益构成 + 明细 + 操作行。
 fn ready_body(theme: &Theme, acct: &CreditsAccount) -> Div {
-    let _ = (theme, acct);
-    centered_line(theme, TEXT_EMPTY)
+    let mut col = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .px_4()
+        .py_3()
+        .child(overview_card(theme, acct));
+    if let Some(shortage) = acct.shortage {
+        col = col.child(shortage_banner(theme, shortage, acct.audience));
+    }
+    if acct.stale {
+        col = col.child(stale_row(theme));
+    }
+    if !acct.buckets.is_empty() {
+        col = col.child(buckets_card(theme, acct));
+    }
+    if !acct.detail_rows().is_empty() {
+        col = col.child(detail_card(theme, acct));
+    }
+    col.child(action_row(theme, acct))
+}
+
+/// 概览卡：总积分标签 +「剩余 x / 总量 y 积分」+ 累积剩余行。
+fn overview_card(theme: &Theme, acct: &CreditsAccount) -> Div {
+    let mut card = div().flex().flex_col().gap_1().child(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(TOTAL_CREDITS),
+    );
+    if let Some(line) = acct.overview_line() {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(format!("{REMAINING} {line} {UNIT}")),
+        );
+    }
+    if let Some(acc_line) = acct.accumulated_line() {
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(acc_line),
+        );
+    }
+    card
+}
+
+/// 不足横幅：标题句 +（个人）自助操作链接按钮。
+fn shortage_banner(theme: &Theme, shortage: Shortage, audience: Audience) -> Div {
+    let (headline, action) = shortage_text(shortage, audience);
+    let mut col = div().flex().flex_col().gap_2().child(
+        div()
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(headline),
+    );
+    if let Some(link) = action {
+        col = col.child(pill_button(theme, link));
+    }
+    col
+}
+
+/// 非最新提示：角标 + 说明。
+fn stale_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_2()
+        .child(chip(theme, STALE))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(STALE_DESC),
+        )
+}
+
+/// 权益构成卡：有效期标签 + 每桶一行（标签 / 数值+单位）+ 桶级到期与提示。
+fn buckets_card(theme: &Theme, acct: &CreditsAccount) -> Div {
+    let mut card = div().flex().flex_col().gap_1().child(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(VALIDITY_PERIOD),
+    );
+    for bucket in &acct.buckets {
+        card = card.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(bucket.kind.label()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(format!(
+                            "{} {}",
+                            CreditsAccount::amount_text(bucket.amount),
+                            UNIT
+                        )),
+                ),
+        );
+        if let Some(expire_at) = &bucket.expire_at {
+            card = card.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(format!("{EXPIRE_TIME}: {expire_at}")),
+            );
+        }
+        if let Some(hint) = bucket.kind.expire_hint() {
+            card = card.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(hint),
+            );
+        }
+    }
+    card
+}
+
+/// 明细卡：积分明细标签 + label/value 行 + 企业侧「请联系管理员」脚注。
+fn detail_card(theme: &Theme, acct: &CreditsAccount) -> Div {
+    let mut card = div().flex().flex_col().gap_1().child(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(DETAIL),
+    );
+    for (label, value) in acct.detail_rows() {
+        card = card.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(value),
+                ),
+        );
+    }
+    if acct.audience == Audience::Enterprise {
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(ENTERPRISE_CONTACT_ADMIN),
+        );
+    }
+    card
+}
+
+/// 操作行：刷新按钮 + 冷却文案 + 体验版购买禁用说明。
+fn action_row(theme: &Theme, acct: &CreditsAccount) -> Div {
+    let mut row = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_2()
+        .child(pill_button(theme, REFRESH));
+    if let Some(secs) = acct.refresh_cooldown_secs {
+        row = row.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(CreditsAccount::refresh_cooldown_text(secs)),
+        );
+    }
+    if acct.free_plan {
+        row = row.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(BUY_DISABLED_FREE),
+        );
+    }
+    row
+}
+
+/// 药丸按钮（≥48dp 触摸目标；颜色一律主题 token）。
+fn pill_button(theme: &Theme, label: &'static str) -> Div {
+    div()
+        .h_12()
+        .min_w(px(112.))
+        .self_start()
+        .px_6()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.accent)
+        .child(label)
+}
+
+/// 小角标（状态 / 非最新共用样式）。
+fn chip(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(text)
 }
 
 #[cfg(test)]
