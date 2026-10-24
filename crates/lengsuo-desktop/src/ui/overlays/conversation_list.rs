@@ -366,16 +366,94 @@ fn footer_row(mode: SidebarMode, theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{copy, main_area, NOT_DELIVERED};
+    use super::{
+        copy, fixed_tip, main_area, ConversationGroup, ConversationItem, ConversationListOverlay,
+        ConversationListState, SidebarMode, NOT_DELIVERED,
+    };
     use gpui_kit::component::Theme;
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert_eq!(copy::CUSTOM_MENU_TITLE, "自定义菜单栏");
+
+    fn item(title: &str, pinned: bool, archived: bool, unread: u32) -> ConversationItem {
+        ConversationItem {
+            title: title.to_owned(),
+            pinned,
+            archived,
+            unread,
+        }
     }
+
+    /// 两分组四行：置顶/归档/未读各覆盖一例。
+    fn sample() -> ConversationListOverlay {
+        ConversationListOverlay {
+            state: ConversationListState::Normal,
+            mode: SidebarMode::Legacy,
+            groups: vec![
+                ConversationGroup {
+                    title: "g1".into(),
+                    items: vec![item("b", false, false, 0), item("a", true, false, 3)],
+                },
+                ConversationGroup {
+                    title: "g2".into(),
+                    items: vec![item("c", false, true, 7), item("d", false, false, 0)],
+                },
+            ],
+        }
+    }
+
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn normal_model_state_and_counts() {
+        let overlay = sample();
+        assert_eq!(overlay.state, ConversationListState::Normal);
+        assert_eq!(overlay.total_items(), 4);
+        assert_eq!(overlay.pinned_count(), 1);
+        assert_eq!(overlay.archived_count(), 1);
+        assert_eq!(overlay.total_unread(), 10);
+    }
+
+    #[test]
+    fn visible_rows_drop_archived_and_pin_first() {
+        let overlay = sample();
+        let titles: Vec<&str> = overlay
+            .visible_rows()
+            .iter()
+            .map(|row| row.title.as_str())
+            .collect();
+        assert_eq!(titles, ["a", "b", "d"]);
+    }
+
+    #[test]
+    fn empty_input_yields_empty_state_not_blank_list() {
+        let overlay = ConversationListOverlay::not_delivered();
+        assert_eq!(overlay.state, ConversationListState::NotDelivered);
+        // 未拉取过 ≠ 空集：未下发必须可区分于正常态
+        assert_ne!(overlay.state, ConversationListState::Normal);
+        assert_eq!(overlay.total_items(), 0);
+        assert_eq!(overlay.empty_state_text(), Some(copy::MORE_EMPTY));
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_the_table() {
+        assert_eq!(copy::CUSTOM_MENU_TITLE, "自定义菜单栏");
+        assert_eq!(copy::OPEN_WINDOW, "在独立窗口中打开");
+        assert_eq!(copy::COLLAPSE_SIDEBAR, "收起侧边栏");
+        assert_eq!(
+            copy::MORE_EMPTY,
+            "暂无内容，可将不常用的菜单功能移动到\"更多\"下"
+        );
         assert_eq!(NOT_DELIVERED, "未下发");
     }
+
+    #[test]
+    fn fixed_tip_substitutes_name_placeholder() {
+        assert_eq!(fixed_tip("A"), "A菜单不支持拖拽替换位置");
+        assert_eq!(fixed_tip(""), "菜单不支持拖拽替换位置");
+    }
+
+    #[test]
+    fn sidebar_mode_toggle_labels_verbatim() {
+        assert_eq!(SidebarMode::Legacy.toggle_label(), "试用新侧栏");
+        assert_eq!(SidebarMode::Next.toggle_label(), "回到经典侧栏");
+    }
+
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
