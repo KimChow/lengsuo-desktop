@@ -352,26 +352,131 @@ fn render_row(theme: &Theme, e: &ShortcutEntry) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{binding_state, main_area, BindingState, CATALOG, NOT_DELIVERED, TITLE};
+    use super::{
+        binding_state, conflict_text, detect_conflicts, main_area, search, total_count_line,
+        BindingState, ShortcutEntry, ShortcutGroup, CATALOG, CONFLICT_TEMPLATE, NOT_DELIVERED,
+        NO_RESULTS, SEARCH_PLACEHOLDER, TITLE, TOTAL_COUNT_TEMPLATE,
+    };
     use gpui_kit::component::Theme;
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
-    }
-    #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
-        assert_eq!(NOT_DELIVERED, "未下发");
-    }
-    #[test]
-    fn main_area_builds_without_panic() {
-        let theme = Theme::default();
-        let _ = main_area(&theme);
-    }
+
     #[test]
     fn catalog_is_four_groups_twenty_five_actions_fail_closed() {
         assert_eq!(CATALOG.len(), 4);
         assert_eq!(CATALOG.iter().map(|g| g.entries.len()).sum::<usize>(), 25);
         assert!(CATALOG.iter().all(|g| !g.entries.is_empty()));
         assert_eq!(binding_state(CATALOG), BindingState::NotDelivered);
+        assert!(CATALOG
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .all(|e| e.combo.is_none()));
+    }
+
+    #[test]
+    fn binding_state_delivered_only_when_every_entry_has_combo() {
+        let delivered = [ShortcutGroup {
+            title: "通用",
+            entries: &[
+                ShortcutEntry {
+                    action: "新建标签页",
+                    combo: Some("Ctrl+T"),
+                },
+                ShortcutEntry {
+                    action: "关闭标签页",
+                    combo: Some("Ctrl+W"),
+                },
+            ],
+        }];
+        assert_eq!(binding_state(&delivered), BindingState::Delivered);
+        let partial = [ShortcutGroup {
+            title: "通用",
+            entries: &[
+                ShortcutEntry {
+                    action: "新建标签页",
+                    combo: Some("Ctrl+T"),
+                },
+                ShortcutEntry {
+                    action: "关闭标签页",
+                    combo: None,
+                },
+            ],
+        }];
+        assert_eq!(binding_state(&partial), BindingState::NotDelivered);
+    }
+
+    #[test]
+    fn search_empty_query_lists_all_and_no_match_is_explicit_state() {
+        let all = search(CATALOG, "   ");
+        assert_eq!(all.total, 25);
+        assert_eq!(all.groups.len(), 4);
+        assert!(!all.no_match);
+        let none = search(CATALOG, "绝不存在的命令字");
+        assert_eq!(none.total, 0);
+        assert!(none.groups.is_empty());
+        // 空态是显式标志，由渲染层画「没有匹配的快捷键」，而不是静默空列表
+        assert!(none.no_match);
+    }
+
+    #[test]
+    fn search_filters_by_action_label() {
+        let tabs = search(CATALOG, "标签页");
+        assert_eq!(tabs.total, 2);
+        assert!(tabs
+            .groups
+            .iter()
+            .flat_map(|(_, entries)| entries.iter())
+            .all(|e| e.action.contains("标签页")));
+        let tasks = search(CATALOG, "任务");
+        assert_eq!(tasks.total, 3);
+        assert_eq!(tasks.groups.len(), 1);
+        assert_eq!(tasks.groups[0].0, "任务");
+    }
+
+    #[test]
+    fn shipped_catalog_has_no_conflict_and_detector_fires_on_duplicate() {
+        assert!(detect_conflicts(CATALOG).is_empty());
+        let duplicated = [ShortcutGroup {
+            title: "通用",
+            entries: &[
+                ShortcutEntry {
+                    action: "新建标签页",
+                    combo: Some("Ctrl+T"),
+                },
+                ShortcutEntry {
+                    action: "新建对话",
+                    combo: Some("Ctrl+T"),
+                },
+            ],
+        }];
+        assert_eq!(
+            detect_conflicts(&duplicated),
+            vec![conflict_text("Ctrl+T", "新建标签页")]
+        );
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_settings_keyboard_shortcuts() {
+        assert!(!TITLE.is_empty());
+        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(SEARCH_PLACEHOLDER, "搜索快捷键");
+        assert_eq!(NO_RESULTS, "没有匹配的快捷键");
+        assert_eq!(super::COLUMN_COMMAND, "命令");
+        assert_eq!(super::COLUMN_BINDING, "按键绑定");
+        assert_eq!(super::CATEGORY_GENERAL, "通用");
+        assert_eq!(super::CATEGORY_EDITING, "聊天");
+        assert_eq!(super::CATEGORY_NAVIGATION, "任务");
+        assert_eq!(super::CATEGORY_WINDOW, "面板·窗口");
+        assert_eq!(TOTAL_COUNT_TEMPLATE, "共 {count} 条");
+        assert_eq!(CONFLICT_TEMPLATE, "“{keys}”已被“{label}”使用");
+        assert_eq!(total_count_line(25), "共 25 条");
+        assert_eq!(
+            conflict_text("Ctrl+F", "对话内搜索"),
+            "“Ctrl+F”已被“对话内搜索”使用"
+        );
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
     }
 }
