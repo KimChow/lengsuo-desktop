@@ -64,20 +64,15 @@ pub const CLEAR_ALL: &str = "重置筛选条件";
 /// 数据送达状态：无数据源时如实停在「未下发」，不伪装成正常态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeliveryState {
-    /// 数据已送达。
     Normal,
-    /// 数据未下发（fail-closed）。
     NotDelivered,
 }
 
 /// 内容区形态：条目 / 空态 / 未下发 —— 空态不是空列表。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntriesView {
-    /// 命中条目。
     Items(Vec<&'static str>),
-    /// 空态（无结果）。
     Empty,
-    /// 数据未下发。
     NotDelivered,
 }
 
@@ -306,18 +301,12 @@ fn option_row(theme: &Theme, options: &'static [&'static str]) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, DeliveryState, EntriesView, SearchFilterModel, DATE_FILTER_OPTIONS, MATCH_NAV,
-        NOT_DELIVERED, SCOPE_OPTIONS, SEARCH_TOGGLES, STATUS_FILTER_OPTIONS, TITLE,
+        main_area, DeliveryState, EntriesView, SearchFilterModel, CLEAR_ALL, DATE_FILTER_LABEL,
+        DATE_FILTER_OPTIONS, FILTER_MULTI, FILTER_TITLE, MATCH_NAV, NOT_DELIVERED, NO_RESULTS,
+        PLACEHOLDER, SCOPE_LABEL, SCOPE_OPTIONS, SEARCH_TOGGLES, STATUS_FILTER_LABEL,
+        STATUS_FILTER_OPTIONS, TITLE,
     };
     use gpui_kit::component::Theme;
-    #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
-    }
-    #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
-        assert_eq!(NOT_DELIVERED, "未下发");
-    }
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
@@ -353,5 +342,58 @@ mod tests {
             ..SearchFilterModel::not_delivered()
         };
         assert_eq!(model.entries_view(), EntriesView::NotDelivered);
+    }
+    #[test]
+    fn labels_match_copytable_verbatim() {
+        assert!(!TITLE.is_empty());
+        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(PLACEHOLDER, "查找");
+        assert_eq!(NO_RESULTS, "无结果");
+        assert_eq!(SCOPE_LABEL, "搜索范围：");
+        assert_eq!(
+            SEARCH_TOGGLES,
+            [
+                "区分大小写 (Alt+C)",
+                "全词匹配 (Alt+W)",
+                "使用正则表达式 (Alt+R)"
+            ]
+        );
+        assert_eq!(
+            MATCH_NAV,
+            [
+                "上一个匹配 (Shift+Enter)",
+                "下一个匹配 (Enter)",
+                "关闭 (Escape)"
+            ]
+        );
+        assert_eq!(SCOPE_OPTIONS, ["两侧", "修改文件", "原始文件"]);
+        assert_eq!(FILTER_TITLE, "任务筛选");
+        assert_eq!(FILTER_MULTI, "多选");
+        assert_eq!(DATE_FILTER_LABEL, "筛选时间");
+        assert_eq!(
+            DATE_FILTER_OPTIONS,
+            [
+                "今天",
+                "昨天",
+                "最近 7 天",
+                "最近 30 天",
+                "全部时间",
+                "自定义范围..."
+            ]
+        );
+        assert_eq!(STATUS_FILTER_LABEL, "筛选状态");
+        assert_eq!(
+            STATUS_FILTER_OPTIONS,
+            [
+                "全部状态",
+                "待处理",
+                "规划中",
+                "进行中",
+                "已完成",
+                "失败",
+                "已归档"
+            ]
+        );
+        assert_eq!(CLEAR_ALL, "重置筛选条件");
     }
 }
