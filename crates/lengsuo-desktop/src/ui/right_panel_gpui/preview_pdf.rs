@@ -1,8 +1,11 @@
-//! PDF 预览（`PreviewKind::Pdf`）的视图与状态——页工具栏 / 缩放控件 / 未下发态（A14）。
+//! PDF 预览（`PreviewKind::Pdf`）：解码（lopdf）+ 视图——页工具栏 / 缩放控件 / 载荷正文（A14）。
 //!
-//! ⛔ 不读文件、不解析 PDF：页内容与总页数由运行时契约下发，
-//! 未下发时诚实显示占位文案，不伪造页内容。
+//! 解码只做结构级抽取（页数 / `/Title` / 逐页文本），⛔ 不做像素光栅化（需 pdfium/mupdf），
+//! 界面如实标注；拿不到内容时诚实显示 `NotDelivered` / `Failed`，⛔ 不伪造。
 //! 颜色一律取自 `theme`，⛔ 不硬编码。
+use crate::state::preview_payload::{
+    DecodeError, PdfPayload, PreviewPayload, MAX_BYTES, MAX_LINES,
+};
 use gpui_kit::*;
 
 /// PDF 预览面板的纯状态：渲染是它的纯函数（A14 视图层）。
@@ -198,24 +201,284 @@ fn render_page_area(path: &str, theme: &gpui_kit::component::Theme) -> AnyElemen
 }
 
 // ---------------------------------------------------------------------------
-// A14 解码入口（a14-preview-decode-deps 基建落盘；**诚实占位**）
+// A14 解码（真解码）：lopdf 结构级抽取 —— 页数 / `/Title` / 逐页文本（`Tj`/`TJ`）。
+// ⛔ 不做像素光栅化（需 pdfium/mupdf 原生库），界面如实标注「像素渲染未接入」。
 // ---------------------------------------------------------------------------
-//
-// 契约（A14 卡在此填实，⛔ 不要改签名、⛔ 不要动别的文件）：
-//   · `decode`               —— 把「待预览文件」解码成载荷。字节可由运行时下发（`bytes`）；
-//                              未下发时自行读本地文件。拿不到内容 ⇒ `NotDelivered` / `Failed`，
-//                              ⛔ 绝不伪造内容、⛔ 不吞错。
-//   · `render_with_payload`  —— 把载荷画出来。**默认退回既有占位视图**，因此外壳
-//                              （头信息 / 缩放控件 / 「未下发」提示行）行为与本次基建前一致。
 
-/// A14：解码待预览文件。当前为**诚实占位**（不读文件、不解码）。
-pub(super) fn decode(
-    _path: &str,
-    _bytes: Option<&[u8]>,
-) -> crate::state::preview_payload::PreviewPayload {
-    crate::state::preview_payload::PreviewPayload::NotDelivered {
-        reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+/// A14：解码待预览文件。`bytes = Some` ⇒ 只用传入字节（不碰文件系统，便于测试）；
+/// `None` ⇒ 读 `path`（读失败 ⇒ `Failed(Io)`）。超 [`MAX_BYTES`] 只取前 8 MiB
+/// （⛔ 不整包进内存），超 [`MAX_LINES`] 截断文本并置 `truncated`。
+/// 拿不到 ⇒ `NotDelivered` / `Failed`，⛔ 不伪造内容、⛔ 不吞错。
+pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
+    let owned;
+    let (data, oversized) = if let Some(bytes) = bytes {
+        (&bytes[..bytes.len().min(MAX_BYTES)], bytes.len() > MAX_BYTES)
+    } else {
+        match read_capped(path) {
+            Ok((buf, over)) => {
+                owned = buf;
+                (owned.as_slice(), over)
+            }
+            Err(msg) => return PreviewPayload::Failed(DecodeError::Io(msg)),
+        }
+    };
+    match decode_pdf(data, oversized) {
+        Ok(payload) => PreviewPayload::Pdf(payload),
+        Err(err) => PreviewPayload::Failed(err),
     }
+}
+
+/// 读 `path` 的前 [`MAX_BYTES`] 字节；返回（字节, 是否超上限截断）。读失败 ⇒ 错误说明。
+fn read_capped(path: &str) -> Result<(Vec<u8>, bool), String> {
+    use std::io::Read;
+    let actual = std::fs::metadata(path)
+        .and_then(|meta| std::fs::File::open(path).map(|file| (meta, file)))
+        .and_then(|(meta, file)| {
+            let mut buf = Vec::with_capacity((meta.len() as usize).min(MAX_BYTES));
+            file.take(MAX_BYTES as u64)
+                .read_to_end(&mut buf)
+                .map(|_| (buf, meta.len() as usize > MAX_BYTES))
+        })
+        .map_err(|err| err.to_string())?;
+    Ok(actual)
+}
+
+/// 结构级抽取：页数（`/Pages` 树）、`/Title`、逐页 content stream 的 `Tj`/`TJ` 文本。
+/// 能抽则抽、抽不到留空串（纯图页 / 加密流）；解析失败 ⇒ `Parse`（如实带原因）。
+fn decode_pdf(data: &[u8], oversized: bool) -> Result<PdfPayload, DecodeError> {
+    let doc = lopdf::Document::load_mem(data).map_err(|err| {
+        DecodeError::Parse(if oversized {
+            format!("字节超过上限 {MAX_BYTES} 已截断，截断后仍无法解析：{err}")
+        } else {
+            err.to_string()
+        })
+    })?;
+    let pages = doc.get_pages();
+    let mut budget = MAX_LINES;
+    let mut truncated = oversized;
+    let mut page_text = Vec::with_capacity(pages.len());
+    for &page_id in pages.values() {
+        if budget == 0 {
+            // 行预算耗尽：余下页不再抽取（如实标截断，⛔ 不装作抽完了）。
+            truncated = true;
+            page_text.push(String::new());
+            continue;
+        }
+        let mut shows = doc
+            .get_page_content(page_id)
+            .map(|content| extract_shows(&content))
+            .unwrap_or_default();
+        if shows.len() > budget {
+            shows.truncate(budget);
+            truncated = true;
+        }
+        budget -= shows.len();
+        page_text.push(shows.join("\n"));
+    }
+    Ok(PdfPayload {
+        pages: pages.len() as u32,
+        title: pdf_title(&doc),
+        page_text,
+        truncated,
+    })
+}
+
+/// 读文档 `/Title`（`/Info` 兼容引用与直挂两种挂法）；无 / 空白 ⇒ `None`。
+fn pdf_title(doc: &lopdf::Document) -> Option<String> {
+    use lopdf::Object;
+    let dict = match doc.trailer.get(b"Info").ok()? {
+        Object::Dictionary(dict) => Some(dict),
+        Object::Reference(id) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(dict)) => Some(dict),
+            _ => None,
+        },
+        _ => None,
+    }?;
+    let title = match dict.get(b"Title").ok()? {
+        Object::String(bytes, _) => decode_pdf_text(bytes),
+        _ => return None,
+    };
+    let title = title.trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
+
+/// PDF 文本字符串解码：UTF-16BE（带 BOM）按 u16 对解码；否则按 UTF-8 容错。
+fn decode_pdf_text(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let units = bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).unwrap_or_default()
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+/// 从一页 content stream 抽出文本「show」序列：只认 `Tj` / `TJ`，字符串操作数按
+/// 出现顺序拼接（尽力抽取，⛔ 不伪造 —— 非文本指令 / 跳变一律忽略）。
+fn extract_shows(content: &[u8]) -> Vec<String> {
+    let b = content;
+    let mut shows = Vec::new();
+    let mut pending: Vec<String> = Vec::new(); // 上一个操作符之前累计的字符串操作数
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'(' => {
+                let (text, next) = parse_literal_string(b, i);
+                pending.push(text);
+                i = next;
+            }
+            b'<' => {
+                if b.get(i + 1) == Some(&b'<') {
+                    i = skip_inline_dict(b, i); // 如 BDC 的属性字典：整段跳过
+                } else {
+                    let (text, next) = parse_hex_string(b, i);
+                    pending.push(text);
+                    i = next;
+                }
+            }
+            b'%' => {
+                while i < b.len() && b[i] != b'\n' && b[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'/' => {
+                while i < b.len() && !is_delim(b[i]) && !b[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+            }
+            c if c.is_ascii_whitespace() || matches!(c, b'[' | b']' | b'{' | b'}' | b')' | b'>') => {
+                i += 1;
+            }
+            _ => {
+                let start = i;
+                while i < b.len() && !is_delim(b[i]) && !b[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                match &b[start..i] {
+                    b"Tj" => {
+                        if let Some(text) = pending.pop() {
+                            shows.push(text);
+                        }
+                    }
+                    b"TJ" => {
+                        if !pending.is_empty() {
+                            shows.push(pending.concat());
+                        }
+                    }
+                    _ => {}
+                }
+                pending.clear();
+            }
+        }
+    }
+    shows
+}
+
+/// PDF 分隔符（含注释符 `%` 与名字前导 `/`）。
+fn is_delim(c: u8) -> bool {
+    matches!(
+        c,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
+}
+
+/// 解析 `(` 字面字符串：嵌套括号 + 反斜杠转义（`\n` 等 / 1~3 位八进制）；返回（文本, 结束下标）。
+fn parse_literal_string(b: &[u8], mut i: usize) -> (String, usize) {
+    i += 1;
+    let mut depth = 1usize;
+    let mut out: Vec<u8> = Vec::new();
+    while i < b.len() && depth > 0 {
+        match b[i] {
+            b'\\' => {
+                i += 1;
+                if i >= b.len() {
+                    break;
+                }
+                match b[i] {
+                    b'n' => out.push(b'\n'),
+                    b'r' => out.push(b'\r'),
+                    b't' => out.push(b'\t'),
+                    b'b' => out.push(0x08),
+                    b'f' => out.push(0x0C),
+                    b'0'..=b'7' => {
+                        let mut v = 0u32;
+                        let mut n = 0;
+                        while i < b.len() && n < 3 && (b'0'..=b'7').contains(&b[i]) {
+                            v = v * 8 + u32::from(b[i] - b'0');
+                            i += 1;
+                            n += 1;
+                        }
+                        out.push((v & 0xFF) as u8);
+                        continue;
+                    }
+                    other => out.push(other), // \( \) \\ 及其他字面
+                }
+                i += 1;
+            }
+            b'(' => {
+                depth += 1;
+                out.push(b'(');
+                i += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth > 0 {
+                    out.push(b')');
+                }
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    (decode_pdf_text(&out), i)
+}
+
+/// 解析 `<` 十六进制字符串（忽略空白，奇数位补 0）；返回（文本, 结束下标）。
+fn parse_hex_string(b: &[u8], mut i: usize) -> (String, usize) {
+    i += 1;
+    let mut nibbles: Vec<u8> = Vec::new();
+    while i < b.len() && b[i] != b'>' {
+        if let Some(v) = (b[i] as char).to_digit(16) {
+            nibbles.push(v as u8);
+        }
+        i += 1;
+    }
+    if i < b.len() {
+        i += 1; // 收掉 '>'
+    }
+    if nibbles.len() % 2 == 1 {
+        nibbles.push(0);
+    }
+    let bytes = nibbles
+        .chunks(2)
+        .map(|pair| (pair[0] << 4) | pair[1])
+        .collect::<Vec<_>>();
+    (decode_pdf_text(&bytes), i)
+}
+
+/// 跳过 `<< … >>` 内联字典（按 `<<`/`>>` 配对计数）。
+fn skip_inline_dict(b: &[u8], mut i: usize) -> usize {
+    let mut depth = 0usize;
+    while i < b.len() {
+        if b[i] == b'<' && b.get(i + 1) == Some(&b'<') {
+            depth += 1;
+            i += 2;
+        } else if b[i] == b'>' && b.get(i + 1) == Some(&b'>') {
+            depth -= 1;
+            i += 2;
+            if depth == 0 {
+                break;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    i
 }
 
 /// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
