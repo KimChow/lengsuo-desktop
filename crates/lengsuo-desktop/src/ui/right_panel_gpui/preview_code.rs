@@ -106,13 +106,16 @@ fn line_row(no: usize, text: &str, width: usize, theme: &gpui_kit::component::Th
 mod tests {
     use super::code_rows;
     use super::{
-        is_truncated, line_no_width, render_with_payload, visible_range, MAX_LINES,
+        decode, is_truncated, line_no_width, render_with_payload, visible_range, MAX_LINES,
         MONO_CONTAINER_ID,
     };
-    use crate::state::preview_payload::PreviewPayload;
+    use crate::state::preview_payload::{DecodeError, PreviewPayload, MAX_BYTES};
     use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
     use gpui_kit::component::Theme;
-    use gpui_kit::{point, px, size, AnyElement, Bounds, IntoElement as _, Pixels, TestAppContext};
+    use gpui_kit::{
+        div, point, px, size, AnyElement, AppContext as _, Bounds, IntoElement as _,
+        ParentElement as _, Pixels, TestAppContext,
+    };
 
     /// 行号列宽：最小 3 位、按位数扩展、截断后以 2000 计。
     #[test]
@@ -163,6 +166,118 @@ mod tests {
             code_rows(&lines, &Theme::default()).into_any_element()
         });
         assert_rendered(bounds, "代码预览截断态行树");
+    }
+
+    /// ① 正常字节（`bytes = Some`）：载荷字段正确（语言表含别名与未知回退）。
+    #[test]
+    fn decode_normal_bytes_fields() {
+        let PreviewPayload::Code(p) = decode("main.rs", Some(b"fn main() {}\nlet x = 1;\n")) else {
+            panic!("正常字节应解出代码载荷");
+        };
+        assert_eq!(p.language, "rust");
+        assert_eq!(p.lines, ["fn main() {}", "let x = 1;"]);
+        assert!(!p.truncated);
+        for (path, lang) in [
+            ("a.ts", "ts"),
+            ("b.TSX", "tsx"),
+            ("c.py", "py"),
+            ("d.yml", "yaml"),
+            ("e.toml", "toml"),
+            ("f.md", "md"),
+            ("g.unknown", "text"),
+            ("noext", "text"),
+        ] {
+            let PreviewPayload::Code(q) = decode(path, Some(b"x")) else {
+                panic!("{path} 应解出代码载荷");
+            };
+            assert_eq!(q.language, lang, "{path}");
+        }
+    }
+
+    /// ② 垃圾字节：fail-closed 返回 `Failed(Parse)`，⛔ 不 panic、不伪装成空内容。
+    #[test]
+    fn decode_garbage_bytes_fails_closed() {
+        match decode("x.rs", Some(&[0xff, 0xfe, 0x00, 0x41])) {
+            PreviewPayload::Failed(DecodeError::Parse(_)) => {}
+            other => panic!("垃圾字节应 fail-closed，实测 {other:?}"),
+        }
+        // 末尾不完整的多字节序列（未截断时不得静默吞掉）也判失败。
+        assert!(matches!(
+            decode("y.rs", Some(b"let s = \"\xe4\xb8")),
+            PreviewPayload::Failed(_)
+        ));
+    }
+
+    /// ③ 超上限：行数超 `MAX_LINES` / 字节超 `MAX_BYTES` ⇒ `truncated == true` 且如实截断。
+    #[test]
+    fn decode_over_limits_truncates() {
+        let over_lines = "a\n".repeat(MAX_LINES + 1);
+        let PreviewPayload::Code(p) = decode("m.rs", Some(over_lines.as_bytes())) else {
+            panic!("超行数字节应解出代码载荷");
+        };
+        assert!(p.truncated);
+        assert_eq!(p.lines.len(), MAX_LINES);
+
+        let over_bytes = vec![b'a'; MAX_BYTES + 1];
+        let PreviewPayload::Code(p) = decode("m.rs", Some(&over_bytes)) else {
+            panic!("超字节数字节应解出代码载荷");
+        };
+        assert!(p.truncated);
+        assert_eq!(p.lines.len(), 1, "无换行 ⇒ 单行");
+
+        // 字节截断劈开多字节字符：退到最长合法 UTF-8 前缀（丢被劈开的尾字符）。
+        let mut split = vec![b'a'; MAX_BYTES + 1];
+        split[MAX_BYTES - 2] = 0xe4;
+        split[MAX_BYTES - 1] = 0xb8;
+        split[MAX_BYTES] = 0x80;
+        let PreviewPayload::Code(p) = decode("m.rs", Some(&split)) else {
+            panic!("劈开多字节字符应仍解出代码载荷");
+        };
+        assert!(p.truncated);
+        assert_eq!(p.lines, ["a".repeat(MAX_BYTES - 2)]);
+    }
+
+    /// ④ 的宿主视图：代码态含滚动容器，裸元素 draw 会在 gpui `current_view` 处 panic，
+    /// 须在视图实体内绘制（同 preview_text 测试宿主的做法）。
+    struct CodeHost {
+        payload: PreviewPayload,
+    }
+
+    impl gpui_kit::Render for CodeHost {
+        fn render(
+            &mut self,
+            _window: &mut gpui_kit::Window,
+            _cx: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            div().child(render_with_payload(
+                "main.rs",
+                &self.payload,
+                &Theme::default(),
+            ))
+        }
+    }
+
+    /// ④ 三种载荷（代码 / 失败 / 未下发）画过 `render_with_payload` 不 panic 且容器可定位。
+    #[test]
+    fn render_with_payload_all_states_no_panic() {
+        for payload in [
+            decode("main.rs", Some(b"fn main() {}\nlet y = 2;\n")),
+            PreviewPayload::Failed(DecodeError::Io("nope".into())),
+            PreviewPayload::NotDelivered {
+                reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+            },
+        ] {
+            let mut ctx = TestAppContext::single();
+            ctx.update(|cx| cx.set_global(Theme::default()));
+            let visual = ctx.add_empty_window();
+            let (_layout, _prepaint) = visual.draw(
+                point(px(0.0), px(0.0)),
+                size(px(800.0), px(600.0)),
+                |_window, cx| cx.new(|_| CodeHost { payload }).into_any_element(),
+            );
+            let bounds = visual.debug_bounds(MONO_CONTAINER_ID);
+            assert_rendered(bounds, "代码预览载荷态等宽容器");
+        }
     }
 }
 
