@@ -498,10 +498,45 @@ fn pill(label: &'static str, danger: bool, theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::text;
+    use super::{
+        main_area, render, ChangeType, DiffState, Feedback, FileVersionOverlay, OverlayState,
+        VersionEntry, NOT_DELIVERED, TITLE,
+    };
     use gpui_kit::component::Theme;
+
+    /// 样例数据只供纯函数/渲染断言用；生产渲染（main_area）恒为未下发，⛔ 不伪造。
+    fn sample() -> FileVersionOverlay {
+        FileVersionOverlay {
+            state: OverlayState::Normal,
+            versions: vec![
+                VersionEntry {
+                    change_type: ChangeType::Modified,
+                    files_changed: 3,
+                    is_head: true,
+                },
+                VersionEntry {
+                    change_type: ChangeType::Created,
+                    files_changed: 12,
+                    is_head: false,
+                },
+                VersionEntry {
+                    change_type: ChangeType::Renamed,
+                    files_changed: 1,
+                    is_head: false,
+                },
+            ],
+            selected: Some(0),
+            diff: DiffState::Binary,
+            pending_reset: Some(1),
+            failure_message: None,
+            feedback: Feedback::ResetDone,
+        }
+    }
+
     #[test]
     fn title_is_taken_verbatim_and_not_blank() {
+        assert_eq!(TITLE, "文件版本管理");
         assert!(!TITLE.is_empty());
     }
     #[test]
@@ -512,5 +547,112 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+    /// ① 纯函数层状态/计数正确。
+    #[test]
+    fn state_machine_and_counts_are_correct() {
+        let overlay = sample();
+        assert_eq!(overlay.state, OverlayState::Normal);
+        assert_eq!(overlay.versions.len(), 3);
+        assert!(!overlay.is_empty());
+        assert_eq!(
+            overlay.selected_entry().map(|entry| entry.files_changed),
+            Some(3)
+        );
+        assert_eq!(overlay.pending_reset, Some(1));
+        assert_eq!(overlay.feedback, Feedback::ResetDone);
+    }
+    /// ② 空输入 ⇒ 空态文案；未下发 ≠ 空态（三态契约）。
+    #[test]
+    fn empty_input_yields_empty_state_not_blank_list() {
+        let empty = FileVersionOverlay {
+            state: OverlayState::Normal,
+            ..FileVersionOverlay::loading()
+        };
+        assert!(empty.is_empty());
+        assert_eq!(empty.diff_note(), "选择左侧任一版本以查看文件明细");
+        assert_eq!(text::EMPTY, "暂无版本记录");
+        let not_delivered = FileVersionOverlay::not_delivered();
+        assert_eq!(not_delivered.state, OverlayState::NotDelivered);
+        assert!(!not_delivered.is_empty());
+    }
+    /// ③ 文案逐字一致（模板 + 变更类型 + 徽标 + 长句抽样）。
+    #[test]
+    fn copy_is_verbatim_from_namespace() {
+        assert_eq!(text::files_changed(3), "3 个文件变更");
+        assert_eq!(text::files_changed(0), "0 个文件变更");
+        assert_eq!(text::op_failed("boom"), "操作失败：boom");
+        assert_eq!(text::oversize("9 MB"), "文件过大（9 MB），不展示 diff");
+        assert_eq!(ChangeType::Created.label(), "新建");
+        assert_eq!(ChangeType::Deleted.label(), "删除");
+        assert_eq!(ChangeType::Modified.label(), "修改");
+        assert_eq!(ChangeType::Renamed.label(), "重命名");
+        assert_eq!(text::HEAD_BADGE, "当前版本");
+        assert_eq!(text::DETAIL_EMPTY, "选择左侧任一版本以查看文件明细");
+        assert_eq!(text::DIFF_LOADING, "加载 diff...");
+        assert_eq!(
+            text::BINARY_NOT_SUPPORTED,
+            "此文件为二进制，不支持 diff 查看"
+        );
+        assert_eq!(text::VERSION_MISSING, "原始版本已被回收，无法查看 diff");
+        assert_eq!(
+            text::RESET_CONFIRM_BODY,
+            "将丢弃该 commit 之后的全部变更，且不可恢复。"
+        );
+        assert_eq!(
+            text::REVERT_TIP,
+            "把当前文件状态恢复到这个版本，保留此版本之后的所有提交记录（可再次回滚）。"
+        );
+    }
+    #[test]
+    fn failure_label_falls_back_to_unknown_error() {
+        assert_eq!(
+            FileVersionOverlay::failed(None).failure_label(),
+            "操作失败：未知错误"
+        );
+        assert_eq!(
+            FileVersionOverlay::failed(Some("x")).failure_label(),
+            "操作失败：x"
+        );
+    }
+    #[test]
+    fn diff_and_feedback_notes_cover_all_states() {
+        let mut overlay = sample();
+        assert_eq!(overlay.diff_note(), "此文件为二进制，不支持 diff 查看");
+        overlay.diff = DiffState::Oversize("9 MB".to_owned());
+        assert_eq!(overlay.diff_note(), "文件过大（9 MB），不展示 diff");
+        overlay.diff = DiffState::Loading;
+        assert_eq!(overlay.diff_note(), "加载 diff...");
+        assert_eq!(Feedback::RevertDone.label(), Some("回滚成功"));
+        assert_eq!(Feedback::ResetDone.label(), Some("已重置到所选版本"));
+        assert_eq!(Feedback::None.label(), None);
+    }
+    /// ④ render 覆盖全部状态与分支，不 panic。
+    #[test]
+    fn render_all_states_and_branches_without_panic() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+        let _ = render(&FileVersionOverlay::not_delivered(), &theme);
+        let _ = render(&FileVersionOverlay::loading(), &theme);
+        let _ = render(&FileVersionOverlay::failed(None), &theme);
+        let empty = FileVersionOverlay {
+            state: OverlayState::Normal,
+            ..FileVersionOverlay::loading()
+        };
+        let _ = render(&empty, &theme);
+        let _ = render(&sample(), &theme);
+        for diff in [
+            DiffState::NotSelected,
+            DiffState::Loading,
+            DiffState::VersionMissing,
+            DiffState::Oversize("9 MB".to_owned()),
+        ] {
+            let mut overlay = sample();
+            overlay.diff = diff;
+            let _ = render(&overlay, &theme);
+        }
+        let mut unselected = sample();
+        unselected.selected = None;
+        let _ = render(&unselected, &theme);
     }
 }
