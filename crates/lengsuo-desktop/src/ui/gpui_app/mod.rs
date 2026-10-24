@@ -94,3 +94,4 @@ pub(crate) use shell::AppShell;
 
 /// 打开设置窗口的命令 id（命令表 `theme::palette` 里的 `app.settings`）。
 const SETTINGS_COMMAND_ID: &str = "app.settings";
+pub mod title_bar;

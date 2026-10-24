@@ -13,7 +13,9 @@ use crate::ui::sidebar::nav::NavKind;
 /// 主区当前显示的视图。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainView {
-    /// 会话流（默认；还没选任何导航入口时）。
+    /// 首页（默认；照参照：大标题 + 场景徽章 + 推荐问句）。
+    Home,
+    /// 会话流（还没选任何导航入口时）。
     Sessions,
     /// 频道视图（点侧栏「频道」入口）。
     Channels,

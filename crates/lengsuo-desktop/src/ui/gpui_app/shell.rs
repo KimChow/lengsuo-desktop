@@ -275,7 +275,7 @@ impl AppShell {
             _nav_sync,
             _terminal_sync,
             pending_seq: None,
-            main_view: main_view::MainView::Sessions,
+            main_view: main_view::MainView::Home,
             registry,
             focus: cx.focus_handle(),
             // 刚落盘过（或刚水合过）的那份偏好：版式没变就不重复写文件。

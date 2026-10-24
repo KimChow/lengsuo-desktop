@@ -36,6 +36,11 @@ pub(super) fn render_main_area(
     theme: &Theme,
 ) -> impl IntoElement {
     match view {
+        MainView::Home => panel_views::home::main_area(
+            theme,
+            panel_views::home::Scene::Working,
+            None, // 任务/推荐数据未下发（fail-closed），等 C1~C10 换源
+        ),
         MainView::Sessions => div()
             .flex_1()
             .min_w(px(STREAM_MIN_WIDTH))

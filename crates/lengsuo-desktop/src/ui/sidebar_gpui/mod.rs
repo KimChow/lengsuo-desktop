@@ -341,3 +341,4 @@ impl Render for SidebarViewGpui {
             .child(render::render_archived_toggle(&view, &entity, theme))
     }
 }
+pub mod bottom_cards;

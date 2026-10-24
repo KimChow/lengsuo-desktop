@@ -22,6 +22,7 @@ pub mod colleagues;
 pub mod connectors;
 pub mod discover;
 pub mod expert_center;
+pub mod home;
 pub mod knowledge_base;
 pub mod message_center;
 pub mod my_files;
