@@ -1,6 +1,6 @@
 //! 闲置能力提示浮层（波次 6，卡 `ui-overlay-idle-capability`）。
 //!
-//! 分层约定（同 `panel_views`）：纯数据层（状态机 + 逐字文案 + 计数模板）+ GPUI 层（[`main_area`]）。
+//! 分层约定（同 `panel_views`）：纯数据层（状态机 + 逐字文案 + 计数模板）+ GPUI 层（[`overlay_area`]）。
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `idleCapability`。
 //! 数据源在运行时侧：[`main_area`] 以「未下发」诚实占位，跨线契约就绪后改喂 [`overlay_area`]。
 #![cfg(feature = "ui")]
@@ -11,89 +11,52 @@ use gpui_kit::component::Theme;
 use gpui_kit::*;
 
 // ===== 纯数据层（无 GPUI 依赖） =====
+// 逐字文案常量：取自界面文案全表命名空间 idleCapability，行尾注释为键名。
 
-/// 卡片可访问名（ariaLabel）。
-pub const ARIA_LABEL: &str = "闲置能力提示卡片";
-/// 关闭按钮可访问名（closeAriaLabel）。
-pub const CLOSE_ARIA_LABEL: &str = "关闭";
-/// 数据未下发时的说明（fail-closed；⛔ 不得替换为空清单）。
+/// 数据未下发时的说明（fail-closed 约定；⛔ 不得替换为空清单）。
 pub const NOT_DELIVERED: &str = "未下发";
-/// 标题模板（title）。
-pub const TITLE_TEMPLATE: &str = "{count} 项能力超过 {days} 天未使用，建议关闭";
-/// 副标题（subtitle）。
+pub const ARIA_LABEL: &str = "闲置能力提示卡片"; // ariaLabel
+pub const CLOSE_ARIA_LABEL: &str = "关闭"; // closeAriaLabel
+pub const TITLE_TEMPLATE: &str = "{count} 项能力超过 {days} 天未使用，建议关闭"; // title
 pub const SUBTITLE: &str =
-    "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在「管理页」重新开启。";
-/// 副标题前段（subtitlePrefix，尾随空格逐字保留）。
-pub const SUBTITLE_PREFIX: &str = "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在 ";
-/// 管理页链接文案（manageLink）。
-pub const MANAGE_LINK: &str = "管理页";
-/// 副标题后段（subtitleSuffix，前导空格逐字保留）。
-pub const SUBTITLE_SUFFIX: &str = " 重新开启。";
-/// 详情补充说明（subtitleDetail）。
-pub const SUBTITLE_DETAIL: &str = "禁用后可在相应的设置页面随时重新启用";
-/// 全选（selectAll）。
-pub const SELECT_ALL: &str = "全选";
-/// 取消选择（deselectAll）。
-pub const DESELECT_ALL: &str = "取消选择";
-/// 选中计数模板（selectedCount）。
-pub const SELECTED_COUNT_TEMPLATE: &str = "已选中 {count} 个";
-/// 一键关闭（disableAll）。
-pub const DISABLE_ALL: &str = "一键关闭";
-/// 关闭进行中（disabling）。
-pub const DISABLING: &str = "正在关闭…";
-/// 单条关闭（disable）。
-pub const DISABLE: &str = "关闭";
-/// 查看详情（viewDetail）。
-pub const VIEW_DETAIL: &str = "查看详情";
-/// 收起详情（collapseDetail）。
-pub const COLLAPSE_DETAIL: &str = "收起详情";
-/// 不再提醒（neverRemind）。
-pub const NEVER_REMIND: &str = "不再提醒";
-/// 清单列：类型和名称（columnTypeAndName）。
-pub const COLUMN_TYPE_AND_NAME: &str = "类型和名称";
-/// 清单列：上次使用时间（columnLastUsed）。
-pub const COLUMN_LAST_USED: &str = "上次使用时间";
-/// 从未使用（neverUsed）。
-pub const NEVER_USED: &str = "从未使用";
-/// 上次使用模板（lastUsed）。
-pub const LAST_USED_TEMPLATE: &str = "上次使用：{date}";
-/// 已关闭 toast 前段（closedToastPrefix，尾随空格逐字保留）。
-pub const CLOSED_TOAST_PREFIX: &str = "已关闭 {count} 项能力，可随时在 ";
-/// 已关闭 toast 后段（closedToastSuffix，前导空格逐字保留）。
-pub const CLOSED_TOAST_SUFFIX: &str = " 重新开启";
-/// 已关闭 toast 整句（disabledToast）。
-pub const DISABLED_TOAST: &str = "已关闭 {count} 项能力，可随时在 管理页 重新开启";
-/// 类型徽标（typeLabel.connector）。
-pub const TYPE_CONNECTOR: &str = "Connect";
-/// 类型徽标（typeLabel.mcp）。
-pub const TYPE_MCP: &str = "MCP";
-/// 类型徽标（typeLabel.skill）。
-pub const TYPE_SKILL: &str = "Skill";
-/// 类型徽标（typeLabel.subagent）。
-pub const TYPE_SUBAGENT: &str = "Agent";
-/// 类型徽标（typeLabel.mixed）。
-pub const TYPE_MIXED: &str = "能力";
-/// 相对时间：今天（relative.today）。
-pub const RELATIVE_TODAY: &str = "今天";
-/// 相对时间模板（relative.daysAgo）。
-pub const RELATIVE_DAYS_AGO: &str = "{n} 天前";
-/// 相对时间模板（relative.monthsAgo）。
-pub const RELATIVE_MONTHS_AGO: &str = "{n} 个月前";
-/// 相对时间模板（relative.yearsAgo）。
-pub const RELATIVE_YEARS_AGO: &str = "{n} 年前";
+    "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在「管理页」重新开启。"; // subtitle
+pub const SUBTITLE_PREFIX: &str = "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在 "; // subtitlePrefix
+pub const MANAGE_LINK: &str = "管理页"; // manageLink
+pub const SUBTITLE_SUFFIX: &str = " 重新开启。"; // subtitleSuffix
+pub const SUBTITLE_DETAIL: &str = "禁用后可在相应的设置页面随时重新启用"; // subtitleDetail
+pub const SELECT_ALL: &str = "全选"; // selectAll
+pub const DESELECT_ALL: &str = "取消选择"; // deselectAll
+pub const SELECTED_COUNT_TEMPLATE: &str = "已选中 {count} 个"; // selectedCount
+pub const DISABLE_ALL: &str = "一键关闭"; // disableAll
+pub const DISABLING: &str = "正在关闭…"; // disabling
+pub const DISABLE: &str = "关闭"; // disable
+pub const VIEW_DETAIL: &str = "查看详情"; // viewDetail
+pub const COLLAPSE_DETAIL: &str = "收起详情"; // collapseDetail
+pub const NEVER_REMIND: &str = "不再提醒"; // neverRemind
+pub const COLUMN_TYPE_AND_NAME: &str = "类型和名称"; // columnTypeAndName
+pub const COLUMN_LAST_USED: &str = "上次使用时间"; // columnLastUsed
+pub const NEVER_USED: &str = "从未使用"; // neverUsed
+pub const LAST_USED_TEMPLATE: &str = "上次使用：{date}"; // lastUsed
+pub const CLOSED_TOAST_PREFIX: &str = "已关闭 {count} 项能力，可随时在 "; // closedToastPrefix
+pub const CLOSED_TOAST_SUFFIX: &str = " 重新开启"; // closedToastSuffix
+pub const DISABLED_TOAST: &str = "已关闭 {count} 项能力，可随时在 管理页 重新开启"; // disabledToast
+pub const TYPE_CONNECTOR: &str = "Connect"; // typeLabel.connector
+pub const TYPE_MCP: &str = "MCP"; // typeLabel.mcp
+pub const TYPE_SKILL: &str = "Skill"; // typeLabel.skill
+pub const TYPE_SUBAGENT: &str = "Agent"; // typeLabel.subagent
+pub const TYPE_MIXED: &str = "能力"; // typeLabel.mixed
+pub const RELATIVE_TODAY: &str = "今天"; // relative.today
+pub const RELATIVE_DAYS_AGO: &str = "{n} 天前"; // relative.daysAgo
+pub const RELATIVE_MONTHS_AGO: &str = "{n} 个月前"; // relative.monthsAgo
+pub const RELATIVE_YEARS_AGO: &str = "{n} 年前"; // relative.yearsAgo
 
 /// 能力类型；徽标文案逐字取自 `typeLabel.*`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CapabilityKind {
-    /// 连接器。
     Connector,
-    /// MCP。
     Mcp,
-    /// 技能。
     Skill,
-    /// 子代理。
     Subagent,
-    /// 混合能力。
     Mixed,
 }
 
@@ -114,10 +77,8 @@ impl CapabilityKind {
 /// 上次使用情况（`neverUsed` / `lastUsed` + `relative.*`）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LastUsed {
-    /// 从未使用。
-    Never,
-    /// 已闲置天数。
-    Days(u32),
+    Never,     // 从未使用
+    Days(u32), // 已闲置天数
 }
 
 impl LastUsed {
@@ -134,12 +95,9 @@ impl LastUsed {
 /// 单条闲置能力（由数据源下发；本模块 ⛔ 不伪造）。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct IdleItem {
-    /// 类型（徽标）。
-    pub kind: CapabilityKind,
-    /// 名称。
-    pub name: String,
-    /// 上次使用。
-    pub last_used: LastUsed,
+    pub kind: CapabilityKind, // 类型（徽标）
+    pub name: String,         // 名称
+    pub last_used: LastUsed,  // 上次使用
 }
 
 /// 浮层阶段。
@@ -154,20 +112,13 @@ pub enum Phase {
 /// 闲置能力提示卡片状态机（纯数据层）。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct IdleCapabilityCard {
-    /// 阶段。
-    pub phase: Phase,
-    /// 超期阈值（天），标题模板的 `{days}`。
-    pub threshold_days: u32,
-    /// 闲置条目。
-    pub items: Vec<IdleItem>,
-    /// 选中索引集。
-    selected: BTreeSet<usize>,
-    /// 详情展开位（查看详情 / 收起详情）。
-    pub detail_expanded: bool,
-    /// 一键关闭进行中（按钮文案切换「正在关闭…」）。
-    pub disabling: bool,
-    /// 已关闭条数（`Some` ⇒ 渲染已关闭 toast）。
-    pub closed_count: Option<usize>,
+    pub phase: Phase,                // 阶段
+    pub threshold_days: u32,         // 超期阈值（天），标题模板的 {days}
+    pub items: Vec<IdleItem>,        // 闲置条目
+    selected: BTreeSet<usize>,       // 选中索引集
+    pub detail_expanded: bool,       // 详情展开位（查看详情 / 收起详情）
+    pub disabling: bool,             // 一键关闭进行中（按钮文案切换「正在关闭…」）
+    pub closed_count: Option<usize>, // 已关闭条数（Some ⇒ 渲染已关闭 toast）
 }
 
 impl IdleCapabilityCard {
@@ -311,6 +262,42 @@ pub fn relative_text(days: u32) -> String {
 
 // ===== GPUI 层 =====
 
+/// sm 级弱化文本单元。
+fn muted_text(theme: &Theme, text: &str) -> Div {
+    div()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text.to_owned())
+}
+/// sm 级强调文本单元。
+fn accent_text(theme: &Theme, text: &str) -> Div {
+    div()
+        .text_sm()
+        .text_color(theme.accent)
+        .child(text.to_owned())
+}
+/// sm 级前景文本单元。
+fn plain_text(theme: &Theme, text: &str) -> Div {
+    div()
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(text.to_owned())
+}
+/// xs 级弱化文本单元。
+fn muted_text_xs(theme: &Theme, text: &str) -> Div {
+    div()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(text.to_owned())
+}
+/// xs 级强调文本单元。
+fn accent_text_xs(theme: &Theme, text: &str) -> Div {
+    div()
+        .text_xs()
+        .text_color(theme.accent)
+        .child(text.to_owned())
+}
+
 /// 浮层渲染入口：无数据源时的诚实占位（「未下发」，fail-closed）。
 ///
 /// 波次 6：浮层不占主区，返回整层容器由调用方叠加。
@@ -365,20 +352,9 @@ fn header_row(theme: &Theme, title: &str) -> Div {
         .items_center()
         .px_4()
         .py_2()
-        .child(
-            div()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(title.to_owned()),
-        )
+        .child(plain_text(theme, title).font_bold())
         .child(div().flex_1())
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(CLOSE_ARIA_LABEL),
-        )
+        .child(muted_text(theme, CLOSE_ARIA_LABEL))
 }
 
 /// 副标题行：subtitlePrefix + 管理页（强调）+ subtitleSuffix。
@@ -387,19 +363,9 @@ fn subtitle_row(theme: &Theme) -> Div {
         .flex()
         .items_center()
         .px_4()
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(SUBTITLE_PREFIX),
-        )
-        .child(div().text_xs().text_color(theme.accent).child(MANAGE_LINK))
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(SUBTITLE_SUFFIX),
-        )
+        .child(muted_text_xs(theme, SUBTITLE_PREFIX))
+        .child(accent_text_xs(theme, MANAGE_LINK))
+        .child(muted_text_xs(theme, SUBTITLE_SUFFIX))
 }
 
 /// 居中说明（未下发 / 空态）。
@@ -409,38 +375,28 @@ fn centered(theme: &Theme, text: &str) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .text_sm()
-        .text_color(theme.muted_foreground)
-        .child(text.to_owned())
+        .child(muted_text(theme, text))
 }
 
 /// 操作条：全选 / 取消选择 / 已选中计数 / 一键关闭（正在关闭…）。
 fn action_bar(theme: &Theme, card: &IdleCapabilityCard) -> Div {
+    let label = card.disable_all_label();
+    let disable = if card.disabling {
+        muted_text(theme, label)
+    } else {
+        accent_text(theme, label)
+    };
     div()
         .flex()
         .items_center()
         .gap_2()
         .px_4()
         .py_2()
-        .child(div().text_sm().text_color(theme.accent).child(SELECT_ALL))
-        .child(div().text_sm().text_color(theme.accent).child(DESELECT_ALL))
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(card.selected_count_text()),
-        )
+        .child(accent_text(theme, SELECT_ALL))
+        .child(accent_text(theme, DESELECT_ALL))
+        .child(muted_text(theme, &card.selected_count_text()))
         .child(div().flex_1())
-        .child(
-            div()
-                .text_sm()
-                .text_color(if card.disabling {
-                    theme.muted_foreground
-                } else {
-                    theme.accent
-                })
-                .child(card.disable_all_label()),
-        )
+        .child(disable)
 }
 
 /// 清单表头：类型和名称 | 上次使用时间。
@@ -450,25 +406,19 @@ fn list_header(theme: &Theme) -> Div {
         .items_center()
         .px_4()
         .py_1()
-        .child(
-            div()
-                .flex_1()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(COLUMN_TYPE_AND_NAME),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(COLUMN_LAST_USED),
-        )
+        .child(muted_text_xs(theme, COLUMN_TYPE_AND_NAME).flex_1())
+        .child(muted_text_xs(theme, COLUMN_LAST_USED))
 }
 
 /// 清单行：徽标 + 名称 | 上次使用 | 单条关闭。
 fn list_rows(theme: &Theme, card: &IdleCapabilityCard) -> Div {
     let mut rows = div().flex().flex_col();
     for item in &card.items {
+        let badge = accent_text_xs(theme, item.kind.badge())
+            .border_1()
+            .border_color(theme.border)
+            .rounded_sm()
+            .px_2();
         rows = rows.child(
             div()
                 .flex()
@@ -476,35 +426,10 @@ fn list_rows(theme: &Theme, card: &IdleCapabilityCard) -> Div {
                 .gap_2()
                 .px_4()
                 .py_1()
-                .child(
-                    div()
-                        .px_2()
-                        .text_xs()
-                        .text_color(theme.accent)
-                        .border_1()
-                        .border_color(theme.border)
-                        .rounded_sm()
-                        .child(item.kind.badge()),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(item.name.clone()),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(item.last_used.column_text()),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(DISABLE),
-                ),
+                .child(badge)
+                .child(plain_text(theme, &item.name).flex_1())
+                .child(muted_text(theme, &item.last_used.column_text()))
+                .child(muted_text(theme, DISABLE)),
         );
     }
     rows
@@ -512,39 +437,23 @@ fn list_rows(theme: &Theme, card: &IdleCapabilityCard) -> Div {
 
 /// 脚注：查看详情/收起详情 + 不再提醒；展开时附详情说明（subtitleDetail）。
 fn footer_rows(theme: &Theme, card: &IdleCapabilityCard) -> Div {
+    let detail_label = if card.detail_expanded {
+        COLLAPSE_DETAIL
+    } else {
+        VIEW_DETAIL
+    };
     let mut column = div().flex().flex_col().child(
         div()
             .flex()
             .items_center()
             .px_4()
             .py_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.accent)
-                    .child(if card.detail_expanded {
-                        COLLAPSE_DETAIL
-                    } else {
-                        VIEW_DETAIL
-                    }),
-            )
+            .child(accent_text(theme, detail_label))
             .child(div().flex_1())
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child(NEVER_REMIND),
-            ),
+            .child(muted_text(theme, NEVER_REMIND)),
     );
     if card.detail_expanded {
-        column = column.child(
-            div()
-                .px_4()
-                .pb_2()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(SUBTITLE_DETAIL),
-        );
+        column = column.child(muted_text_xs(theme, SUBTITLE_DETAIL).px_4().pb_2());
     }
     column
 }
@@ -560,19 +469,9 @@ fn toast_row(theme: &Theme, count: usize) -> Div {
         .border_1()
         .border_color(theme.border)
         .rounded_sm()
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.foreground)
-                .child(fill_count(CLOSED_TOAST_PREFIX, count)),
-        )
-        .child(div().text_sm().text_color(theme.accent).child(MANAGE_LINK))
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.foreground)
-                .child(CLOSED_TOAST_SUFFIX),
-        )
+        .child(plain_text(theme, &fill_count(CLOSED_TOAST_PREFIX, count)))
+        .child(accent_text(theme, MANAGE_LINK))
+        .child(plain_text(theme, CLOSED_TOAST_SUFFIX))
 }
 #[cfg(test)]
 mod tests {
@@ -605,25 +504,30 @@ mod tests {
 
     #[test]
     fn copy_is_verbatim_from_idle_capability_namespace() {
-        assert_eq!(ARIA_LABEL, "闲置能力提示卡片");
-        assert_eq!(CLOSE_ARIA_LABEL, "关闭");
-        assert_eq!(
-            TITLE_TEMPLATE,
-            "{count} 项能力超过 {days} 天未使用，建议关闭"
-        );
-        assert_eq!(
-            SUBTITLE,
-            "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在「管理页」重新开启。"
-        );
-        assert_eq!(
-            SUBTITLE_PREFIX,
-            "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在 "
-        );
-        assert_eq!(MANAGE_LINK, "管理页");
-        assert_eq!(SUBTITLE_SUFFIX, " 重新开启。");
-        assert_eq!(CLOSED_TOAST_PREFIX, "已关闭 {count} 项能力，可随时在 ");
-        assert_eq!(CLOSED_TOAST_SUFFIX, " 重新开启");
-        assert_eq!(NOT_DELIVERED, "未下发");
+        let verbatim = [
+            (ARIA_LABEL, "闲置能力提示卡片"),
+            (CLOSE_ARIA_LABEL, "关闭"),
+            (
+                TITLE_TEMPLATE,
+                "{count} 项能力超过 {days} 天未使用，建议关闭",
+            ),
+            (
+                SUBTITLE,
+                "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在「管理页」重新开启。",
+            ),
+            (
+                SUBTITLE_PREFIX,
+                "已启用能力的说明会发给模型并占用上下文，关闭可省积分，随时在 ",
+            ),
+            (SUBTITLE_SUFFIX, " 重新开启。"),
+            (MANAGE_LINK, "管理页"),
+            (CLOSED_TOAST_PREFIX, "已关闭 {count} 项能力，可随时在 "),
+            (CLOSED_TOAST_SUFFIX, " 重新开启"),
+            (NOT_DELIVERED, "未下发"),
+        ];
+        for (actual, expected) in verbatim {
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
