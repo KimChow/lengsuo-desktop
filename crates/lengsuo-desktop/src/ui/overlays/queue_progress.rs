@@ -121,7 +121,10 @@ pub const EMPTY_HINT: &str = "准备中";
 /// 按下发 key 查进度文案；查不到返回 `None`（fail-closed，不猜词）。
 #[must_use]
 pub fn phase_label(key: &str) -> Option<&'static str> {
-    PHASES.iter().find(|phase| phase.key == key).map(|phase| phase.label)
+    PHASES
+        .iter()
+        .find(|phase| phase.key == key)
+        .map(|phase| phase.label)
 }
 
 /// 浮层快照：状态 + 已下发的进度 key 清单。
@@ -137,7 +140,10 @@ impl QueueProgress {
         if self.state != OverlayState::Normal {
             return Vec::new();
         }
-        self.items.iter().filter_map(|key| phase_label(key)).collect()
+        self.items
+            .iter()
+            .filter_map(|key| phase_label(key))
+            .collect()
     }
 
     /// 状态提示行文案：空态/加载走「准备中」，未下发/失败走「未下发」。
@@ -256,16 +262,115 @@ fn progress_area(overlay: &QueueProgress, theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        delivered, main_area, not_delivered, phase_label, OverlayState, QueueProgress,
+        BANNER_TIERS, EMPTY_HINT, NOT_DELIVERED, PHASES, TITLE,
+    };
     use gpui_kit::component::Theme;
+
+    #[test]
+    fn copy_is_verbatim_from_the_two_namespaces() {
+        assert_eq!(phase_label("progress.compacting"), Some("压缩上下文中"));
+        assert_eq!(
+            phase_label("progress.phase.finalization_file_projection_sync_notify"),
+            Some("正在同步文件，请勿中断以免丢失数据")
+        );
+        assert_eq!(
+            phase_label("progress.phase.model_streaming"),
+            Some("生成回复中")
+        );
+        assert_eq!(
+            phase_label("queueBanner.upgrade.toPro"),
+            None,
+            "progress 目录不收 queueBanner 键"
+        );
+        assert_eq!(phase_label("progress.phase.unknown"), None, "查不到不猜词");
+    }
+
+    #[test]
+    fn banner_tiers_are_three_verbatim_upgrade_tiers() {
+        assert_eq!(BANNER_TIERS.len(), 3);
+        assert_eq!(BANNER_TIERS[0].key, "queueBanner.upgrade.toPro");
+        assert_eq!(BANNER_TIERS[0].label, "升级标准版");
+        assert_eq!(BANNER_TIERS[1].label, "升级高级版");
+        assert_eq!(BANNER_TIERS[2].label, "升级旗舰版");
+    }
+
+    #[test]
+    fn not_delivered_default_is_fail_closed() {
+        let overlay = not_delivered();
+        assert_eq!(overlay.state, OverlayState::NotDelivered);
+        assert!(overlay.visible_labels().is_empty());
+        assert_eq!(overlay.hint(), NOT_DELIVERED);
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    #[test]
+    fn empty_input_yields_empty_state_not_blank_list() {
+        let overlay = delivered(&[]);
+        assert_eq!(overlay.state, OverlayState::Normal);
+        assert!(overlay.visible_labels().is_empty());
+        assert_eq!(overlay.hint(), EMPTY_HINT, "空态必须渲染提示行，不是空列表");
+        assert_eq!(EMPTY_HINT, "准备中");
+    }
+
+    #[test]
+    fn delivered_normal_resolves_labels_verbatim_and_drops_unknown() {
+        let overlay = delivered(&[
+            "progress.phase.preparing",
+            "progress.phase.model_streaming.AskUserQuestion",
+            "progress.phase.model_done",
+            "progress.phase.not_in_catalog",
+        ]);
+        assert_eq!(
+            overlay.visible_labels(),
+            vec!["准备中", "正在准备提问", "处理结果中"]
+        );
+    }
+
+    #[test]
+    fn non_normal_states_render_no_items() {
+        for state in [
+            OverlayState::Loading,
+            OverlayState::Failed,
+            OverlayState::NotDelivered,
+        ] {
+            let overlay = QueueProgress {
+                state,
+                items: vec!["progress.compacting"],
+            };
+            assert!(
+                overlay.visible_labels().is_empty(),
+                "非 Normal 态不得透出条目"
+            );
+        }
+        let loading = QueueProgress {
+            state: OverlayState::Loading,
+            items: Vec::new(),
+        };
+        assert_eq!(loading.hint(), EMPTY_HINT);
+        let failed = QueueProgress {
+            state: OverlayState::Failed,
+            items: Vec::new(),
+        };
+        assert_eq!(failed.hint(), NOT_DELIVERED);
+    }
+
+    #[test]
+    fn empty_hint_is_verbatim_preparing_phase() {
+        assert_eq!(EMPTY_HINT, phase_label("progress.phase.preparing").unwrap());
+        assert!(
+            PHASES.iter().all(|phase| !phase.key.contains("upgrade")),
+            "横幅键不得混入进度目录"
+        );
+    }
+
     #[test]
     fn title_is_taken_verbatim_and_not_blank() {
         assert!(!TITLE.is_empty());
+        assert_eq!(TITLE, "队列与进度");
     }
-    #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
-        assert_eq!(NOT_DELIVERED, "未下发");
-    }
+
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
