@@ -425,8 +425,25 @@ mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
     use super::{
-        body_label, resolve, text, ActionText, ActivityEntry, Feed, State, NOT_DELIVERED, TEXTS,
+        body_label, main_area, resolve, text, ActionText, ActivityEntry, Feed, State,
+        NOT_DELIVERED, TEXTS,
     };
+
+    #[test]
+    fn main_area_smoke() {
+        // 只构造元素树，不 panic；fail-closed 默认走「未下发」。
+        let theme = gpui_kit::component::Theme::default();
+        let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn empty_input_is_empty_state_not_undelivered() {
+        // 空输入 ⇒ 空态文案；既不是空列表静默，也不是「未下发」。
+        let feed = Feed::ready(vec![]);
+        assert_eq!(feed.state, State::Ready);
+        assert_eq!(body_label(&feed), Some("暂无与我有关的动态"));
+        assert_ne!(body_label(&feed), Some(NOT_DELIVERED));
+    }
 
     #[test]
     fn resolve_and_default() {
