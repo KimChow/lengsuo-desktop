@@ -223,6 +223,7 @@ fn collect_hddid() -> String {
 /// 读它的 `device/serial`，`trim()` 后非空者入候选；候选**按字节序升序排序**
 /// 后取第一个。
 /// ⇒ 多盘机器上两侧若不照抄，会选到不同的盘 ⇒ 又一处跨机对不上。
+#[cfg(not(windows))]
 fn select_sys_block_serial() -> String {
     let mut candidates: Vec<String> = Vec::new();
     let Ok(entries) = std::fs::read_dir("/sys/block") else {
