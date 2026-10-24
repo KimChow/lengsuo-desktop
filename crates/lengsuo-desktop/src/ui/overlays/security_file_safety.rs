@@ -244,17 +244,117 @@ pub fn main_area(theme: &Theme) -> AnyElement {
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{resolve, state_label, Source, State, TITLE};
+    use super::{
+        entries, family_of, groups, main_area, resolve, state_label, Source, State, TEXTS,
+        EMPTY_HINT, NS_KEY_COUNT, NS_PREFIX, NOT_DELIVERED, TITLE,
+    };
+    use gpui_kit::component::Theme;
+    use std::collections::HashSet;
 
     #[test]
     fn title_is_verbatim() {
         assert_eq!(TITLE, "文件安全审计");
+        assert_eq!(NOT_DELIVERED, "未下发");
     }
 
+    /// ① 纯数据层计数正确：68 键、唯一、全在命名空间内、模板非空。
     #[test]
-    fn fail_closed_default() {
+    fn catalog_counts_hold() {
+        assert_eq!(TEXTS.len(), NS_KEY_COUNT);
+        assert_eq!(TEXTS.len(), 68);
+        assert_eq!(entries().len(), NS_KEY_COUNT);
+        let keys: Vec<&str> = TEXTS.iter().map(|(k, _)| *k).collect();
+        let unique: HashSet<&str> = keys.iter().copied().collect();
+        assert_eq!(keys.len(), unique.len(), "键必须唯一");
+        assert!(keys.iter().all(|k| k.starts_with(NS_PREFIX)));
+        assert!(TEXTS.iter().all(|(_, t)| !t.is_empty()));
+    }
+
+    /// ① 分组正确：11 家族各一组、表序、`*WithRule` 归家族。
+    #[test]
+    fn groups_are_wellformed() {
+        let gs = groups();
+        assert_eq!(gs.len(), 11);
+        let families: Vec<&str> = gs.iter().map(|g| g.family).collect();
+        let unique: HashSet<&str> = families.iter().copied().collect();
+        assert_eq!(families.len(), unique.len(), "每家族恰一组");
+        assert_eq!(gs.first().map(|g| g.family), Some("allowListed"));
+        assert_eq!(gs.last().map(|g| g.family), Some("sessionCacheHit"));
+        assert_eq!(family_of("securityCenter.audit.fileSafety.approvedWithRule"), "approved");
+        assert_eq!(family_of("securityCenter.audit.fileSafety.bulkDelete.rejected"), "bulkDelete");
+        assert_eq!(family_of("securityCenter.audit.fileSafety.fallback"), "fallback");
+        assert_eq!(family_of("whatever.else"), "fallback");
+        let total: usize = gs.iter().map(|g| g.entries.len()).sum();
+        assert_eq!(total, NS_KEY_COUNT);
+    }
+
+    /// ③ 文案逐字一致（抽 5 键断言，覆盖 4 类占位符组合）。
+    #[test]
+    fn texts_are_verbatim() {
+        let get = |needle: &str| {
+            TEXTS
+                .iter()
+                .find(|(key, _)| *key == needle)
+                .map(|(_, text)| *text)
+        };
+        assert_eq!(
+            get("securityCenter.audit.fileSafety.allowListed"),
+            Some("文件访问命中文件安全允许规则：{paths}")
+        );
+        assert_eq!(
+            get("securityCenter.audit.fileSafety.approved.deleteWithRule"),
+            Some("用户已批准删除文件：{paths}（询问规则：{matchedRule}）")
+        );
+        assert_eq!(
+            get("securityCenter.audit.fileSafety.denyMatchedWithRule"),
+            Some("文件访问命中文件安全禁止规则，已阻止：{paths}（规则：{matchedRule}）")
+        );
+        assert_eq!(
+            get("securityCenter.audit.fileSafety.bulkDelete.needsApproval"),
+            Some("批量删除需要确认：当前请求累计删除 {count} 个条目，已达到或超过阈值 {threshold}")
+        );
+        assert_eq!(
+            get("securityCenter.audit.fileSafety.sessionCacheHit.writeWithRule"),
+            Some("文件写入命中询问规则并使用会话放行缓存：{paths}（规则：{matchedRule}）")
+        );
+    }
+
+    /// ② 空输入 ⇒ 空态（不是就绪、不是空列表、不与未下发混同）。
+    #[test]
+    fn empty_input_yields_empty_state() {
+        assert_eq!(resolve(Source::Delivered(&[])), State::Empty);
+        assert_ne!(resolve(Source::Delivered(&[])), State::Ready);
+        assert_eq!(state_label(&State::Empty), EMPTY_HINT);
+        assert_ne!(EMPTY_HINT, NOT_DELIVERED);
+    }
+
+    /// ⑤ 状态分支覆盖：三态各一条 + 默认态 fail-closed。
+    #[test]
+    fn state_branches_covered() {
         assert_eq!(State::default(), State::NotDelivered);
         assert_eq!(resolve(Source::NotFetched), State::NotDelivered);
-        assert_eq!(state_label(&State::NotDelivered), "未下发");
+        assert_eq!(state_label(&State::NotDelivered), NOT_DELIVERED);
+
+        let catalog = entries();
+        assert_eq!(resolve(Source::Delivered(&catalog)), State::Ready);
+        assert_eq!(state_label(&State::Ready), "就绪");
+
+        assert_eq!(resolve(Source::Delivered(&[])), State::Empty);
+        assert_eq!(state_label(&State::Empty), EMPTY_HINT);
+    }
+
+    /// ④ main_area(&Theme::default()) 只构造元素树，不 panic。
+    #[test]
+    fn main_area_builds_without_panic() {
+        let _ = main_area(&Theme::default());
+    }
+
+    /// 附加：条目视图三元组完整（family/key/text 逐字可达）。
+    #[test]
+    fn entry_fields_complete() {
+        let first = &entries()[0];
+        assert_eq!(first.family, "allowListed");
+        assert_eq!(first.key, "securityCenter.audit.fileSafety.allowListed");
+        assert!(first.text.contains("{paths}"));
     }
 }
