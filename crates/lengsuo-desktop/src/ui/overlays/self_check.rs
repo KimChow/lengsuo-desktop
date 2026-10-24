@@ -396,9 +396,12 @@ fn button(theme: &Theme, label: &'static str, primary: bool) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, BadgeCounts, ItemStatus, SelfCheckItem, SelfCheckModel, SelfCheckState,
-        CATEGORY_ENVIRONMENT, CATEGORY_NETWORK, CATEGORY_SECURITY, CATEGORY_SYSTEM,
-        NOT_DELIVERED, SUBTITLE_DONE, SUBTITLE_IDLE, SUBTITLE_RUNNING,
+        fill_count, main_area, BadgeCounts, ItemStatus, SelfCheckItem, SelfCheckModel,
+        SelfCheckState, BADGE_COUNT_FAIL, BADGE_COUNT_ITEMS, BADGE_COUNT_PASS, BADGE_COUNT_WARN,
+        CATEGORY_ENVIRONMENT, CATEGORY_NETWORK, CATEGORY_SECURITY, CATEGORY_SYSTEM, CLOSE,
+        FPS_DESCRIPTION, FPS_HINT, FPS_TITLE, NOT_DELIVERED, RERUN, START, STATUS_FAIL,
+        STATUS_PASS, STATUS_PENDING, STATUS_WARNING, SUBTITLE_DONE, SUBTITLE_IDLE,
+        SUBTITLE_RUNNING, TITLE,
     };
     use gpui_kit::component::Theme;
 
@@ -500,5 +503,46 @@ mod tests {
         let _ = super::render(&theme, &empty);
         let _ = super::render(&theme, &running);
         let _ = super::render(&theme, &done);
+    }
+
+    #[test]
+    fn copy_is_verbatim_from_self_check_namespace() {
+        assert_eq!(TITLE, "诊断工具");
+        assert_eq!(SUBTITLE_IDLE, "点击“开始检测”执行环境诊断");
+        assert_eq!(SUBTITLE_RUNNING, "正在检测...");
+        assert_eq!(SUBTITLE_DONE, "检测已完成");
+        assert_eq!(BADGE_COUNT_PASS, "{count} 通过");
+        assert_eq!(BADGE_COUNT_WARN, "{count} 警告");
+        assert_eq!(BADGE_COUNT_FAIL, "{count} 失败");
+        assert_eq!(BADGE_COUNT_ITEMS, "{count} 项");
+        assert_eq!(STATUS_PASS, "通过");
+        assert_eq!(STATUS_WARNING, "警告");
+        assert_eq!(STATUS_FAIL, "失败");
+        assert_eq!(STATUS_PENDING, "待检测");
+        assert_eq!(CATEGORY_ENVIRONMENT, "环境信息");
+        assert_eq!(CATEGORY_NETWORK, "网络");
+        assert_eq!(CATEGORY_SECURITY, "安全软件");
+        assert_eq!(CATEGORY_SYSTEM, "系统资源");
+        assert_eq!(FPS_TITLE, "性能指标");
+        assert_eq!(FPS_DESCRIPTION, "在右下角显示 FPS、内存和 CPU");
+        assert_eq!(FPS_HINT, "FPS 为当前窗口近 1 秒平均值");
+        assert_eq!(START, "开始检测");
+        assert_eq!(RERUN, "重新检测");
+        assert_eq!(CLOSE, "关闭");
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    #[test]
+    fn status_labels_match_verbatim_consts() {
+        assert_eq!(ItemStatus::Pass.label(), STATUS_PASS);
+        assert_eq!(ItemStatus::Warning.label(), STATUS_WARNING);
+        assert_eq!(ItemStatus::Fail.label(), STATUS_FAIL);
+        assert_eq!(ItemStatus::Pending.label(), STATUS_PENDING);
+    }
+
+    #[test]
+    fn fill_count_replaces_placeholder() {
+        assert_eq!(fill_count(BADGE_COUNT_ITEMS, 0), "0 项");
+        assert_eq!(fill_count(BADGE_COUNT_PASS, 12), "12 通过");
     }
 }
