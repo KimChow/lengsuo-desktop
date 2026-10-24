@@ -229,7 +229,12 @@ fn header_row(model: &DetailPanelModel, theme: &Theme) -> Div {
                         )
                         .child(div().mt_1().h(px(2.)).w_full().bg(theme.accent)),
                 )
-                .child(div().text_sm().text_color(theme.muted_foreground).child(REVIEW)),
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(REVIEW),
+                ),
         )
         .child(
             div()
@@ -314,17 +319,13 @@ fn sections(model: &DetailPanelModel, theme: &Theme) -> Div {
 
 /// 单节：标题 + 计数/空态体。
 fn section(model: &DetailPanelModel, theme: &Theme, s: Section) -> Div {
-    let mut head = div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .child(
-            div()
-                .text_xs()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(s.label()),
-        );
+    let mut head = div().flex().items_center().justify_between().child(
+        div()
+            .text_xs()
+            .font_bold()
+            .text_color(theme.foreground)
+            .child(s.label()),
+    );
     if let Some(count) = section_count(model, s) {
         head = head.child(
             div()
@@ -382,8 +383,8 @@ fn section_count(model: &DetailPanelModel, s: Section) -> Option<usize> {
 mod tests {
     use super::{
         DetailPanelModel, PanelState, Section, ARTIFACTS, FILES, FOLLOW, HIDE_SIDEBAR, NEW_CANVAS,
-        NEW_TAB, NO_CONTENT, NO_DETAILS, NOT_DELIVERED, OPEN_BROWSER, OPEN_TERMINAL, OVERVIEW,
-        REVIEW, SELECT_ARTIFACT, SHOW_SIDEBAR, TASK_PROGRESS, VIEW_CHANGES, VIEW_WORKSPACE,
+        NEW_TAB, NOT_DELIVERED, OPEN_BROWSER, OPEN_TERMINAL, OVERVIEW, REVIEW, SHOW_SIDEBAR,
+        TASK_PROGRESS, VIEW_CHANGES, VIEW_WORKSPACE,
     };
     use gpui_kit::component::Theme;
 
@@ -458,5 +459,13 @@ mod tests {
     #[test]
     fn main_area_does_not_panic_without_source() {
         let _ = super::main_area(&Theme::default());
+    }
+
+    #[test]
+    fn render_covers_all_state_branches() {
+        let theme = Theme::default();
+        let _ = super::render(&DetailPanelModel::not_delivered(), &theme);
+        let _ = super::render(&DetailPanelModel::delivered(0, 0), &theme);
+        let _ = super::render(&DetailPanelModel::delivered(2, 1), &theme);
     }
 }
