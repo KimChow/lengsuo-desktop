@@ -5,6 +5,8 @@
 //! （摘录 12 键见 [`TEXTS`]；全表其余 13 键原文到位前不落键、不自编中文充数，
 //! 视图态占位文案在 GPUI 层单独登记）。带 `{占位符}` 的键由纯函数替换占位符，不改字。
 #![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 视图标题（逐字取自界面文案全表）。
 pub const TITLE: &str = "协作计划·子任务";
@@ -150,11 +152,198 @@ pub fn content_node_count(state: &SubtodoState) -> usize {
     }
 }
 
+// ===== GPUI 层 =====
+/// 加载中占位说明（全表 load* 键原文到位前临时使用；到位后随键替换）。
+const LOADING_SCAFFOLD: &str = "加载中...";
+/// 加载失败占位说明（承自脚手架先例；全表键到位后随键替换）。
+const LOAD_FAILED_SCAFFOLD: &str = "加载失败";
+
+/// 主区/浮层呈现入口。数据源未接线 ⇒ 保持 Loading 如实呈现（fail-closed）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render_state(&SubtodoState::default(), &CreateForm::default(), theme)
+}
+
+/// 按状态渲染：标题行 + 分支主体；主体直属内容节点数与 [`content_node_count`]
+/// 一一对应（Loading/Failed 各 1 节点，⛔ 不是空列表）。颜色一律取 `theme.*`。
+fn render_state(state: &SubtodoState, form: &CreateForm, theme: &Theme) -> AnyElement {
+    let header = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(div().text_sm().text_color(theme.foreground).child(TITLE))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.subtodo.config.fields")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.subtodo.config.sort")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.subtodo.configAria")),
+        );
+    let body = match state {
+        SubtodoState::Loading => caption(LOADING_SCAFFOLD, theme),
+        SubtodoState::Failed => caption(LOAD_FAILED_SCAFFOLD, theme),
+        SubtodoState::Empty => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(add_entry_row(theme))
+            .child(create_form_node(form, theme))
+            .into_any_element(),
+        SubtodoState::Ready(items) => {
+            let mut col = div().flex().flex_col().gap_2();
+            for item in items {
+                col = col.child(item_row(item, theme));
+            }
+            col.child(add_entry_row(theme))
+                .child(create_form_node(form, theme))
+                .into_any_element()
+        }
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(header)
+        .child(body)
+        .into_any_element()
+}
+
+/// 说明行（弱化色；加载中/失败必须可见，fail-closed）。
+fn caption(body: &str, theme: &Theme) -> AnyElement {
+    div()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(body.to_string()))
+        .into_any_element()
+}
+
+/// 添加入口行（`addEntry`，逐字；触达目标 ≥48dp）。
+fn add_entry_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .h_12()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(zh("collab.plan.subtodo.addEntry")),
+        )
+        .into_any_element()
+}
+
+/// 单条子待办行：层级缩进（层级 1 起，每深一级缩进一格）；完成态弱化色。
+fn item_row(item: &SubtodoItem, theme: &Theme) -> AnyElement {
+    let title_color = if item.done {
+        theme.muted_foreground
+    } else {
+        theme.foreground
+    };
+    let row = match item.depth.min(3) {
+        1 => div().flex().items_center().h_12().gap_2(),
+        2 => div().flex().items_center().h_12().gap_2().pl_4(),
+        _ => div().flex().items_center().h_12().gap_2().pl_8(),
+    };
+    row.child(
+        div()
+            .text_sm()
+            .text_color(title_color)
+            .child(SharedString::from(item.title.clone())),
+    )
+    .into_any_element()
+}
+
+/// 创建表单骨架（文案逐字取自 `create.*`；⛔ 不携带任何伪造值）。
+fn create_form_node(form: &CreateForm, theme: &Theme) -> AnyElement {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .border_1()
+        .border_color(theme.border)
+        .p_2()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.subtodo.create.titlePlaceholder")),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.subtodo.create.descPlaceholder")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(zh("collab.plan.subtodo.create.dateMenuAria")),
+        );
+    if form.shows_attachments_exist() {
+        col = col.child(
+            div()
+                .text_xs()
+                .text_color(theme.foreground)
+                .child(zh("collab.plan.subtodo.create.attachmentsExist")),
+        );
+    }
+    if let Some(text) = form.depth_limit_caption() {
+        col = col.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(text)),
+        );
+    }
+    col.child(
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h_12()
+                    .px_3()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(submit_label(form.submitting)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h_12()
+                    .px_3()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(zh("collab.plan.subtodo.create.cancel")),
+            ),
+    )
+    .into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{zh, SubtodoState, NS_PREFIX, TEXTS, TITLE};
+    use super::{
+        main_area, render_state, zh, CreateForm, SubtodoItem, SubtodoState, NS_PREFIX, TEXTS, TITLE,
+    };
+    use gpui_kit::component::Theme;
 
     #[test]
     fn title_and_ns_verbatim() {
@@ -189,5 +378,22 @@ mod tests {
             SubtodoState::from_fetch(Some(Ok(Vec::new()))),
             SubtodoState::Empty
         );
+    }
+
+    /// 渲染冒烟：四分支只构造元素树、不 panic；默认入口 fail-closed 呈现 Loading。
+    #[test]
+    fn render_branches_smoke() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+        let items = vec![SubtodoItem {
+            title: zh("collab.plan.subtodo.addEntry").to_string(),
+            done: true,
+            depth: 2,
+        }];
+        let ready = SubtodoState::from_fetch(Some(Ok(items)));
+        let _ = render_state(&ready, &CreateForm::default(), &theme);
+        let _ = render_state(&SubtodoState::Loading, &CreateForm::default(), &theme);
+        let _ = render_state(&SubtodoState::Failed, &CreateForm::default(), &theme);
+        let _ = render_state(&SubtodoState::Empty, &CreateForm::default(), &theme);
     }
 }
