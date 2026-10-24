@@ -79,46 +79,51 @@ fn set_more_open(open: bool) {
 
 /// 上区主入口行：图标位 + 标签（实拍 D1 的 6 项，图标 + 文字行）。
 ///
+/// 只画前 5 项：第 6 项「更多」由 [`render_more_group`] 的头行渲染
+/// （同一行样式 + 展开 / 收起），视觉上仍是上区第 6 个主入口。
+///
 /// ⛔ 点击只上报意图：运行时接线不在本卡，这里只给手型光标，不改状态。
 fn render_main_entries(theme: &Theme) -> impl IntoElement {
+    div().flex().flex_col().gap_1().children(
+        MAIN_ENTRY_LABELS
+            .iter()
+            .take(5)
+            .zip(MAIN_ENTRY_GLYPHS)
+            .map(|(label, glyph)| {
+                div()
+                    .id(format!("sidebar-main-{label}"))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_2()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .child(render_entry_icon(glyph, theme))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.sidebar_foreground)
+                            .truncate()
+                            .child(*label),
+                    )
+            }),
+    )
+}
+
+/// 入口图标位：accent 底色圆角小方块 + 字形（实拍为图标资产，本卡以色块 + 字形占位）。
+fn render_entry_icon(glyph: &'static str, theme: &Theme) -> Div {
     div()
         .flex()
-        .flex_col()
-        .gap_1()
-        .children(
-            MAIN_ENTRY_LABELS
-                .iter()
-                .zip(MAIN_ENTRY_GLYPHS)
-                .map(|(label, glyph)| {
-                    div()
-                        .id(format!("sidebar-main-{label}"))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_2()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .child(
-                            div()
-                                .flex()
-                                .w_4()
-                                .h_4()
-                                .items_center()
-                                .justify_center()
-                                .text_xs()
-                                .text_color(theme.sidebar_foreground)
-                                .child(glyph),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.sidebar_foreground)
-                                .truncate()
-                                .child(*label),
-                        )
-                }),
-        )
+        .w_4()
+        .h_4()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .text_xs()
+        .bg(theme.sidebar_accent)
+        .text_color(theme.sidebar_accent_foreground)
+        .child(glyph)
 }
 
 /// 中区分组：组名行 + 组内条目行（实拍 D2 的「任务 (N)」/「空间 (N)」形态）。
@@ -256,7 +261,8 @@ pub(super) fn render_nav_entry(
     })
 }
 
-/// 「更多」组：头行（图标位 + 「更多」+ 计数徽标 + 展开 / 收起钮）+ 收纳的旧入口。
+/// 「更多」组：头行（= 上区第 6 主入口的行样式：图标位 + 「更多」+ 计数徽标 +
+/// 展开 / 收起钮）+ 收纳的旧入口（缩进一级）。
 ///
 /// 头行点击只翻转展开态（`cx.notify()` 重渲染）；旧入口点击仍走 A15 的选中态，
 /// ⛔ 都不触发运行时行为。
@@ -283,17 +289,7 @@ fn render_more_group(
         .py_2()
         .rounded_sm()
         .cursor_pointer()
-        .child(
-            div()
-                .flex()
-                .w_4()
-                .h_4()
-                .items_center()
-                .justify_center()
-                .text_xs()
-                .text_color(theme.sidebar_foreground)
-                .child(MAIN_ENTRY_GLYPHS[5]),
-        )
+        .child(render_entry_icon(MAIN_ENTRY_GLYPHS[5], theme))
         .child(
             div()
                 .text_sm()
@@ -310,8 +306,11 @@ fn render_more_group(
             div()
                 .ml_auto()
                 .flex()
+                .w_6()
+                .h_6()
                 .items_center()
-                .gap_1()
+                .justify_center()
+                .rounded_sm()
                 .text_xs()
                 .text_color(theme.muted_foreground)
                 .child(chevron),
@@ -324,18 +323,20 @@ fn render_more_group(
             });
         });
 
-    let mut group = div().flex().flex_col().gap_1().pt_2().child(header);
+    let mut group = div().flex().flex_col().gap_1().child(header);
     if open {
+        // 收纳的旧入口缩进一级，挂在「更多」头行下。
         group = group.children(
             entries
                 .iter()
-                .map(|entry| render_nav_entry(entry, entity, theme)),
+                .map(|entry| div().pl_3().child(render_nav_entry(entry, entity, theme))),
         );
     }
     group
 }
 
-/// 左栏导航列（D1/D2）：上区主入口 + 「任务 / 空间」分组 + 「更多」组 + 底部卡位。
+/// 左栏导航列（D1/D2）：上区主入口（第 6 项即「更多」头行，展开区紧随其后）
+/// + 「任务 / 空间」分组 + 底部卡位。
 ///
 /// 顺序与条目由描述层决定（`entries` = 现有 14 项旧入口，「更多」组收纳）。
 pub(super) fn render_nav(
@@ -353,9 +354,9 @@ pub(super) fn render_nav(
         .px_1()
         .py_1()
         .child(render_main_entries(theme))
+        .child(render_more_group(entries, entity, theme))
         .child(render_group(TASKS_GROUP_LABEL, theme))
         .child(render_group(SPACES_GROUP_LABEL, theme))
-        .child(render_more_group(entries, entity, theme))
         .child(render_footer(theme))
 }
 
