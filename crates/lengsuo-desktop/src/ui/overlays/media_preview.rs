@@ -113,6 +113,8 @@ pub enum PreviewError {
     LoginRequired,
     /// preview.error.notFound / notFoundDesc
     NotFound,
+    /// mediaPreview.unknownError
+    Unknown,
 }
 
 impl PreviewError {
@@ -127,14 +129,17 @@ impl PreviewError {
             Self::ShareExpired => "此分享已过期",
             Self::LoginRequired => "此分享需要登录后才能查看",
             Self::NotFound => "分享不存在或已被删除",
+            Self::Unknown => "未知错误",
         }
     }
 
     /// 失败说明（逐字；部分原因在文案表中无 Desc 键）。
     pub fn desc(self) -> Option<&'static str> {
         match self {
-            Self::InitFailed | Self::LoadFailed => None,
-            Self::VideoLoadFailed => Some("当前浏览器可能不支持该视频编码，可下载后使用本地播放器打开"),
+            Self::InitFailed | Self::LoadFailed | Self::Unknown => None,
+            Self::VideoLoadFailed => {
+                Some("当前浏览器可能不支持该视频编码，可下载后使用本地播放器打开")
+            }
             Self::VideoLoadTimeout => Some("网络较慢或文件较大，请检查网络后重试"),
             Self::ShareDisabled => Some("分享者已关闭此分享链接，无法继续访问"),
             Self::ShareExpired => Some("分享链接已超过有效期，无法继续访问"),
@@ -336,16 +341,107 @@ fn center_area(theme: &Theme, preview: &MediaPreview) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        main_area, MediaKind, MediaPreview, PreviewError, PreviewStatus, ToolFeedback,
+        NOT_DELIVERED, TITLE, TOOL_ACTIONS, ZOOM_MAX_PERCENT, ZOOM_MIN_PERCENT,
+    };
     use gpui_kit::component::Theme;
+
+    fn normal() -> MediaPreview {
+        MediaPreview {
+            kind: MediaKind::Video,
+            zoom_percent: super::ZOOM_DEFAULT_PERCENT,
+            status: PreviewStatus::Normal,
+            feedback: None,
+        }
+    }
+
+    /// ② 空输入 ⇒ 未下发空态文案（占位行），而非空列表。
+    #[test]
+    fn empty_input_lands_on_placeholder_not_empty_list() {
+        let empty = MediaPreview::default();
+        assert_eq!(empty, MediaPreview::not_delivered());
+        assert_eq!(empty.status, PreviewStatus::NotDelivered);
+        assert_eq!(empty.center_line(), Some(NOT_DELIVERED));
+        assert!(empty.center_desc().is_none());
+        // 未下发 ⇒ 工具行整体不渲染，而不是渲染 0 个按钮的空行
+        assert!(empty.tool_actions().is_empty());
+    }
+
+    /// ① 纯函数层状态/计数：缩放夹取 + 工具行计数。
+    #[test]
+    fn zoom_math_clamps_and_tool_row_counts() {
+        let base = MediaPreview::not_delivered();
+        assert_eq!(base.zoom_percent, super::ZOOM_DEFAULT_PERCENT);
+        let maxed = base.zoom_in().zoom_in().zoom_in().zoom_in().zoom_in();
+        assert_eq!(maxed.zoom_percent, ZOOM_MAX_PERCENT);
+        assert_eq!(maxed.zoom_in().zoom_percent, ZOOM_MAX_PERCENT);
+        let mined = maxed
+            .zoom_out()
+            .zoom_out()
+            .zoom_out()
+            .zoom_out()
+            .zoom_out()
+            .zoom_out()
+            .zoom_out();
+        assert_eq!(mined.zoom_percent, ZOOM_MIN_PERCENT);
+        assert_eq!(mined.zoom_out().zoom_percent, ZOOM_MIN_PERCENT);
+        assert_eq!(TOOL_ACTIONS.len(), 4);
+        assert_eq!(normal().tool_actions().len(), 4);
+    }
+
+    /// ③ 文案逐字一致：工具行 4 键。
+    #[test]
+    fn tool_action_labels_are_verbatim() {
+        let labels: Vec<&'static str> = normal().tool_actions().iter().map(|a| a.label()).collect();
+        assert_eq!(labels, ["复制链接", "下载", "分享", "产物"]);
+    }
+
+    /// ③ 文案逐字一致：失败 title/desc 与中心区派生。
+    #[test]
+    fn error_titles_and_descs_are_verbatim() {
+        assert_eq!(PreviewError::ShareDisabled.title(), "此分享已被禁用");
+        assert_eq!(
+            PreviewError::ShareDisabled.desc(),
+            Some("分享者已关闭此分享链接，无法继续访问")
+        );
+        assert_eq!(PreviewError::VideoLoadTimeout.title(), "视频加载超时");
+        assert_eq!(
+            PreviewError::VideoLoadTimeout.desc(),
+            Some("网络较慢或文件较大，请检查网络后重试")
+        );
+        assert_eq!(PreviewError::LoadFailed.title(), "加载失败");
+        assert_eq!(PreviewError::LoadFailed.desc(), None);
+        assert_eq!(PreviewError::Unknown.title(), "未知错误");
+        assert_eq!(PreviewError::Unknown.desc(), None);
+        let failed = MediaPreview {
+            status: PreviewStatus::Failed(PreviewError::ShareExpired),
+            ..MediaPreview::not_delivered()
+        };
+        assert_eq!(failed.center_line(), Some("此分享已过期"));
+        assert_eq!(
+            failed.center_desc(),
+            Some("分享链接已超过有效期，无法继续访问")
+        );
+        assert_eq!(failed.tool_actions().len(), TOOL_ACTIONS.len());
+    }
+
+    /// ③ 文案逐字一致：反馈 5 键。
+    #[test]
+    fn feedback_texts_are_verbatim() {
+        assert_eq!(ToolFeedback::CopyLinkSuccess.text(), "链接已复制到剪贴板");
+        assert_eq!(ToolFeedback::CopyLinkFailed.text(), "复制链接失败");
+        assert_eq!(ToolFeedback::Downloading.text(), "下载中...");
+        assert_eq!(ToolFeedback::DownloadFailed.text(), "下载失败");
+        assert_eq!(ToolFeedback::DownloadNotAvailable.text(), "下载不可用");
+    }
+
     #[test]
     fn title_is_taken_verbatim_and_not_blank() {
         assert!(!TITLE.is_empty());
     }
-    #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
-        assert_eq!(NOT_DELIVERED, "未下发");
-    }
+
+    /// ④ `main_area` 构建不 panic（fail-closed 分支）。
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
