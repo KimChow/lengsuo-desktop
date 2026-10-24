@@ -115,7 +115,7 @@ pub fn main_area(theme: &Theme) -> Div {
     render(theme, &BatchBarState::initial())
 }
 
-/// 按状态渲染整层：标题行 + 中央状态行（后续波次补底部操作条）。
+/// 按状态渲染整层：标题行 + 中央状态行 + 底部操作条。
 fn render(theme: &Theme, state: &BatchBarState) -> Div {
     div()
         .flex_1()
@@ -123,15 +123,7 @@ fn render(theme: &Theme, state: &BatchBarState) -> Div {
         .h_full()
         .flex()
         .flex_col()
-        .child(
-            div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
+        .child(title_row(theme))
         .child(
             div()
                 .flex_1()
@@ -142,6 +134,117 @@ fn render(theme: &Theme, state: &BatchBarState) -> Div {
                 .text_color(theme.muted_foreground)
                 .child(state.status_line()),
         )
+        .child(bar(theme, state))
+}
+
+/// 标题行（文案即无障碍标签）。
+fn title_row(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .text_sm()
+        .font_bold()
+        .text_color(theme.foreground)
+        .child(TITLE)
+}
+
+/// 底部操作条：有选中时才出现计数/全选/归档/删除（⛔ 未下发不伪造数值）。
+fn bar(theme: &Theme, state: &BatchBarState) -> Div {
+    let selection = match state {
+        BatchBarState::Ready(sel) if !sel.is_empty() => Some(sel),
+        _ => None,
+    };
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(bar_row(theme, selection));
+    if selection.is_some_and(|sel| sel.archive_unsupported) {
+        col = col.child(
+            div()
+                .px_4()
+                .pb_2()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(ARCHIVE_UNSUPPORTED),
+        );
+    }
+    col
+}
+
+/// 操作条主行。
+fn bar_row(theme: &Theme, selection: Option<&Selection>) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .child(exit_button(theme));
+    if let Some(sel) = selection {
+        row = row
+            .child(div().flex_1())
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.foreground)
+                    .child(sel.selected_count_text()),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(sel.select_all_text()),
+            )
+            .child(archive_button(theme, sel))
+            .child(delete_button(theme));
+    }
+    row
+}
+
+/// 退出按钮（悬浮提示文案见 [`EXIT_TOOLTIP`]）。
+fn exit_button(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(EXIT)
+}
+
+/// 归档按钮：不可归档时降为弱样式（提示行由 [`bar`] 补充）。
+fn archive_button(theme: &Theme, sel: &Selection) -> Div {
+    let can = sel.can_archive();
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if can { theme.accent } else { theme.border })
+        .text_sm()
+        .text_color(if can {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        })
+        .child(ACTION_ARCHIVE)
+}
+
+/// 删除按钮。
+fn delete_button(theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(ACTION_DELETE)
 }
 #[cfg(test)]
 mod tests {
@@ -232,5 +335,28 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_ready_branches_build_without_panic() {
+        let theme = Theme::default();
+        let ok = Selection {
+            selected: 2,
+            total: 4,
+            archive_unsupported: false,
+        };
+        let unsupported = Selection {
+            archive_unsupported: true,
+            ..ok.clone()
+        };
+        let empty = Selection {
+            selected: 0,
+            total: 4,
+            archive_unsupported: false,
+        };
+        let _ = super::render(&theme, &BatchBarState::Ready(ok));
+        let _ = super::render(&theme, &BatchBarState::Ready(unsupported));
+        let _ = super::render(&theme, &BatchBarState::Ready(empty));
+        let _ = super::render(&theme, &BatchBarState::NotDelivered);
     }
 }
