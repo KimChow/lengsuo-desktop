@@ -162,11 +162,12 @@ fn body(theme: &Theme, state: &TaskStatusState) -> Div {
             .text_color(theme.muted_foreground)
             .child(NOT_DELIVERED);
     }
-    div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .children(state.badges().iter().map(|status| badge_row(theme, *status)))
+    div().flex_1().flex().flex_col().children(
+        state
+            .badges()
+            .iter()
+            .map(|status| badge_row(theme, *status)),
+    )
 }
 
 /// 徽标清单行：label 徽标 + 可选 tag 徽标 + description 说明。
@@ -242,14 +243,8 @@ mod tests {
             TaskStatus::Completed.description(),
             "任务已结束（成功完成或被用户终止）"
         );
-        assert_eq!(
-            TaskStatus::Error.description(),
-            "任务执行过程中发生错误"
-        );
-        assert_eq!(
-            TaskStatus::Failed.description(),
-            "任务执行过程中发生错误"
-        );
+        assert_eq!(TaskStatus::Error.description(), "任务执行过程中发生错误");
+        assert_eq!(TaskStatus::Failed.description(), "任务执行过程中发生错误");
         assert_eq!(TaskStatus::Terminated.description(), "任务异常退出");
         assert_eq!(TaskStatus::Archived.description(), "任务已被归档");
     }
@@ -311,10 +306,7 @@ mod tests {
         let theme = Theme::default();
         let _ = super::render(&theme, &TaskStatusState::NotDelivered);
         let _ = super::render(&theme, &TaskStatusState::Ready(Vec::new()));
-        let _ = super::render(
-            &theme,
-            &TaskStatusState::Ready(TaskStatus::ALL.to_vec()),
-        );
+        let _ = super::render(&theme, &TaskStatusState::Ready(TaskStatus::ALL.to_vec()));
     }
 
     #[test]
@@ -328,5 +320,27 @@ mod tests {
         }
         let ready = TaskStatusState::Ready(TaskStatus::ALL.to_vec());
         assert!(!ready.is_empty_state());
+    }
+
+    #[test]
+    fn error_and_failed_share_verbatim_copy() {
+        // 文案表事实：error 与 failed 两键共享同一 label/description，各自保留枚举位。
+        assert_eq!(TaskStatus::Error.label(), TaskStatus::Failed.label());
+        assert_eq!(
+            TaskStatus::Error.description(),
+            TaskStatus::Failed.description()
+        );
+    }
+
+    #[test]
+    fn fail_closed_initial_never_fabricates_badges() {
+        let state = TaskStatusState::initial();
+        assert!(state.badges().is_empty());
+        assert_eq!(NOT_DELIVERED, "未下发");
+        // 「未下发」行不得混入任何徽标文案（⛔ 不伪造条目）。
+        for status in TaskStatus::ALL {
+            assert!(!NOT_DELIVERED.contains(status.label()));
+            assert!(!NOT_DELIVERED.contains(status.description()));
+        }
     }
 }
