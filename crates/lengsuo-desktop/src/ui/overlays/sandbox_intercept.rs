@@ -207,18 +207,89 @@ fn action_row(theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::{
+        copy, main_area, AccessKind, AccessRequest, Action, SandboxIntercept, State, NOT_DELIVERED,
+        TITLE,
+    };
     use gpui_kit::component::Theme;
+
+    /// ① 纯函数层状态/计数正确：仅聚合已下发请求。
     #[test]
-    fn default_state_is_not_delivered() {
-        assert_eq!(State::default(), State::NotDelivered);
+    fn rows_aggregate_delivered_requests_only() {
+        let model = SandboxIntercept::from_requests(vec![
+            AccessRequest {
+                kind: AccessKind::Network,
+                scope: "example.com".into(),
+            },
+            AccessRequest {
+                kind: AccessKind::File,
+                scope: "/etc/hosts".into(),
+            },
+        ]);
+        assert_eq!(model.state, State::Normal);
+        assert_eq!(model.rows().len(), 2);
+        assert_eq!(model.rows()[0], ("网络访问请求", "example.com"));
+        assert_eq!(model.rows()[1], ("文件访问", "/etc/hosts"));
     }
+
+    /// ② 空输入 ⇒ 空态（不是空列表）。
     #[test]
-    fn title_not_empty() {
-        assert!(!TITLE.is_empty());
+    fn empty_input_is_undelivered_state_not_empty_list() {
+        let model = SandboxIntercept::from_requests(Vec::new());
+        assert_eq!(model.state, State::NotDelivered);
+        assert!(model.is_not_delivered());
+        assert_eq!(model.scope_lines(), vec![NOT_DELIVERED]);
     }
+
+    /// ③ 文案逐字一致（命名空间 sandbox，≥3 键）。
+    #[test]
+    fn copy_matches_namespace_verbatim() {
+        assert_eq!(TITLE, "权限请求");
+        assert_eq!(copy::DESCRIPTION, "AI 想要访问当前沙箱范围之外的资源。");
+        assert_eq!(copy::ALLOW_SESSION, "允许，不再询问");
+        assert_eq!(copy::SCOPE, "范围");
+        assert_eq!(copy::ACTION, "操作");
+    }
+
+    /// ④ `main_area(&Theme::default())` 不 panic。
     #[test]
     fn main_area_renders_without_panic() {
         let _ = main_area(&Theme::default());
+    }
+
+    /// ⑤ 状态分支覆盖（每个分支一条断言；非 Normal 一律 fail-closed）。
+    #[test]
+    fn state_branches_are_fail_closed_or_delivered() {
+        // Normal：按已下发范围逐行展示。
+        let normal = SandboxIntercept::from_requests(vec![AccessRequest {
+            kind: AccessKind::Network,
+            scope: "a.dev".into(),
+        }]);
+        assert_eq!(normal.scope_lines(), vec!["a.dev"]);
+        // Loading / Failed：即使带数据也如实「未下发」，不伪造。
+        for state in [State::Loading, State::Failed] {
+            let model = SandboxIntercept {
+                state,
+                requests: normal.requests.clone(),
+            };
+            assert_eq!(model.scope_lines(), vec![NOT_DELIVERED]);
+        }
+        // NotDelivered：默认态即未下发。
+        assert_eq!(
+            SandboxIntercept::default().scope_lines(),
+            vec![NOT_DELIVERED]
+        );
+    }
+
+    /// 动作分支：三个按钮文案逐字且顺序固定。
+    #[test]
+    fn action_labels_in_fixed_order() {
+        assert_eq!(Action::Allow.label(), "允许");
+        assert_eq!(Action::AllowSession.label(), "允许，不再询问");
+        assert_eq!(Action::Deny.label(), "拒绝");
+        assert_eq!(
+            SandboxIntercept::not_delivered().actions(),
+            ["允许", "允许，不再询问", "拒绝"]
+        );
     }
 }
