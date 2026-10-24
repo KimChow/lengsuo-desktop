@@ -1,7 +1,8 @@
 //! 代码预览（`PreviewKind::Code`）：等宽代码区 + 行号列 + 截断提示 + 未下发态。
 //!
 //! 硬约束：
-//! - ⛔ 不读文件、不做文件 I/O：预览内容由运行时契约下发（未就绪 ⇒ 显示诚实提示，不伪造内容）。
+//! - 内容优先用运行时下发的字节；未下发时 [`decode`] 读本地文件。
+//!   拿不到 / 解不出 ⇒ `NotDelivered` / `Failed`，界面照实显示，⛔ 不伪造内容。
 //! - 颜色一律取自 `theme`，⛔ 不硬编码。
 use std::io::Read as _;
 
@@ -34,39 +35,37 @@ pub(super) fn line_no_width(total: usize) -> usize {
 /// 等宽容器标记：以 `debug_selector` 挂在容器上，渲染断言据此定位等宽字体区。
 pub(super) const MONO_CONTAINER_ID: &str = "preview-code-mono";
 
-/// 未下发态的诚实提示（⛔ 不伪造代码内容）。
-pub(super) const NOT_DELIVERED_TEXT: &str = "内容未下发（等运行时契约）";
-
-/// 渲染代码预览主体。内容未下发 ⇒ 未下发态；`render_lines` 保留给契约下发后接线。
-pub(super) fn render(_path: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
-    render_lines(None, theme)
-}
-
-/// `lines` 为契约下发的行（`None` = 未下发）。
-fn render_lines(lines: Option<&[&str]>, theme: &gpui_kit::component::Theme) -> AnyElement {
-    let container = div()
+/// 等宽外壳：字体 / 底色 / 圆角 / 内边距统一取主题 token，`debug_selector` 供渲染断言定位。
+fn mono_shell(theme: &gpui_kit::component::Theme) -> Div {
+    div()
         .debug_selector(|| MONO_CONTAINER_ID.to_owned())
         .font_family(theme.mono_font_family.clone())
         .bg(theme.muted)
         .rounded_md()
         .p_2()
-        .text_xs();
-    match lines {
-        None => container
-            .text_color(theme.muted_foreground)
-            .child(NOT_DELIVERED_TEXT)
-            .into_any_element(),
-        Some(lines) => container
-            .child(
-                // ponytail: 行数 ≤ MAX_LINES 已封顶，overflow 滚动够用；虚拟化等契约下发卡改签名时再上
-                div()
-                    .id("preview-code-scroll")
-                    .overflow_y_scroll()
-                    .max_h(px(480.0))
-                    .child(code_rows(lines, theme)),
-            )
-            .into_any_element(),
-    }
+        .text_xs()
+}
+
+/// 未下发 / 失败等**诚实提示行**：一行说明，照实显示原因。
+fn render_notice(text: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
+    mono_shell(theme)
+        .text_color(theme.muted_foreground)
+        .child(text.to_owned())
+        .into_any_element()
+}
+
+/// 画下发的代码行：滚动容器 + 行号列 + 截断提示。
+fn render_lines(lines: &[&str], theme: &gpui_kit::component::Theme) -> AnyElement {
+    mono_shell(theme)
+        .child(
+            // ponytail: 行数 ≤ MAX_LINES 已封顶，overflow 滚动够用；虚拟化等契约下发卡改签名时再上
+            div()
+                .id("preview-code-scroll")
+                .overflow_y_scroll()
+                .max_h(px(480.0))
+                .child(code_rows(lines, theme)),
+        )
+        .into_any_element()
 }
 
 /// 逐行渲染：行号列（右对齐、等宽补位）+ 内容；截断时追加提示行。
@@ -106,7 +105,11 @@ fn line_row(no: usize, text: &str, width: usize, theme: &gpui_kit::component::Th
 #[cfg(all(test, feature = "ui"))]
 mod tests {
     use super::code_rows;
-    use super::{is_truncated, line_no_width, render, visible_range, MAX_LINES, MONO_CONTAINER_ID};
+    use super::{
+        is_truncated, line_no_width, render_with_payload, visible_range, MAX_LINES,
+        MONO_CONTAINER_ID,
+    };
+    use crate::state::preview_payload::PreviewPayload;
     use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
     use gpui_kit::component::Theme;
     use gpui_kit::{point, px, size, AnyElement, Bounds, IntoElement as _, Pixels, TestAppContext};
@@ -142,10 +145,13 @@ mod tests {
         visual.debug_bounds(MONO_CONTAINER_ID)
     }
 
-    /// 未下发态（当前运行时唯一真实态）：等宽容器可定位 + 布局非零 + 不 panic。
+    /// 未下发态：等宽容器可定位 + 布局非零 + 不 panic（原因由载荷如实带出）。
     #[test]
     fn undelivered_state_locates_mono_container() {
-        let bounds = draw_mono_bounds(render("main.rs", &Theme::default()));
+        let payload = PreviewPayload::NotDelivered {
+            reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+        };
+        let bounds = draw_mono_bounds(render_with_payload("main.rs", &payload, &Theme::default()));
         assert_rendered(bounds, "代码预览未下发态等宽容器");
     }
 
@@ -258,12 +264,22 @@ fn language_of(path: &str) -> &'static str {
     }
 }
 
-/// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
+/// A14：把载荷画出来。代码载荷走行号 + 等宽行；
+/// 未下发 / 失败 / 载荷类型不符 ⇒ 诚实提示行（⛔ 不伪造内容）。
 pub(super) fn render_with_payload(
     path: &str,
-    payload: &crate::state::preview_payload::PreviewPayload,
+    payload: &PreviewPayload,
     theme: &gpui_kit::component::Theme,
 ) -> AnyElement {
-    let _ = payload;
-    render(path, theme)
+    // 文件名头 / 元信息行由 preview.rs 外壳负责，这里只画主体。
+    let _ = path;
+    match payload {
+        PreviewPayload::Code(p) => {
+            let lines: Vec<&str> = p.lines.iter().map(String::as_str).collect();
+            render_lines(&lines, theme)
+        }
+        PreviewPayload::NotDelivered { reason } => render_notice(reason, theme),
+        PreviewPayload::Failed(err) => render_notice(&err.line(), theme),
+        _ => render_notice("代码预览收到非代码载荷（不伪造内容）", theme),
+    }
 }
