@@ -3,6 +3,10 @@
 //! 硬约束：
 //! - ⛔ 不读文件、不做文件 I/O：预览内容由运行时契约下发（未就绪 ⇒ 显示诚实提示，不伪造内容）。
 //! - 颜色一律取自 `theme`，⛔ 不硬编码。
+use std::io::Read as _;
+
+use crate::state::preview_payload::{CodePayload, DecodeError, PreviewPayload, MAX_BYTES};
+
 use gpui_kit::*;
 
 /// 截断阈值：超过则只渲染前 `MAX_LINES` 行（§7：10MB 级文件不卡渲染进程）。
@@ -157,23 +161,100 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// A14 解码入口（a14-preview-decode-deps 基建落盘；**诚实占位**）
+// A14 解码入口（卡 `ui-a14-decode-code`）
 // ---------------------------------------------------------------------------
 //
-// 契约（A14 卡在此填实，⛔ 不要改签名、⛔ 不要动别的文件）：
-//   · `decode`               —— 把「待预览文件」解码成载荷。字节可由运行时下发（`bytes`）；
-//                              未下发时自行读本地文件。拿不到内容 ⇒ `NotDelivered` / `Failed`，
-//                              ⛔ 绝不伪造内容、⛔ 不吞错。
-//   · `render_with_payload`  —— 把载荷画出来。**默认退回既有占位视图**，因此外壳
-//                              （头信息 / 缩放控件 / 「未下发」提示行）行为与本次基建前一致。
+//   · `decode`              —— 字节下发 ⇒ 只用传入字节；未下发 ⇒ 读本地文件。
+//                             拿不到 ⇒ `NotDelivered` / `Failed`，⛔ 绝不伪造内容、⛔ 不吞错。
+//   · `render_with_payload` —— 把载荷画出来（复用上方行号 / 等宽外壳）。
 
-/// A14：解码待预览文件。当前为**诚实占位**（不读文件、不解码）。
-pub(super) fn decode(
-    _path: &str,
-    _bytes: Option<&[u8]>,
-) -> crate::state::preview_payload::PreviewPayload {
-    crate::state::preview_payload::PreviewPayload::NotDelivered {
-        reason: crate::state::preview_payload::DECODE_NOT_DELIVERED,
+/// A14：把待预览文件解码成代码载荷。
+///
+/// `bytes = Some(..)` ⇒ **只用传入字节**（不碰文件系统，便于测试）；
+/// `bytes = None` ⇒ 自行读 `path`（读失败 ⇒ `Failed(Io)`）。
+/// 字节超 [`MAX_BYTES`] 或行数超 [`MAX_LINES`] ⇒ 截断并置 `truncated`；
+/// 拿不到 / 解不出 ⇒ `Failed`，⛔ 绝不伪造内容。
+pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
+    let owned;
+    let buf: &[u8] = match bytes {
+        Some(b) => b,
+        None => {
+            owned = match read_capped(path) {
+                Ok(v) => v,
+                Err(e) => {
+                    return PreviewPayload::Failed(DecodeError::Io(format!("{path}: {e}")));
+                }
+            };
+            &owned
+        }
+    };
+    // read_capped 已封顶 ⇒ 超限只可能来自调用方直接下发的字节。
+    let over = bytes.is_some_and(|b| b.len() > MAX_BYTES);
+    let buf = if over { &buf[..MAX_BYTES] } else { buf };
+    let text = match to_text(buf, over) {
+        Ok(t) => t,
+        Err(e) => return PreviewPayload::Failed(e),
+    };
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let mut truncated = over;
+    if lines.len() > MAX_LINES {
+        lines.truncate(MAX_LINES);
+        truncated = true;
+    }
+    PreviewPayload::Code(CodePayload {
+        language: language_of(path).to_owned(),
+        lines,
+        truncated,
+    })
+}
+
+/// 读本地文件，最多 `MAX_BYTES`+1 字节即停（探测超限，⛔ 不整包进内存）。
+fn read_capped(path: &str) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_BYTES as u64 + 1)
+        .read_to_end(&mut buf)?;
+    buf.truncate(MAX_BYTES);
+    Ok(buf)
+}
+
+/// 字节 → UTF-8 文本。垃圾字节 ⇒ `Err(Parse)`（fail-closed，⛔ 不用 lossy 伪装）；
+/// 仅当 `MAX_BYTES` 截断劈开了多字节字符（错误在末尾且不完整）时，退到最长合法前缀。
+fn to_text(buf: &[u8], over: bool) -> Result<String, DecodeError> {
+    match std::str::from_utf8(buf) {
+        Ok(s) => Ok(s.to_owned()),
+        Err(e) => {
+            let split_tail = over && e.error_len().is_none();
+            let prefix = &buf[..e.valid_up_to()];
+            match (split_tail, std::str::from_utf8(prefix)) {
+                (true, Ok(s)) => Ok(s.to_owned()),
+                _ => Err(DecodeError::Parse("不是合法的 UTF-8 文本".to_owned())),
+            }
+        }
+    }
+}
+
+/// 按扩展名判语言（未知 ⇒ `text`）。
+fn language_of(path: &str) -> &'static str {
+    let Some((_, ext)) = path.rsplit_once('.') else {
+        return "text";
+    };
+    match ext.to_ascii_lowercase().as_str() {
+        "rs" => "rust",
+        "ts" => "ts",
+        "tsx" => "tsx",
+        "js" => "js",
+        "py" => "py",
+        "go" => "go",
+        "java" => "java",
+        "c" => "c",
+        "cpp" => "cpp",
+        "sh" => "sh",
+        "json" => "json",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "md" => "md",
+        _ => "text",
     }
 }
 
