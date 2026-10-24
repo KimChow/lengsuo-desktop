@@ -227,13 +227,7 @@ fn render_header(model: &CloudUpgradeBanner, theme: &Theme) -> Div {
 
 /// 面内容分发：横幅 / 体验面板 / 空态「未下发」（fail-closed）。
 fn render_surface(model: &CloudUpgradeBanner, theme: &Theme) -> Div {
-    let surface = div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px_4()
-        .py_3();
+    let surface = div().flex_1().flex().flex_col().gap_2().px_4().py_3();
     match model.surface_kind() {
         SurfaceKind::Banner => render_banner(surface, theme),
         SurfaceKind::Trial => render_trial(surface, theme),
@@ -349,19 +343,131 @@ fn render_trial(surface: Div, theme: &Theme) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, CloudUpgradeBanner, State, TITLE};
+    use super::{
+        main_area, render, CloudUpgradeBanner, Delivery, OpenTeamPhase, State, SurfaceKind,
+        BANNER_ACTION_ENTER, BANNER_ACTION_TRIAL, BANNER_SUBTITLE, BANNER_TITLE, NOT_DELIVERED,
+        OPEN_TEAM_ERROR, OPEN_TEAM_LOADING, OPEN_TEAM_NAVIGATION_ERROR, TITLE, TRIAL_FEATURES,
+        TRIAL_SUBTITLE, TRIAL_TITLE_HIGHLIGHT, TRIAL_TITLE_LEAD, TRIAL_TITLE_TAIL,
+    };
     use gpui_kit::component::Theme;
+    use std::collections::HashSet;
+
     #[test]
-    fn default_state_is_not_delivered() {
-        assert_eq!(State::default(), State::NotDelivered);
-        assert_eq!(CloudUpgradeBanner::not_delivered().state, State::NotDelivered);
+    fn states_and_features_are_enumerable_and_distinct() {
+        let states = [
+            State::Normal,
+            State::Loading,
+            State::Failed,
+            State::NotDelivered,
+        ];
+        assert_eq!(states.len(), 4);
+        let distinct: HashSet<String> = states.iter().map(|state| format!("{state:?}")).collect();
+        assert_eq!(distinct.len(), states.len());
+        let surfaces = [
+            SurfaceKind::Banner,
+            SurfaceKind::Trial,
+            SurfaceKind::NotDelivered,
+        ];
+        assert_eq!(surfaces.len(), 3);
+        let distinct: HashSet<String> = surfaces.iter().map(|kind| format!("{kind:?}")).collect();
+        assert_eq!(distinct.len(), surfaces.len());
+        assert_eq!(TRIAL_FEATURES.len(), 3);
+        let keys: HashSet<&str> = TRIAL_FEATURES.iter().map(|feature| feature.key).collect();
+        assert_eq!(keys.len(), TRIAL_FEATURES.len());
     }
+
     #[test]
-    fn title_not_empty() {
-        assert!(!TITLE.is_empty());
+    fn copy_is_verbatim_from_key_table() {
+        assert_eq!(TITLE, "助理团队升级横幅");
+        assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(BANNER_TITLE, "组建你的专属助理团队");
+        assert_eq!(
+            BANNER_SUBTITLE,
+            "7 x 24小时云端待命 · 专属记忆 · 一句话分派任务"
+        );
+        assert_eq!(BANNER_ACTION_TRIAL, "限时体验");
+        assert_eq!(BANNER_ACTION_ENTER, "进入");
+        assert_eq!(OPEN_TEAM_LOADING, "正在为你开启助理团队…");
+        assert_eq!(OPEN_TEAM_ERROR, "开启助理团队失败，请稍后重试。");
+        assert_eq!(OPEN_TEAM_NAVIGATION_ERROR, "页面跳转失败，请刷新后重试。");
+        assert_eq!(TRIAL_TITLE_LEAD, "把需求交给");
+        assert_eq!(TRIAL_TITLE_HIGHLIGHT, "助理");
+        assert_eq!(TRIAL_TITLE_TAIL, "团队，即刻开始协作");
+        assert_eq!(
+            TRIAL_SUBTITLE,
+            "7 × 24 小时在线干活，多任务并行处理，和助理一起高效协作"
+        );
+        let labels: Vec<&str> = TRIAL_FEATURES.iter().map(|feature| feature.label).collect();
+        for expected in ["7 x 24 小时待命", "专属记忆", "一句话分派"] {
+            assert!(labels.contains(&expected), "缺特性文案: {expected}");
+        }
     }
+
     #[test]
-    fn main_area_renders_without_panic() {
-        let _ = main_area(&Theme::default());
+    fn empty_delivery_yields_not_delivered_empty_state() {
+        let model = CloudUpgradeBanner::from_delivery(None);
+        assert_eq!(model.state, State::NotDelivered);
+        assert!(model.is_not_delivered());
+        assert_eq!(model.surface_kind(), SurfaceKind::NotDelivered);
+        assert_eq!(model.open_team_hint(), None);
+    }
+
+    #[test]
+    fn every_state_branch_maps_to_expected_surface() {
+        let delivered = Delivery { trial: false };
+        for (state, expected) in [
+            (State::Normal, SurfaceKind::Banner),
+            (State::Loading, SurfaceKind::NotDelivered),
+            (State::Failed, SurfaceKind::NotDelivered),
+            (State::NotDelivered, SurfaceKind::NotDelivered),
+        ] {
+            let model = CloudUpgradeBanner {
+                state,
+                delivery: Some(delivered),
+                open_team: None,
+            };
+            assert_eq!(model.surface_kind(), expected, "state {state:?}");
+        }
+        let trial = CloudUpgradeBanner::from_delivery(Some(Delivery { trial: true }));
+        assert_eq!(trial.state, State::Normal);
+        assert_eq!(trial.surface_kind(), SurfaceKind::Trial);
+    }
+
+    #[test]
+    fn open_team_phase_covers_all_hints() {
+        for (phase, expected) in [
+            (OpenTeamPhase::Loading, OPEN_TEAM_LOADING),
+            (OpenTeamPhase::Failed, OPEN_TEAM_ERROR),
+            (OpenTeamPhase::NavigationFailed, OPEN_TEAM_NAVIGATION_ERROR),
+        ] {
+            let model = CloudUpgradeBanner {
+                open_team: Some(phase),
+                ..CloudUpgradeBanner::not_delivered()
+            };
+            assert_eq!(model.open_team_hint(), Some(expected));
+        }
+        assert_eq!(CloudUpgradeBanner::not_delivered().open_team_hint(), None);
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_covers_all_surfaces_and_status_without_panic() {
+        let theme = Theme::default();
+        for model in [
+            CloudUpgradeBanner::not_delivered(),
+            CloudUpgradeBanner::from_delivery(Some(Delivery { trial: false })),
+            CloudUpgradeBanner::from_delivery(Some(Delivery { trial: true })),
+            CloudUpgradeBanner {
+                open_team: Some(OpenTeamPhase::Failed),
+                ..CloudUpgradeBanner::from_delivery(Some(Delivery { trial: true }))
+            },
+        ] {
+            let _ = render(&model, &theme);
+        }
     }
 }
