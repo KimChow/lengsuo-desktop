@@ -188,6 +188,7 @@ fn render(theme: &Theme, panel: &Panel) -> Div {
 }
 #[cfg(test)]
 mod tests {
+    use super::copy;
     use super::{main_area, Panel, State, TaskStatus, TITLE};
     use gpui_kit::component::Theme;
     #[test]
@@ -232,5 +233,68 @@ mod tests {
         assert_eq!(empty.capsule_text(), None);
         assert_eq!(empty.panel_title(), "0 个后台任务");
         assert!(empty.statuses_present().is_empty());
+    }
+    #[test]
+    fn copy_keys_verbatim() {
+        assert_eq!(
+            copy::CAPSULE_LABEL,
+            ("backgroundTask.capsuleLabel", "{count} 个后台任务运行中")
+        );
+        assert_eq!(
+            copy::CAPSULE_LABEL_COMPLETED,
+            (
+                "backgroundTask.capsuleLabelCompleted",
+                "{count} 个后台任务已完成"
+            )
+        );
+        assert_eq!(
+            copy::PANEL_TITLE_WITH_COMPLETED,
+            (
+                "backgroundTask.panelTitleWithCompleted",
+                "{count} 个后台任务"
+            )
+        );
+        assert_eq!(copy::PENDING, ("backgroundTask.pending", "等待中"));
+    }
+    #[test]
+    fn status_labels_verbatim() {
+        assert_eq!(TaskStatus::Running.label(), copy::RUNNING.1);
+        assert_eq!(TaskStatus::Running.label(), "已运行");
+        assert_eq!(TaskStatus::Pending.label(), copy::PENDING.1);
+        assert_eq!(TaskStatus::Pending.label(), "等待中");
+        assert_eq!(TaskStatus::Failed.label(), copy::FAILED.1);
+        assert_eq!(TaskStatus::Failed.label(), "任务失败");
+        assert_eq!(TaskStatus::Cancelled.label(), copy::CANCELLED.1);
+        assert_eq!(TaskStatus::Cancelled.label(), "已取消");
+        assert_eq!(TaskStatus::Completed.label(), copy::COMPLETED.1);
+        assert_eq!(TaskStatus::Completed.label(), "已完成");
+    }
+    #[test]
+    fn fail_closed_state_branches() {
+        for state in [State::Loading, State::Failed, State::NotDelivered] {
+            let panel = Panel {
+                state,
+                tasks: Vec::new(),
+            };
+            assert_ne!(panel.state, State::Normal);
+            assert_eq!(panel.capsule_text(), None);
+        }
+        assert_eq!(Panel::not_delivered().state, State::default());
+    }
+    #[test]
+    fn capsule_prefers_running_and_counts_templates() {
+        let mixed = Panel::delivered(vec![
+            TaskStatus::Completed,
+            TaskStatus::Completed,
+            TaskStatus::Running,
+        ]);
+        assert_eq!(mixed.capsule_text().as_deref(), Some("1 个后台任务运行中"));
+        assert_eq!(mixed.panel_title(), "1 个后台任务运行中");
+        let done_only = Panel::delivered(vec![TaskStatus::Completed, TaskStatus::Completed]);
+        assert_eq!(
+            done_only.capsule_text().as_deref(),
+            Some("2 个后台任务已完成")
+        );
+        assert_eq!(done_only.panel_title(), "2 个后台任务");
     }
 }
