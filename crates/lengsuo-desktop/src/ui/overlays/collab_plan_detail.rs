@@ -18,89 +18,50 @@ pub const NS_KEY_COUNT: usize = TEXTS.len();
 
 // ===== 纯数据层（无 GPUI 依赖）=====
 /// 命名空间 `collab.plan.detail` 全量文案（key、中文均逐字取自界面文案全表）。
+/// 每行两条仅为压行数（400 行软上限），键序与全表一致。
+#[rustfmt::skip]
 pub const TEXTS: &[(&str, &str)] = &[
-    ("collab.plan.detail.actions.start", "开始"),
-    ("collab.plan.detail.addToTask", "添加到输入框"),
-    ("collab.plan.detail.addToTaskComingSoon", "添加到输入框能力即将支持"),
-    ("collab.plan.detail.addToTaskSuccess", "已添加到输入框"),
-    ("collab.plan.detail.assigneeFallback", "未分配"),
-    ("collab.plan.detail.assigneeLabel", "处理人"),
-    ("collab.plan.detail.backToParent", "返回上级"),
-    ("collab.plan.detail.completeSubtodos.desc", "该待办下还有 {count} 个子待办未完成。"),
-    ("collab.plan.detail.completeSubtodos.question", "是否将它们一并更新为「{status}」？"),
-    ("collab.plan.detail.completeSubtodos.skip", "跳过子待办"),
-    ("collab.plan.detail.completeSubtodos.title", "同时完成未完成的子待办？"),
-    ("collab.plan.detail.completeSubtodos.unassigned", "未指派"),
-    ("collab.plan.detail.completeSubtodos.untitled", "未命名待办"),
-    ("collab.plan.detail.completeSubtodos.updateAll", "全部更新"),
-    ("collab.plan.detail.copyDetail", "复制为指令"),
-    ("collab.plan.detail.copyDetail.failure", "复制失败，请稍后重试"),
-    ("collab.plan.detail.copyDetail.success", "已复制为指令"),
-    ("collab.plan.detail.copyLink.aria", "复制链接"),
-    ("collab.plan.detail.copyLink.failure", "复制失败，请稍后重试"),
-    ("collab.plan.detail.copyLink.success", "待办链接已复制，其他成员可通过链接打开详情"),
-    ("collab.plan.detail.copyLink.title", "复制链接"),
-    ("collab.plan.detail.creator.createdBy", "由 {name} 创建"),
-    ("collab.plan.detail.creator.separator", "·"),
-    ("collab.plan.detail.creator.unknown", "未知"),
-    ("collab.plan.detail.creator.updatedAt", "更新于 {date}"),
-    ("collab.plan.detail.deleteConfirm.cancel", "取消"),
-    ("collab.plan.detail.deleteConfirm.confirm", "删除"),
-    ("collab.plan.detail.deleteConfirm.content", "删除后该事项将不可恢复，确认要删除吗？"),
-    ("collab.plan.detail.deleteConfirm.title", "确认删除"),
-    ("collab.plan.detail.deleteItem", "删除事项"),
-    ("collab.plan.detail.dueDateLabel", "截止日期"),
-    ("collab.plan.detail.emptyPrompt", "请选择一个事项查看详情。"),
-    ("collab.plan.detail.loading", "加载事项详情中…"),
-    ("collab.plan.detail.moreAria", "更多操作"),
-    ("collab.plan.detail.nav.next", "下一条"),
-    ("collab.plan.detail.nav.prev", "上一条"),
-    ("collab.plan.detail.openSource", "跳转{source}"),
-    ("collab.plan.detail.optionCreateFailed", "新建选项失败，请重试"),
-    ("collab.plan.detail.optionDeleteConfirmCancel", "取消"),
-    ("collab.plan.detail.optionDeleteConfirmDesc", "删除后将影响所有使用该选项的待办。"),
-    ("collab.plan.detail.optionDeleteConfirmOk", "删除"),
-    ("collab.plan.detail.optionDeleteConfirmTitle", "确认删除该选项？"),
-    ("collab.plan.detail.optionDeleteFailed", "删除选项失败，请重试"),
-    ("collab.plan.detail.optionEditFailed", "编辑选项失败，请重试"),
-    ("collab.plan.detail.priority.high", "高"),
-    ("collab.plan.detail.priority.low", "低"),
-    ("collab.plan.detail.priority.medium", "中"),
-    ("collab.plan.detail.priority.none", "无"),
-    ("collab.plan.detail.priority.urgent", "紧急"),
-    ("collab.plan.detail.priorityColorLabel", "优先级颜色"),
-    ("collab.plan.detail.priorityCreate", "新增优先级"),
-    ("collab.plan.detail.priorityDelete", "删除"),
-    ("collab.plan.detail.priorityEdit", "编辑"),
-    ("collab.plan.detail.priorityEditColor", "修改颜色"),
-    ("collab.plan.detail.priorityEmpty", "暂无优先级"),
-    ("collab.plan.detail.priorityLabel", "优先级"),
-    ("collab.plan.detail.priorityPlaceholder", "未设置"),
-    ("collab.plan.detail.prioritySearchPlaceholder", "搜索或新增优先级"),
-    ("collab.plan.detail.quickAction.completed", "完成"),
-    ("collab.plan.detail.quickAction.in_progress", "重启"),
-    ("collab.plan.detail.quickAction.resume", "恢复"),
-    ("collab.plan.detail.session.activeSuffix", " · 活跃中"),
-    ("collab.plan.detail.session.label", "· 关联 Session"),
-    ("collab.plan.detail.session.openArrow", "打开 →"),
-    ("collab.plan.detail.startedAtLabel", "开始日期"),
-    ("collab.plan.detail.statusLabel", "状态"),
-    ("collab.plan.detail.subtitle", "附属说明"),
-    ("collab.plan.detail.tab.activity", "动态"),
-    ("collab.plan.detail.tab.detail", "详情"),
-    ("collab.plan.detail.tabs.detail", "详情"),
-    ("collab.plan.detail.tagsColorLabel", "标签背景色"),
-    ("collab.plan.detail.tagsCreate", "新增标签"),
-    ("collab.plan.detail.tagsDelete", "删除"),
-    ("collab.plan.detail.tagsEdit", "编辑"),
-    ("collab.plan.detail.tagsEmpty", "暂无标签"),
-    ("collab.plan.detail.tagsLabel", "标签"),
-    ("collab.plan.detail.tagsPlaceholder", "未设置"),
-    ("collab.plan.detail.tagsSearchPlaceholder", "搜索或新增标签"),
-    ("collab.plan.detail.title", "待办详情"),
-    ("collab.plan.detail.transitionUnavailable", "当前状态暂不可切换"),
-    ("collab.plan.detail.window.expand", "放大窗口"),
-    ("collab.plan.detail.window.shrink", "缩小窗口"),
+    ("collab.plan.detail.actions.start", "开始"), ("collab.plan.detail.addToTask", "添加到输入框"),
+    ("collab.plan.detail.addToTaskComingSoon", "添加到输入框能力即将支持"), ("collab.plan.detail.addToTaskSuccess", "已添加到输入框"),
+    ("collab.plan.detail.assigneeFallback", "未分配"), ("collab.plan.detail.assigneeLabel", "处理人"),
+    ("collab.plan.detail.backToParent", "返回上级"), ("collab.plan.detail.completeSubtodos.desc", "该待办下还有 {count} 个子待办未完成。"),
+    ("collab.plan.detail.completeSubtodos.question", "是否将它们一并更新为「{status}」？"), ("collab.plan.detail.completeSubtodos.skip", "跳过子待办"),
+    ("collab.plan.detail.completeSubtodos.title", "同时完成未完成的子待办？"), ("collab.plan.detail.completeSubtodos.unassigned", "未指派"),
+    ("collab.plan.detail.completeSubtodos.untitled", "未命名待办"), ("collab.plan.detail.completeSubtodos.updateAll", "全部更新"),
+    ("collab.plan.detail.copyDetail", "复制为指令"), ("collab.plan.detail.copyDetail.failure", "复制失败，请稍后重试"),
+    ("collab.plan.detail.copyDetail.success", "已复制为指令"), ("collab.plan.detail.copyLink.aria", "复制链接"),
+    ("collab.plan.detail.copyLink.failure", "复制失败，请稍后重试"), ("collab.plan.detail.copyLink.success", "待办链接已复制，其他成员可通过链接打开详情"),
+    ("collab.plan.detail.copyLink.title", "复制链接"), ("collab.plan.detail.creator.createdBy", "由 {name} 创建"),
+    ("collab.plan.detail.creator.separator", "·"), ("collab.plan.detail.creator.unknown", "未知"),
+    ("collab.plan.detail.creator.updatedAt", "更新于 {date}"), ("collab.plan.detail.deleteConfirm.cancel", "取消"),
+    ("collab.plan.detail.deleteConfirm.confirm", "删除"), ("collab.plan.detail.deleteConfirm.content", "删除后该事项将不可恢复，确认要删除吗？"),
+    ("collab.plan.detail.deleteConfirm.title", "确认删除"), ("collab.plan.detail.deleteItem", "删除事项"),
+    ("collab.plan.detail.dueDateLabel", "截止日期"), ("collab.plan.detail.emptyPrompt", "请选择一个事项查看详情。"),
+    ("collab.plan.detail.loading", "加载事项详情中…"), ("collab.plan.detail.moreAria", "更多操作"),
+    ("collab.plan.detail.nav.next", "下一条"), ("collab.plan.detail.nav.prev", "上一条"),
+    ("collab.plan.detail.openSource", "跳转{source}"), ("collab.plan.detail.optionCreateFailed", "新建选项失败，请重试"),
+    ("collab.plan.detail.optionDeleteConfirmCancel", "取消"), ("collab.plan.detail.optionDeleteConfirmDesc", "删除后将影响所有使用该选项的待办。"),
+    ("collab.plan.detail.optionDeleteConfirmOk", "删除"), ("collab.plan.detail.optionDeleteConfirmTitle", "确认删除该选项？"),
+    ("collab.plan.detail.optionDeleteFailed", "删除选项失败，请重试"), ("collab.plan.detail.optionEditFailed", "编辑选项失败，请重试"),
+    ("collab.plan.detail.priority.high", "高"), ("collab.plan.detail.priority.low", "低"),
+    ("collab.plan.detail.priority.medium", "中"), ("collab.plan.detail.priority.none", "无"),
+    ("collab.plan.detail.priority.urgent", "紧急"), ("collab.plan.detail.priorityColorLabel", "优先级颜色"),
+    ("collab.plan.detail.priorityCreate", "新增优先级"), ("collab.plan.detail.priorityDelete", "删除"),
+    ("collab.plan.detail.priorityEdit", "编辑"), ("collab.plan.detail.priorityEditColor", "修改颜色"),
+    ("collab.plan.detail.priorityEmpty", "暂无优先级"), ("collab.plan.detail.priorityLabel", "优先级"),
+    ("collab.plan.detail.priorityPlaceholder", "未设置"), ("collab.plan.detail.prioritySearchPlaceholder", "搜索或新增优先级"),
+    ("collab.plan.detail.quickAction.completed", "完成"), ("collab.plan.detail.quickAction.in_progress", "重启"),
+    ("collab.plan.detail.quickAction.resume", "恢复"), ("collab.plan.detail.session.activeSuffix", " · 活跃中"),
+    ("collab.plan.detail.session.label", "· 关联 Session"), ("collab.plan.detail.session.openArrow", "打开 →"),
+    ("collab.plan.detail.startedAtLabel", "开始日期"), ("collab.plan.detail.statusLabel", "状态"),
+    ("collab.plan.detail.subtitle", "附属说明"), ("collab.plan.detail.tab.activity", "动态"),
+    ("collab.plan.detail.tab.detail", "详情"), ("collab.plan.detail.tabs.detail", "详情"),
+    ("collab.plan.detail.tagsColorLabel", "标签背景色"), ("collab.plan.detail.tagsCreate", "新增标签"),
+    ("collab.plan.detail.tagsDelete", "删除"), ("collab.plan.detail.tagsEdit", "编辑"),
+    ("collab.plan.detail.tagsEmpty", "暂无标签"), ("collab.plan.detail.tagsLabel", "标签"),
+    ("collab.plan.detail.tagsPlaceholder", "未设置"), ("collab.plan.detail.tagsSearchPlaceholder", "搜索或新增标签"),
+    ("collab.plan.detail.title", "待办详情"), ("collab.plan.detail.transitionUnavailable", "当前状态暂不可切换"),
+    ("collab.plan.detail.window.expand", "放大窗口"), ("collab.plan.detail.window.shrink", "缩小窗口"),
 ];
 
 /// 按全量 key 取文案；未知 key 返回 `None`（fail-closed，不猜值）。
@@ -168,15 +129,21 @@ pub struct TodoItem {
 impl TodoItem {
     /// 标题 fallback：`completeSubtodos.untitled`。
     pub fn title_or(&self) -> &str {
-        self.title.as_deref().unwrap_or_else(|| t("collab.plan.detail.completeSubtodos.untitled"))
+        self.title
+            .as_deref()
+            .unwrap_or_else(|| t("collab.plan.detail.completeSubtodos.untitled"))
     }
     /// 处理人 fallback：`assigneeFallback`。
     pub fn assignee_or(&self) -> &str {
-        self.assignee.as_deref().unwrap_or_else(|| t("collab.plan.detail.assigneeFallback"))
+        self.assignee
+            .as_deref()
+            .unwrap_or_else(|| t("collab.plan.detail.assigneeFallback"))
     }
     /// 创建者 fallback：`creator.unknown`。
     pub fn creator_or(&self) -> &str {
-        self.creator.as_deref().unwrap_or_else(|| t("collab.plan.detail.creator.unknown"))
+        self.creator
+            .as_deref()
+            .unwrap_or_else(|| t("collab.plan.detail.creator.unknown"))
     }
     /// 未完成子待办数（饱和减，⛔ 不出负数）。
     pub fn uncompleted_subtodos(&self) -> usize {
@@ -188,7 +155,10 @@ impl TodoItem {
     }
     /// `creator.createdBy` 填 name。
     pub fn created_by_line(&self) -> String {
-        fill("collab.plan.detail.creator.createdBy", &[("name", self.creator_or())])
+        fill(
+            "collab.plan.detail.creator.createdBy",
+            &[("name", self.creator_or())],
+        )
     }
     /// `creator.updatedAt` 填 date。
     pub fn updated_at_line(&self) -> Option<String> {
@@ -206,11 +176,19 @@ impl TodoItem {
     }
     /// 处理人行：`assigneeLabel` + 值/fallback。
     pub fn assignee_line(&self) -> String {
-        format!("{} {}", t("collab.plan.detail.assigneeLabel"), self.assignee_or())
+        format!(
+            "{} {}",
+            t("collab.plan.detail.assigneeLabel"),
+            self.assignee_or()
+        )
     }
     /// 优先级行：`priorityLabel` + 值。
     pub fn priority_line(&self) -> String {
-        format!("{} {}", t("collab.plan.detail.priorityLabel"), self.priority.label())
+        format!(
+            "{} {}",
+            t("collab.plan.detail.priorityLabel"),
+            self.priority.label()
+        )
     }
     /// 标签行：空 ⇒ `tagsEmpty`（不是空列表）；有值用 `creator.separator` 连接。
     pub fn tags_line(&self) -> String {
@@ -227,7 +205,12 @@ impl TodoItem {
     /// Session 行：`session.label` + 名称 + 可选 `session.activeSuffix` + `session.openArrow`。
     pub fn session_line(&self) -> Option<String> {
         let name = self.session.as_deref()?;
-        let mut line = format!("{} {} {}", t("collab.plan.detail.session.label"), name, t("collab.plan.detail.session.openArrow"));
+        let mut line = format!(
+            "{} {} {}",
+            t("collab.plan.detail.session.label"),
+            name,
+            t("collab.plan.detail.session.openArrow")
+        );
         if self.session_active {
             line.push_str(t("collab.plan.detail.session.activeSuffix"));
         }
@@ -250,11 +233,17 @@ impl TodoItem {
     }
     /// `completeSubtodos.desc` 填未完成数。
     pub fn subtodo_desc(&self) -> String {
-        fill("collab.plan.detail.completeSubtodos.desc", &[("count", &self.uncompleted_subtodos().to_string())])
+        fill(
+            "collab.plan.detail.completeSubtodos.desc",
+            &[("count", &self.uncompleted_subtodos().to_string())],
+        )
     }
     /// `completeSubtodos.question` 填目标状态。
     pub fn subtodo_question(&self, status: &str) -> String {
-        fill("collab.plan.detail.completeSubtodos.question", &[("status", status)])
+        fill(
+            "collab.plan.detail.completeSubtodos.question",
+            &[("status", status)],
+        )
     }
     /// 快捷动作文案（`quickAction.*`；未知状态按 `quickAction.resume`）。
     pub fn quick_action(&self) -> &'static str {
@@ -343,7 +332,11 @@ fn header_row(theme: &Theme) -> AnyElement {
         .px_4()
         .py_2()
         .child(SharedString::from(t("collab.plan.detail.backToParent")))
-        .child(div().text_color(theme.foreground).child(SharedString::from(t("collab.plan.detail.title"))))
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(t("collab.plan.detail.title"))),
+        )
         .child(SharedString::from(t("collab.plan.detail.nav.prev")))
         .child(SharedString::from(t("collab.plan.detail.nav.next")))
         .into_any_element()
@@ -357,7 +350,11 @@ fn tabs_row(theme: &Theme) -> AnyElement {
         .gap_2()
         .px_4()
         .py_2()
-        .child(div().text_color(theme.foreground).child(SharedString::from(t("collab.plan.detail.tab.detail"))))
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(t("collab.plan.detail.tab.detail"))),
+        )
         .child(SharedString::from(t("collab.plan.detail.tab.activity")))
         .into_any_element()
 }
@@ -371,7 +368,11 @@ fn actions_row(theme: &Theme) -> AnyElement {
         .px_4()
         .py_2()
         .text_xs()
-        .child(div().text_color(theme.foreground).child(SharedString::from(t("collab.plan.detail.actions.start"))))
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(t("collab.plan.detail.actions.start"))),
+        )
         .child(SharedString::from(t("collab.plan.detail.addToTask")))
         .child(SharedString::from(t("collab.plan.detail.copyDetail")))
         .child(SharedString::from(t("collab.plan.detail.copyLink.title")))
@@ -392,7 +393,11 @@ fn item_card(theme: &Theme, it: &TodoItem) -> AnyElement {
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(div().text_color(theme.foreground).child(SharedString::from(it.title_or())))
+                .child(
+                    div()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(it.title_or())),
+                )
                 .child(SharedString::from(it.quick_action())),
         )
         .child(SharedString::from(it.creator_line()))
@@ -403,13 +408,22 @@ fn item_card(theme: &Theme, it: &TodoItem) -> AnyElement {
         card = card.child(div().text_xs().child(SharedString::from(sub)));
     }
     if let Some(s) = it.status.as_deref() {
-        card = card.child(SharedString::from(format!("{} {}", t("collab.plan.detail.statusLabel"), s)));
+        card = card.child(SharedString::from(format!(
+            "{} {}",
+            t("collab.plan.detail.statusLabel"),
+            s
+        )));
     }
     if let Some(d) = it.dates_line() {
         card = card.child(SharedString::from(d));
     }
     if let Some(sess) = it.session_line() {
-        card = card.child(div().text_xs().text_color(theme.accent).child(SharedString::from(sess)));
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(theme.accent)
+                .child(SharedString::from(sess)),
+        );
     }
     if it.needs_subtodo_confirm() {
         let mut block = div()
@@ -417,14 +431,20 @@ fn item_card(theme: &Theme, it: &TodoItem) -> AnyElement {
             .flex_col()
             .gap_2()
             .text_xs()
-            .child(SharedString::from(t("collab.plan.detail.completeSubtodos.title")))
+            .child(SharedString::from(t(
+                "collab.plan.detail.completeSubtodos.title",
+            )))
             .child(SharedString::from(it.subtodo_desc()));
         if let Some(s) = it.status.as_deref() {
             block = block.child(SharedString::from(it.subtodo_question(s)));
         }
         block = block
-            .child(SharedString::from(t("collab.plan.detail.completeSubtodos.skip")))
-            .child(SharedString::from(t("collab.plan.detail.completeSubtodos.updateAll")));
+            .child(SharedString::from(t(
+                "collab.plan.detail.completeSubtodos.skip",
+            )))
+            .child(SharedString::from(t(
+                "collab.plan.detail.completeSubtodos.updateAll",
+            )));
         card = card.child(block);
     }
     card.into_any_element()
@@ -434,13 +454,26 @@ fn item_card(theme: &Theme, it: &TodoItem) -> AnyElement {
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{resolve, text, State, TEXTS, TITLE};
+    use super::{
+        fill, main_area, render, resolve, text, Priority, State, TodoItem, NOT_DELIVERED, TEXTS,
+        TITLE,
+    };
+    use gpui_kit::component::Theme;
 
     #[test]
-    fn title_is_verbatim() {
+    fn copy_is_verbatim() {
         assert_eq!(text("collab.plan.detail.title"), Some("待办详情"));
-        assert_eq!(text("collab.plan.detail.backToParent"), Some("返回上级"));
+        assert_eq!(
+            text("collab.plan.detail.emptyPrompt"),
+            Some("请选择一个事项查看详情。")
+        );
+        assert_eq!(text("collab.plan.detail.loading"), Some("加载事项详情中…"));
+        assert_eq!(text("collab.plan.detail.assigneeLabel"), Some("处理人"));
         assert_eq!(text("collab.plan.detail.assigneeFallback"), Some("未分配"));
+        assert_eq!(
+            text("collab.plan.detail.completeSubtodos.question"),
+            Some("是否将它们一并更新为「{status}」？")
+        );
         assert_eq!(TITLE, "协作计划详情");
     }
 
@@ -449,6 +482,7 @@ mod tests {
         assert_eq!(State::default(), State::NotDelivered);
         assert_eq!(resolve(None), State::NotDelivered);
         assert_eq!(State::NotDelivered.status_text(), "未下发");
+        assert_eq!(NOT_DELIVERED, "未下发");
     }
 
     #[test]
@@ -461,5 +495,95 @@ mod tests {
         seen.dedup();
         assert_eq!(seen.len(), n);
         assert!(seen.iter().all(|k| k.starts_with("collab.plan.detail.")));
+    }
+
+    #[test]
+    fn resolve_and_counts() {
+        let mut it = TodoItem {
+            subtodo_total: 3,
+            subtodo_done: 1,
+            ..Default::default()
+        };
+        assert_eq!(it.uncompleted_subtodos(), 2);
+        assert!(it.needs_subtodo_confirm());
+        it.subtodo_done = 5; // 饱和减：完成数超出总数不出负数
+        assert_eq!(it.uncompleted_subtodos(), 0);
+        assert!(!it.needs_subtodo_confirm());
+        assert_eq!(resolve(Some(vec![])), State::Empty);
+        assert_eq!(resolve(Some(vec![it.clone()])), State::Ready(vec![it]));
+    }
+
+    #[test]
+    fn templates_and_fallbacks() {
+        let bare = TodoItem::default();
+        assert_eq!(bare.title_or(), "未命名待办");
+        assert_eq!(bare.assignee_or(), "未分配");
+        assert_eq!(bare.creator_line(), "由 未知 创建");
+        assert_eq!(bare.tags_line(), "标签 暂无标签");
+        assert_eq!(bare.priority_line(), "优先级 未设置");
+        assert_eq!(bare.quick_action(), "恢复");
+        let full = TodoItem {
+            assignee: Some("甲".into()),
+            creator: Some("甲".into()),
+            updated_at: Some("2026-01-01".into()),
+            status: Some("completed".into()),
+            priority: Priority::Urgent,
+            tags: vec!["a".into(), "b".into()],
+            subtodo_total: 2,
+            ..Default::default()
+        };
+        assert_eq!(full.assignee_or(), "甲");
+        assert_eq!(full.creator_line(), "由 甲 创建·更新于 2026-01-01");
+        assert_eq!(full.tags_line(), "标签 a·b");
+        assert_eq!(full.priority_line(), "优先级 紧急");
+        assert_eq!(full.quick_action(), "完成");
+        assert_eq!(full.subtodo_desc(), "该待办下还有 2 个子待办未完成。");
+        assert_eq!(
+            full.subtodo_question("已完成"),
+            "是否将它们一并更新为「已完成」？"
+        );
+        assert_eq!(
+            fill("collab.plan.detail.openSource", &[("source", "仓库")]),
+            "跳转仓库"
+        );
+        let ctx = TodoItem {
+            started_at: Some("周一".into()),
+            due_at: Some("周五".into()),
+            session: Some("s1".into()),
+            session_active: true,
+            ..Default::default()
+        };
+        assert_eq!(ctx.dates_line().unwrap(), "开始日期 周一·截止日期 周五");
+        assert_eq!(
+            ctx.session_line().unwrap(),
+            "· 关联 Session s1 打开 → · 活跃中"
+        );
+        assert_eq!(Priority::High.label(), "高");
+        assert_eq!(Priority::Medium.label(), "中");
+        assert_eq!(Priority::Low.label(), "低");
+    }
+
+    #[test]
+    fn empty_input_is_empty_state_not_empty_list() {
+        let s = resolve(Some(Vec::new()));
+        assert_eq!(s, State::Empty);
+        assert_eq!(s.status_text(), "请选择一个事项查看详情。");
+        assert_ne!(s.status_text(), NOT_DELIVERED); // 空集 ≠ 未下发 ≠ 空列表
+    }
+
+    #[test]
+    fn render_branches_construct() {
+        let theme = Theme::default();
+        let _ = main_area(&theme); // ④：固定签名入口只构造元素树，不 panic
+        let _ = render(&theme, &State::NotDelivered);
+        let _ = render(&theme, &State::Loading);
+        let _ = render(&theme, &State::Empty);
+        let with_confirm = TodoItem {
+            title: Some("跨线联调".into()),
+            status: Some("in_progress".into()),
+            subtodo_total: 2,
+            ..Default::default()
+        };
+        let _ = render(&theme, &State::Ready(vec![with_confirm])); // 含子待办确认块分支
     }
 }
