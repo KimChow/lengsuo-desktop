@@ -6,6 +6,9 @@
 //! 其余 12 键文案未随卡下发，按禁自编红线暂不落键，文案表就绪后补齐
 //! （见 docs/ui-overlay-tool-approval-status.md）。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 面板标题（逐字取自文案全表）。
 pub const PANEL_TITLE: &str = "工具·审批";
@@ -36,19 +39,26 @@ pub const TEXT_CREDIT_HINT_IMAGE_GEN: &str =
 /// `tool.approval.creditHint.imageProcessing`（逐字）。
 pub const TEXT_CREDIT_HINT_IMAGE_PROCESSING: &str = "图片处理预计将消耗 5-10 积分，实际消耗以最终结算为准，请谨慎操作。允许后，当前会话内再次使用图片处理将不再提醒。";
 /// `tool.approval.creditHint.videoGen`（逐字）。
-pub const TEXT_CREDIT_HINT_VIDEO_GEN: &str = "生成视频将消耗额外积分，每 5 秒约 50-100 积分，请谨慎操作";
+pub const TEXT_CREDIT_HINT_VIDEO_GEN: &str =
+    "生成视频将消耗额外积分，每 5 秒约 50-100 积分，请谨慎操作";
 
 /// 命名空间 `tool.approval` 文案表（const 数组，键值逐字，按全键名排序；本卡前 12 键）。
 pub const COPY_TABLE: [(&str, &str); 12] = [
     ("tool.approval.allow", TEXT_ALLOW),
     ("tool.approval.alwaysAllow", TEXT_ALWAYS_ALLOW),
-    ("tool.approval.alwaysAllowThisLaunch", TEXT_ALWAYS_ALLOW_THIS_LAUNCH),
+    (
+        "tool.approval.alwaysAllowThisLaunch",
+        TEXT_ALWAYS_ALLOW_THIS_LAUNCH,
+    ),
     ("tool.approval.confirm", TEXT_CONFIRM),
     (
         "tool.approval.confirmTitle.computerUse",
         TEXT_CONFIRM_TITLE_COMPUTER_USE,
     ),
-    ("tool.approval.confirmTitle.imageGen", TEXT_CONFIRM_TITLE_IMAGE_GEN),
+    (
+        "tool.approval.confirmTitle.imageGen",
+        TEXT_CONFIRM_TITLE_IMAGE_GEN,
+    ),
     (
         "tool.approval.confirmTitle.imageProcessing",
         TEXT_CONFIRM_TITLE_IMAGE_PROCESSING,
@@ -61,12 +71,18 @@ pub const COPY_TABLE: [(&str, &str); 12] = [
         "tool.approval.creditHint.computerUse",
         TEXT_CREDIT_HINT_COMPUTER_USE,
     ),
-    ("tool.approval.creditHint.imageGen", TEXT_CREDIT_HINT_IMAGE_GEN),
+    (
+        "tool.approval.creditHint.imageGen",
+        TEXT_CREDIT_HINT_IMAGE_GEN,
+    ),
     (
         "tool.approval.creditHint.imageProcessing",
         TEXT_CREDIT_HINT_IMAGE_PROCESSING,
     ),
-    ("tool.approval.creditHint.videoGen", TEXT_CREDIT_HINT_VIDEO_GEN),
+    (
+        "tool.approval.creditHint.videoGen",
+        TEXT_CREDIT_HINT_VIDEO_GEN,
+    ),
 ];
 
 /// 按全键名查文案（纯函数；未知键返回 `None`，⛔ 不猜值）。
@@ -250,4 +266,111 @@ impl ToolApproval {
     pub fn is_empty_state(&self) -> bool {
         self.state == ToolApprovalState::Normal && self.request.is_none()
     }
+}
+
+// ===================== GPUI 层（只做映射，颜色一律取 theme token） =====================
+
+/// 浮层渲染（波次 9：浮层不占主区，返回整层容器由调用方叠加）。
+/// 数据源在运行时侧：`main_area` 以未拉取过的 Loading 默认模型渲染（fail-closed）。
+#[must_use]
+pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &ToolApproval::loading())
+}
+
+/// 按数据模型渲染整层：标题行 + 状态分支主体（加载/失败/空态/正常）。
+#[must_use]
+pub fn render(theme: &Theme, approval: &ToolApproval) -> Div {
+    let body = match approval.state {
+        ToolApprovalState::Loading => centered_line(theme, TEXT_LOADING),
+        ToolApprovalState::Failed => centered_line(theme, NOT_DELIVERED),
+        ToolApprovalState::Normal if approval.is_empty_state() => centered_line(theme, TEXT_EMPTY),
+        ToolApprovalState::Normal => match approval.request {
+            Some(capability) => approval_body(theme, capability),
+            // Normal 但缺请求 ⇒ 同空态，⛔ 不渲染空壳。
+            None => centered_line(theme, TEXT_EMPTY),
+        },
+    };
+    div()
+        .flex_1()
+        .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
+        .h_full()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px_4()
+                .py_2()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(PANEL_TITLE),
+        )
+        .child(body)
+}
+
+/// 居中单行（加载 / 失败 / 空态共用）。
+fn centered_line(theme: &Theme, text: &str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text.to_string())
+}
+
+/// 正常主体：确认标题 + 积分提示 + 动作按钮行。
+fn approval_body(theme: &Theme, capability: Capability) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .px_4()
+        .py_3()
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(capability.confirm_title()),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(capability.credit_hint()),
+        )
+        .child(actions_row(theme))
+}
+
+/// 动作按钮行：三档允许（次级）+ 确认（主）。
+fn actions_row(theme: &Theme) -> Div {
+    let mut row = div().flex().flex_wrap().gap_2();
+    for action in ApprovalAction::ALL {
+        row = row.child(action_button(theme, action));
+    }
+    row
+}
+
+/// 单个动作按钮（触达目标 ≥48dp：h_12；`Confirm` 为主按钮走 accent token）。
+fn action_button(theme: &Theme, action: ApprovalAction) -> Div {
+    let button = div()
+        .h_12()
+        .min_w(px(96.))
+        .px_5()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .text_sm();
+    if matches!(action, ApprovalAction::Confirm) {
+        button.text_color(theme.accent)
+    } else {
+        button.text_color(theme.foreground)
+    }
+    .child(action.label())
 }
