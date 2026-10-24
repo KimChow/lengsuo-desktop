@@ -294,18 +294,134 @@ fn count_chip(theme: &Theme, value: usize, tone: Tone) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, State, TITLE};
+    use super::{
+        main_area, render_overlay, Outcome, State, Tone, JOINING, JOIN_FAILED, MISSING_FILE,
+        NOTE_FAILURE_TEMPLATE, NOT_DELIVERED, OPEN_FAILED, PARTIAL_FAILURE_TEMPLATE,
+        SUCCESS_TEMPLATE, TITLE, UNAVAILABLE,
+    };
     use gpui_kit::component::Theme;
+
+    /// ③ 文案逐字一致：`artifactForward` 命名空间全 9 键。
     #[test]
-    fn default_state_is_not_delivered() {
+    fn copy_verbatim_from_namespace() {
+        assert_eq!(TITLE, "转发到团队");
+        assert_eq!(JOINING, "正在加载团队会话…");
+        assert_eq!(JOIN_FAILED, "团队会话加载失败，请重试");
+        assert_eq!(MISSING_FILE, "找不到要转发的本地文件");
+        assert_eq!(UNAVAILABLE, "当前环境不支持团队转发");
+        assert_eq!(OPEN_FAILED, "无法打开团队转发，请稍后重试");
+        assert_eq!(SUCCESS_TEMPLATE, "已转发到 {count} 个目标");
+        assert_eq!(
+            PARTIAL_FAILURE_TEMPLATE,
+            "已成功转发到 {successCount} 个目标，{failedCount} 个失败"
+        );
+        assert_eq!(NOTE_FAILURE_TEMPLATE, "文件已发送，{count} 条留言发送失败");
+    }
+
+    /// ① 纯函数层状态/计数正确。
+    #[test]
+    fn from_results_builds_outcome_and_counts() {
+        let all_ok = State::from_results(&[true, true, true]);
+        assert_eq!(all_ok, State::Done(Outcome::Success { count: 3 }));
+        assert_eq!(all_ok.target_counts(), Some((3, 0)));
+        let mixed = State::from_results(&[true, false, true, false]);
+        assert_eq!(
+            mixed,
+            State::Done(Outcome::PartialFailure {
+                success_count: 2,
+                failed_count: 2
+            })
+        );
+        assert_eq!(mixed.target_counts(), Some((2, 2)));
+        // 留言失败不按目标计数 ⇒ 无计数行数据。
+        assert_eq!(
+            State::Done(Outcome::NoteFailure { count: 4 }).target_counts(),
+            None
+        );
+    }
+
+    /// ② 空输入 ⇒ 空态（不是空清单、不是未下发）；默认态 fail-closed。
+    #[test]
+    fn empty_input_is_empty_state_and_default_fail_closed() {
+        assert_eq!(Outcome::from_results(&[]), None);
+        assert_eq!(State::from_results(&[]), State::Empty);
+        assert_ne!(State::from_results(&[]), State::NotDelivered);
         assert_eq!(State::default(), State::NotDelivered);
     }
+
+    /// 占位符填充：仅替换 `{count}` 等，模板其余部分逐字。
     #[test]
-    fn title_not_empty() {
-        assert!(!TITLE.is_empty());
+    fn message_fills_placeholders_verbatim() {
+        assert_eq!(Outcome::Success { count: 3 }.message(), "已转发到 3 个目标");
+        assert_eq!(
+            Outcome::PartialFailure {
+                success_count: 2,
+                failed_count: 1
+            }
+            .message(),
+            "已成功转发到 2 个目标，1 个失败"
+        );
+        assert_eq!(
+            Outcome::NoteFailure { count: 4 }.message(),
+            "文件已发送，4 条留言发送失败"
+        );
     }
+
+    /// ⑤ 状态分支覆盖：每个分支一条（主文案 + 语义色）。
     #[test]
-    fn main_area_renders_without_panic() {
-        let _ = main_area(&Theme::default());
+    fn every_state_branch_has_message_and_tone() {
+        let branches = [
+            (State::Unavailable, UNAVAILABLE, Tone::Danger),
+            (State::MissingFile, MISSING_FILE, Tone::Danger),
+            (State::Joining, JOINING, Tone::Muted),
+            (State::JoinFailed, JOIN_FAILED, Tone::Danger),
+            (State::OpenFailed, OPEN_FAILED, Tone::Danger),
+            (
+                State::Done(Outcome::Success { count: 1 }),
+                "已转发到 1 个目标",
+                Tone::Ok,
+            ),
+            (
+                State::Done(Outcome::PartialFailure {
+                    success_count: 1,
+                    failed_count: 1,
+                }),
+                "已成功转发到 1 个目标，1 个失败",
+                Tone::Danger,
+            ),
+            (
+                State::Done(Outcome::NoteFailure { count: 2 }),
+                "文件已发送，2 条留言发送失败",
+                Tone::Danger,
+            ),
+            (State::Empty, "", Tone::Muted),
+            (State::NotDelivered, NOT_DELIVERED, Tone::Muted),
+        ];
+        for (state, expected, tone) in branches {
+            assert_eq!(state.message(), expected, "message for {state:?}");
+            assert_eq!(state.tone(), tone, "tone for {state:?}");
+        }
+    }
+
+    /// ④ `main_area` 与全分支 `render_overlay` 不 panic。
+    #[test]
+    fn render_all_branches_without_panic() {
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+        let states = [
+            State::Unavailable,
+            State::MissingFile,
+            State::Joining,
+            State::JoinFailed,
+            State::OpenFailed,
+            State::Empty,
+            State::NotDelivered,
+            State::from_results(&[true]),
+            State::from_results(&[true, false]),
+            State::Done(Outcome::NoteFailure { count: 3 }),
+        ];
+        for state in &states {
+            let _ = render_overlay(&theme, state);
+        }
     }
 }
