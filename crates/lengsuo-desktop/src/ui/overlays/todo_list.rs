@@ -325,7 +325,7 @@ fn list_area(theme: &Theme, state: &TodoOverlayState) -> Div {
 
 /// 清单行：状态徽标 + 标题/描述 + 行内操作；编辑中的行换成草稿位 + 保存/取消。
 fn task_row(theme: &Theme, item: &TodoItem, editing: Option<&Editing>) -> Div {
-    let mut row = div()
+    let row = div()
         .flex()
         .items_center()
         .gap_2()
@@ -411,7 +411,7 @@ fn footer_row(theme: &Theme, state: &TodoOverlayState) -> Option<Div> {
 mod tests {
     use super::{
         fill_count, main_area, TodoItem, TodoList, TodoOverlayState, TodoStatus, ADD_TASK, CANCEL,
-        DELETE, EDIT, NEW_TASK, NO_TASKS, NOT_DELIVERED, SAVE, TASK_COUNT, TASK_DESCRIPTION,
+        DELETE, EDIT, NEW_TASK, NOT_DELIVERED, NO_TASKS, SAVE, TASK_COUNT, TASK_DESCRIPTION,
         TASK_TITLE, TITLE,
     };
     use gpui_kit::component::Theme;
@@ -544,5 +544,20 @@ mod tests {
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_all_branches_build_without_panic() {
+        let theme = Theme::default();
+        let mut list = list_with(vec![
+            item("标题一", TodoStatus::InProgress),
+            item("标题二", TodoStatus::Completed),
+        ]);
+        list.items[1].description = "带描述".to_string();
+        list.draft_title = "草稿标题".to_string();
+        assert!(list.begin_edit(0));
+        let _ = super::render(&theme, &TodoOverlayState::NotDelivered);
+        let _ = super::render(&theme, &TodoOverlayState::Ready(TodoList::default()));
+        let _ = super::render(&theme, &TodoOverlayState::Ready(list));
     }
 }
