@@ -187,17 +187,19 @@ fn template_rows_view(theme: &Theme, state: &ShareSelectionState) -> Div {
         Some(rows) => {
             col = col.children(rows.iter().map(|row| template_row(theme, row.clone())));
         }
-        None => col = col.child(
-            div()
-                .px_4()
-                .py_2()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
-        ),
+        None => {
+            col = col.child(
+                div()
+                    .px_4()
+                    .py_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(NOT_DELIVERED),
+            )
+        }
     }
     col
 }
@@ -216,19 +218,121 @@ fn template_row(theme: &Theme, text: String) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        fill_count, main_area, SharePayload, ShareSelectionState, CHANNEL_GROUP_LABEL, CLOSE,
+        MAX_PAIRS_TOOLTIP, NOT_DELIVERED, PLATFORM_CHANNELS, TITLE, TOOL_CHANNELS,
+    };
     use gpui_kit::component::Theme;
+
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+    fn count_template_fills_placeholder() {
+        assert_eq!(
+            fill_count(MAX_PAIRS_TOOLTIP, 3),
+            "最多可选择 3 条对话进行分享"
+        );
+        assert_eq!(
+            fill_count(MAX_PAIRS_TOOLTIP, 0),
+            "最多可选择 0 条对话进行分享"
+        );
     }
+
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn initial_state_is_fail_closed_not_delivered() {
+        let state = ShareSelectionState::initial();
+        assert!(state.is_not_delivered());
+        assert_eq!(state.template_rows(), None);
+        assert_eq!(state.max_pairs_hint(), None);
         assert_eq!(NOT_DELIVERED, "未下发");
     }
+
+    #[test]
+    fn empty_templates_is_empty_state_not_blank() {
+        // 空输入 ⇒ 「未下发」空态；不是空列表、不是空白。
+        let state = ShareSelectionState::Ready(SharePayload {
+            templates: vec![],
+            max_pairs: 5,
+        });
+        assert_eq!(state.template_rows(), None);
+        assert_eq!(
+            state.max_pairs_hint(),
+            Some("最多可选择 5 条对话进行分享".to_string())
+        );
+    }
+
+    #[test]
+    fn ready_state_reports_template_rows_and_hint() {
+        let want = vec!["delivered-a".to_string(), "delivered-b".to_string()];
+        let state = ShareSelectionState::Ready(SharePayload {
+            templates: want.clone(),
+            max_pairs: 2,
+        });
+        assert_eq!(state.template_rows(), Some(want.as_slice()));
+        assert_eq!(
+            state.max_pairs_hint(),
+            Some("最多可选择 2 条对话进行分享".to_string())
+        );
+    }
+
+    #[test]
+    fn overlay_copy_is_verbatim() {
+        assert_eq!(TITLE, "分享选择");
+        assert_eq!(CHANNEL_GROUP_LABEL, "选择分享方式");
+        assert_eq!(CLOSE, "退出分享");
+        assert_eq!(MAX_PAIRS_TOOLTIP, "最多可选择 {count} 条对话进行分享");
+    }
+
+    #[test]
+    fn channel_copy_is_verbatim() {
+        assert_eq!(TOOL_CHANNELS, &["复制链接", "浏览器打开", "生成二维码"]);
+        assert_eq!(
+            PLATFORM_CHANNELS,
+            &[
+                "Discord",
+                "Facebook",
+                "朋友圈",
+                "Slack",
+                "Telegram",
+                "X",
+                "微信"
+            ]
+        );
+    }
+
+    #[test]
+    fn channel_rows_are_populated_and_unique() {
+        assert!(TOOL_CHANNELS.len() >= 3);
+        assert!(PLATFORM_CHANNELS.len() >= 3);
+        let all: Vec<&str> = TOOL_CHANNELS
+            .iter()
+            .chain(PLATFORM_CHANNELS.iter())
+            .copied()
+            .collect();
+        assert!(all.iter().all(|label| !label.is_empty()));
+        let mut sorted = all.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), all.len());
+    }
+
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
         let _ = main_area(&theme);
+    }
+
+    #[test]
+    fn render_all_branches_build_without_panic() {
+        let theme = Theme::default();
+        let ready = ShareSelectionState::Ready(SharePayload {
+            templates: vec!["delivered-a".to_string()],
+            max_pairs: 4,
+        });
+        let empty = ShareSelectionState::Ready(SharePayload {
+            templates: vec![],
+            max_pairs: 4,
+        });
+        let _ = super::render(&theme, &ready);
+        let _ = super::render(&theme, &empty);
+        let _ = super::render(&theme, &ShareSelectionState::NotDelivered);
     }
 }
