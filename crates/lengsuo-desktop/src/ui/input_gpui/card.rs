@@ -296,8 +296,9 @@ fn send_circle(theme: &Theme, on_intent: impl Fn(InputCardIntent) + Clone + 'sta
 #[cfg(test)]
 mod tests {
     use super::{
-        card, send_tooltip, workspace_display, InputMode, NOT_DELIVERED, PLACEHOLDER,
-        PLACEHOLDER_GENERIC, PLACEHOLDER_QUICK_QA, SEND_TOOLTIP_FALLBACK,
+        card, send_tooltip, workspace_display, InputCardIntent, InputMode, ATTACH_GLYPH,
+        CARET_GLYPH, MIC_LABEL, NOT_DELIVERED, PERMISSION_LABEL, PLACEHOLDER, PLACEHOLDER_GENERIC,
+        PLACEHOLDER_QUICK_QA, QUICK_LABEL, SEND_GLYPH, SEND_TOOLTIP_FALLBACK, WORKSPACE_LABEL,
     };
     use gpui_kit::component::Theme;
 
@@ -346,8 +347,38 @@ mod tests {
     #[test]
     fn build_not_panic() {
         let theme = Theme::default();
-        let noop = |_: super::InputCardIntent| ();
+        let noop = |_: InputCardIntent| ();
         let _ = card(&theme, InputMode::Task, None, noop);
         let _ = card(&theme, InputMode::QuickQa, Some("默认空间"), noop);
+    }
+
+    #[test]
+    fn glyphs_and_labels_verbatim() {
+        assert_eq!(ATTACH_GLYPH, "+");
+        assert_eq!(QUICK_LABEL, "⚡快捷");
+        assert_eq!(CARET_GLYPH, "⌄");
+        assert_eq!(MIC_LABEL, "麦克风");
+        assert_eq!(SEND_GLYPH, "↑");
+        assert_eq!(WORKSPACE_LABEL, "选择工作空间");
+        assert_eq!(PERMISSION_LABEL, "默认权限");
+        assert_eq!(NOT_DELIVERED, "未下发");
+    }
+
+    #[test]
+    fn intents_six_distinct() {
+        let all = [
+            InputCardIntent::Attach,
+            InputCardIntent::QuickMenu,
+            InputCardIntent::Microphone,
+            InputCardIntent::Send,
+            InputCardIntent::WorkspaceMenu,
+            InputCardIntent::PermissionMenu,
+        ];
+        assert_eq!(all.len(), 6);
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
     }
 }
