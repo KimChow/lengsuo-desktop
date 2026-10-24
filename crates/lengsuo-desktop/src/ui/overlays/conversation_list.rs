@@ -1,8 +1,9 @@
 //! 会话列表浮层（波次 7，卡 `ui-overlay-conversation-list`）。
 //!
 //! 分层约定（同 `panel_views`）：纯数据层 + GPUI 层（[`main_area`]）。
-//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `conversationList`。
-//! 数据源在运行时侧：本模块当前是**诚实占位**，等跨线契约就绪后换源。
+//! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间
+//! `conversationList` / `sidebar`。数据源在运行时侧：当前以未下发快照渲染，
+//! 等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
@@ -163,46 +164,213 @@ impl ConversationListOverlay {
     }
 }
 
-/// 视图标题（逐字取自界面文案全表）。
-pub const TITLE: &str = "会话列表";
+// ============ GPUI 层 ============
+
 /// 数据未下发时的说明（fail-closed；⛔ 不得替换为空列表）。
 pub const NOT_DELIVERED: &str = "未下发";
+
 /// 浮层渲染（波次 7：浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 无数据源：以 [`ConversationListOverlay::not_delivered`] 快照渲染 ——
+/// 「更多」分区如实显示空态 + 状态行「未下发」，⛔ 不伪造会话行/未读数。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(&ConversationListOverlay::not_delivered(), theme)
+}
+
+/// 视图 = 状态的纯函数。
+fn render(overlay: &ConversationListOverlay, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(header_row(theme))
+        .child(section_label(copy::PRIMARY_SECTION, theme))
+        .child(menu_row(copy::CONTEXT_MENU, theme))
+        .child(menu_row(copy::OPEN_WINDOW, theme))
+        .child(tip_row(copy::DRAG_TIP, theme))
+        .child(section_label(copy::MORE_SECTION, theme))
+        .child(content_area(overlay, theme))
+        .children(state_line(overlay, theme))
+        .child(footer_row(overlay.mode, theme))
+}
+
+/// 标题行：自定义菜单栏 + 收起侧边栏。
+fn header_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
-                .child(TITLE),
+                .child(copy::CUSTOM_MENU_TITLE),
         )
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(copy::COLLAPSE_SIDEBAR),
         )
+}
+
+/// 分区标题（一级菜单 / 更多）。
+fn section_label(label: &'static str, theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .pt_2()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(label)
+}
+
+/// 菜单行。
+fn menu_row(label: &'static str, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .px_4()
+        .py_1()
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(label)
+}
+
+/// 弱化提示行（拖拽可替换位置）。
+fn tip_row(label: &'static str, theme: &Theme) -> Div {
+    div()
+        .px_4()
+        .py_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(label)
+}
+
+/// 内容区：有数据 ⇒ 侧栏分组标题 + 列表行；无数据 ⇒ 空态（不是空列表）。
+fn content_area(overlay: &ConversationListOverlay, theme: &Theme) -> Div {
+    if overlay.visible_rows().is_empty() {
+        return empty_state_row(theme);
+    }
+    overlay
+        .groups
+        .iter()
+        .filter(|group| group.has_visible())
+        .fold(div().flex().flex_col().gap_1(), |list, group| {
+            list.child(group_section(group, theme))
+        })
+}
+
+/// 空态（`conversationList.customMenuDialog.moreEmpty`）：居中弱化说明。
+fn empty_state_row(theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px_4()
+        .py_6()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(copy::MORE_EMPTY)
+}
+
+/// 侧栏分组：分组标题 + 组内列表行。
+fn group_section(group: &ConversationGroup, theme: &Theme) -> Div {
+    let section = div().flex().flex_col().gap_1().child(
+        div()
+            .px_4()
+            .pt_2()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(SharedString::from(group.title.as_str())),
+    );
+    group.visible_rows().into_iter().fold(section, |acc, item| {
+        acc.child(conversation_row(item, theme))
+    })
+}
+
+/// 列表行：归档弱化、置顶加粗、未读 >0 挂徽标。
+fn conversation_row(item: &ConversationItem, theme: &Theme) -> Div {
+    let color = if item.archived {
+        theme.muted_foreground
+    } else {
+        theme.foreground
+    };
+    let row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_1()
+        .text_sm()
+        .text_color(color);
+    let row = if item.pinned { row.font_bold() } else { row };
+    let row = row.child(SharedString::from(item.title.as_str()));
+    if item.unread > 0 {
+        row.child(unread_badge(item.unread, theme))
+    } else {
+        row
+    }
+}
+
+/// 未读徽标：只渲染数据源给的数值，⛔ 不编造。
+fn unread_badge(unread: u32, theme: &Theme) -> Div {
+    div()
+        .flex_shrink_0()
+        .px_1()
+        .rounded_sm()
+        .bg(theme.accent)
+        .text_xs()
+        .text_color(theme.foreground)
+        .child(SharedString::from(unread.to_string()))
+}
+
+/// 状态行：未下发时的 fail-closed 说明。
+fn state_line(overlay: &ConversationListOverlay, theme: &Theme) -> Option<Div> {
+    (overlay.state == ConversationListState::NotDelivered).then(|| {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .py_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(NOT_DELIVERED)
+    })
+}
+
+/// 底部动作行：侧栏形态切换。
+fn footer_row(mode: SidebarMode, theme: &Theme) -> Div {
+    div()
+        .mt_auto()
+        .flex()
+        .items_center()
+        .justify_end()
+        .px_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme.border)
+        .text_sm()
+        .text_color(theme.foreground)
+        .child(mode.toggle_label())
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{copy, main_area, NOT_DELIVERED};
     use gpui_kit::component::Theme;
     #[test]
     fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+        assert_eq!(copy::CUSTOM_MENU_TITLE, "自定义菜单栏");
     }
     #[test]
     fn not_delivered_text_is_honest_fail_closed() {
