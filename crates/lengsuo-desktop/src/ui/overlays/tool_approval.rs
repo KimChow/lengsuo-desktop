@@ -1,26 +1,253 @@
-//! 工具·审批 —— 波次 9 脚手架（诚实占位）。
-//! 文案命名空间 `tool.approval`（24 有效键，品牌词已剔除）。
-//! 真实视图由卡 `ui-overlay-tool-approval` 落地；本占位保证模块登记与 fail-closed 文案。
+//! 工具·审批 —— 波次 9，卡 `ui-overlay-tool-approval`。
+//!
+//! 分层约定（同 `credit_hint`）：纯数据层（文案表/状态机先行）+ GPUI 层（只做映射）。
+//! 硬约束：fail-closed；文案命名空间 `tool.approval` 逐字取自文案全表，⛔ 自编禁令。
+//! 命名空间共 24 有效键（品牌词已剔除），本卡落任务书逐字摘录的前 12 键；
+//! 其余 12 键文案未随卡下发，按禁自编红线暂不落键，文案表就绪后补齐
+//! （见 docs/ui-overlay-tool-approval-status.md）。
+#![cfg(feature = "ui")]
 
 /// 面板标题（逐字取自文案全表）。
 pub const PANEL_TITLE: &str = "工具·审批";
 
-/// 渲染占位：加载失败必须可见（fail-closed），不退化成空列表。
-pub fn render_placeholder() -> String {
-    format!("{}：数据未接入（fail-closed）", PANEL_TITLE)
+// ===================== 纯数据层（文案表 + 状态机，无 GPUI 依赖） =====================
+
+/// `tool.approval.allow`（逐字）。
+pub const TEXT_ALLOW: &str = "允许";
+/// `tool.approval.alwaysAllow`（逐字）。
+pub const TEXT_ALWAYS_ALLOW: &str = "本次会话始终允许";
+/// `tool.approval.alwaysAllowThisLaunch`（逐字）。
+pub const TEXT_ALWAYS_ALLOW_THIS_LAUNCH: &str = "本次启动内始终允许";
+/// `tool.approval.confirm`（逐字）。
+pub const TEXT_CONFIRM: &str = "确认";
+/// `tool.approval.confirmTitle.computerUse`（逐字）。
+pub const TEXT_CONFIRM_TITLE_COMPUTER_USE: &str = "确认开始使用电脑操控能力？";
+/// `tool.approval.confirmTitle.imageGen`（逐字）。
+pub const TEXT_CONFIRM_TITLE_IMAGE_GEN: &str = "确认开始生成图片？";
+/// `tool.approval.confirmTitle.imageProcessing`（逐字）。
+pub const TEXT_CONFIRM_TITLE_IMAGE_PROCESSING: &str = "确认开始处理图片？";
+/// `tool.approval.confirmTitle.videoGen`（逐字）。
+pub const TEXT_CONFIRM_TITLE_VIDEO_GEN: &str = "确认开始生成视频？";
+/// `tool.approval.creditHint.computerUse`（逐字）。
+pub const TEXT_CREDIT_HINT_COMPUTER_USE: &str = "使用该能力将消耗额外积分，请谨慎操作";
+/// `tool.approval.creditHint.imageGen`（逐字）。
+pub const TEXT_CREDIT_HINT_IMAGE_GEN: &str =
+    "当前模型生成图片将消耗额外积分，每张图片约 5-10积分，请谨慎操作";
+/// `tool.approval.creditHint.imageProcessing`（逐字）。
+pub const TEXT_CREDIT_HINT_IMAGE_PROCESSING: &str = "图片处理预计将消耗 5-10 积分，实际消耗以最终结算为准，请谨慎操作。允许后，当前会话内再次使用图片处理将不再提醒。";
+/// `tool.approval.creditHint.videoGen`（逐字）。
+pub const TEXT_CREDIT_HINT_VIDEO_GEN: &str = "生成视频将消耗额外积分，每 5 秒约 50-100 积分，请谨慎操作";
+
+/// 命名空间 `tool.approval` 文案表（const 数组，键值逐字，按全键名排序；本卡前 12 键）。
+pub const COPY_TABLE: [(&str, &str); 12] = [
+    ("tool.approval.allow", TEXT_ALLOW),
+    ("tool.approval.alwaysAllow", TEXT_ALWAYS_ALLOW),
+    ("tool.approval.alwaysAllowThisLaunch", TEXT_ALWAYS_ALLOW_THIS_LAUNCH),
+    ("tool.approval.confirm", TEXT_CONFIRM),
+    (
+        "tool.approval.confirmTitle.computerUse",
+        TEXT_CONFIRM_TITLE_COMPUTER_USE,
+    ),
+    ("tool.approval.confirmTitle.imageGen", TEXT_CONFIRM_TITLE_IMAGE_GEN),
+    (
+        "tool.approval.confirmTitle.imageProcessing",
+        TEXT_CONFIRM_TITLE_IMAGE_PROCESSING,
+    ),
+    (
+        "tool.approval.confirmTitle.videoGen",
+        TEXT_CONFIRM_TITLE_VIDEO_GEN,
+    ),
+    (
+        "tool.approval.creditHint.computerUse",
+        TEXT_CREDIT_HINT_COMPUTER_USE,
+    ),
+    ("tool.approval.creditHint.imageGen", TEXT_CREDIT_HINT_IMAGE_GEN),
+    (
+        "tool.approval.creditHint.imageProcessing",
+        TEXT_CREDIT_HINT_IMAGE_PROCESSING,
+    ),
+    ("tool.approval.creditHint.videoGen", TEXT_CREDIT_HINT_VIDEO_GEN),
+];
+
+/// 按全键名查文案（纯函数；未知键返回 `None`，⛔ 不猜值）。
+#[must_use]
+pub fn copy_text(key: &str) -> Option<&'static str> {
+    COPY_TABLE
+        .iter()
+        .find(|(table_key, _)| *table_key == key)
+        .map(|(_, text)| *text)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// 加载态文案（同族界面约定，逐字）。
+pub const TEXT_LOADING: &str = "加载中...";
+/// 空态文案（Normal 且无待审批请求；同族界面约定，逐字）。
+pub const TEXT_EMPTY: &str = "暂无内容";
+/// 失败/未下发的 fail-closed 文案（同族界面约定，逐字；⛔ 不退化成空列表）。
+pub const NOT_DELIVERED: &str = "未下发";
 
-    #[test]
-    fn title_is_verbatim() {
-        assert!(!PANEL_TITLE.is_empty());
+/// 浮层状态机：默认 `Loading`（未拉取过 ≠ 空集，⛔ 不把缺数据伪装成空态）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolApprovalState {
+    /// 已接入且存在待审批请求。
+    Normal,
+    /// 未拉取过（诚实默认态）。
+    #[default]
+    Loading,
+    /// 拉取失败（fail-closed：如实可见，不静默吞掉）。
+    Failed,
+}
+
+/// 待审批能力（`confirmTitle`/`creditHint` 的 4 个分支）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Capability {
+    ComputerUse,
+    ImageGen,
+    ImageProcessing,
+    VideoGen,
+}
+
+impl Capability {
+    /// 全量分支（渲染回归按此遍历）。
+    pub const ALL: [Self; 4] = [
+        Self::ComputerUse,
+        Self::ImageGen,
+        Self::ImageProcessing,
+        Self::VideoGen,
+    ];
+
+    /// 确认标题的全键名。
+    #[must_use]
+    pub const fn confirm_title_key(self) -> &'static str {
+        match self {
+            Self::ComputerUse => "tool.approval.confirmTitle.computerUse",
+            Self::ImageGen => "tool.approval.confirmTitle.imageGen",
+            Self::ImageProcessing => "tool.approval.confirmTitle.imageProcessing",
+            Self::VideoGen => "tool.approval.confirmTitle.videoGen",
+        }
     }
 
-    #[test]
-    fn placeholder_mentions_fail_closed() {
-        assert!(render_placeholder().contains("fail-closed"));
+    /// 积分提示的全键名。
+    #[must_use]
+    pub const fn credit_hint_key(self) -> &'static str {
+        match self {
+            Self::ComputerUse => "tool.approval.creditHint.computerUse",
+            Self::ImageGen => "tool.approval.creditHint.imageGen",
+            Self::ImageProcessing => "tool.approval.creditHint.imageProcessing",
+            Self::VideoGen => "tool.approval.creditHint.videoGen",
+        }
+    }
+
+    /// 确认标题（逐字）。
+    #[must_use]
+    pub const fn confirm_title(self) -> &'static str {
+        match self {
+            Self::ComputerUse => TEXT_CONFIRM_TITLE_COMPUTER_USE,
+            Self::ImageGen => TEXT_CONFIRM_TITLE_IMAGE_GEN,
+            Self::ImageProcessing => TEXT_CONFIRM_TITLE_IMAGE_PROCESSING,
+            Self::VideoGen => TEXT_CONFIRM_TITLE_VIDEO_GEN,
+        }
+    }
+
+    /// 积分提示（逐字）。
+    #[must_use]
+    pub const fn credit_hint(self) -> &'static str {
+        match self {
+            Self::ComputerUse => TEXT_CREDIT_HINT_COMPUTER_USE,
+            Self::ImageGen => TEXT_CREDIT_HINT_IMAGE_GEN,
+            Self::ImageProcessing => TEXT_CREDIT_HINT_IMAGE_PROCESSING,
+            Self::VideoGen => TEXT_CREDIT_HINT_VIDEO_GEN,
+        }
+    }
+}
+
+/// 审批动作（命名空间的 4 个动作键）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalAction {
+    Allow,
+    AlwaysAllow,
+    AlwaysAllowThisLaunch,
+    Confirm,
+}
+
+impl ApprovalAction {
+    /// 全量动作（渲染按此遍历）。
+    pub const ALL: [Self; 4] = [
+        Self::Allow,
+        Self::AlwaysAllow,
+        Self::AlwaysAllowThisLaunch,
+        Self::Confirm,
+    ];
+
+    /// 动作的全键名。
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Allow => "tool.approval.allow",
+            Self::AlwaysAllow => "tool.approval.alwaysAllow",
+            Self::AlwaysAllowThisLaunch => "tool.approval.alwaysAllowThisLaunch",
+            Self::Confirm => "tool.approval.confirm",
+        }
+    }
+
+    /// 动作文案（逐字）。
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Allow => TEXT_ALLOW,
+            Self::AlwaysAllow => TEXT_ALWAYS_ALLOW,
+            Self::AlwaysAllowThisLaunch => TEXT_ALWAYS_ALLOW_THIS_LAUNCH,
+            Self::Confirm => TEXT_CONFIRM,
+        }
+    }
+}
+
+/// 浮层数据模型：状态 + 待审批能力（`None` 在 Normal 下 ⇒ 空态）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolApproval {
+    pub state: ToolApprovalState,
+    pub request: Option<Capability>,
+}
+
+impl ToolApproval {
+    /// 未拉取过的诚实默认态。
+    #[must_use]
+    pub fn loading() -> Self {
+        Self {
+            state: ToolApprovalState::Loading,
+            request: None,
+        }
+    }
+
+    /// 拉取失败（fail-closed）。
+    #[must_use]
+    pub fn failed() -> Self {
+        Self {
+            state: ToolApprovalState::Failed,
+            request: None,
+        }
+    }
+
+    /// 已接入、当前无待审批请求（空态，⛔ 不是空列表渲染）。
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            state: ToolApprovalState::Normal,
+            request: None,
+        }
+    }
+
+    /// 已接入、待审批的能力确认请求。
+    #[must_use]
+    pub fn capability(capability: Capability) -> Self {
+        Self {
+            state: ToolApprovalState::Normal,
+            request: Some(capability),
+        }
+    }
+
+    /// 空态判定：仅 Normal 且无待审批请求。
+    #[must_use]
+    pub fn is_empty_state(&self) -> bool {
+        self.state == ToolApprovalState::Normal && self.request.is_none()
     }
 }
