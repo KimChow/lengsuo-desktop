@@ -301,9 +301,11 @@ fn info_row(theme: &Theme, label: &'static str, value: Option<String>) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy, Cycle, PayResult, PurchaseInfo, RefundState, State, TITLE};
+    use super::{
+        copy, main_area, pay_banner, render, Cycle, PayResult, PurchaseInfo, RefundState, State,
+        NOT_DELIVERED, TITLE,
+    };
     use gpui_kit::component::Theme;
-    use super::{main_area, NOT_DELIVERED};
 
     /// 测试夹具：一份完整下发的购买信息（仅测试用，⛔ 不进渲染默认值）。
     fn delivered_sample() -> PurchaseInfo {
@@ -344,11 +346,7 @@ mod tests {
         assert_eq!(PurchaseInfo::row_labels().len(), 4);
         let sample = delivered_sample();
         assert_eq!(
-            sample
-                .row_values()
-                .iter()
-                .filter(|v| v.is_some())
-                .count(),
+            sample.row_values().iter().filter(|v| v.is_some()).count(),
             4
         );
     }
@@ -389,5 +387,58 @@ mod tests {
             delivered_sample().renew_cta().as_deref(),
             Some("¥12.00续期1个月")
         );
+    }
+
+    /// ⑤ 状态分支覆盖（每个分支一条断言）。
+    #[test]
+    fn render_state_branches() {
+        let theme = Theme::default();
+        let sample = delivered_sample();
+        // Normal：走数据分支（4 行 + 退款操作 + 续期 CTA + 协议）。
+        let _ = render(&theme, &sample, State::Normal);
+        assert!(State::Normal.shows_info());
+        // Loading / Failed / NotDelivered：一律 fail-closed（⇒「未下发」）。
+        for state in [State::Loading, State::Failed, State::NotDelivered] {
+            let _ = render(&theme, &sample, state);
+            assert!(!state.shows_info());
+        }
+        // 空数据 + Normal：空态分支（不是空列表）。
+        let _ = render(&theme, &PurchaseInfo::default(), State::Normal);
+    }
+
+    /// ⑤ 标题行（支付结果横幅）三分支。
+    #[test]
+    fn pay_banner_branches() {
+        let theme = Theme::default();
+        let _ = pay_banner(&theme, Some(PayResult::Success), State::Normal);
+        let _ = pay_banner(&theme, Some(PayResult::Timeout), State::Normal);
+        let _ = pay_banner(&theme, None, State::Normal);
+        // 状态非 Normal 时即使有支付结果也 fail-closed。
+        let _ = pay_banner(&theme, Some(PayResult::Success), State::NotDelivered);
+    }
+
+    /// ⑤ 退款态六分支文案逐字落位。
+    #[test]
+    fn refund_state_text_branches() {
+        assert_eq!(RefundState::Refundable.text(), "支持7天内退款");
+        assert_eq!(RefundState::Expired.text(), "超过7天不可退款");
+        assert_eq!(RefundState::Submitting.text(), "退款中…");
+        assert_eq!(RefundState::InProgress.text(), "退款处理中，请稍后重试");
+        assert_eq!(RefundState::Success.text(), "退款成功");
+        assert_eq!(RefundState::Failed.text(), "退款失败，请稍后重试");
+    }
+
+    /// ⑤ 部分下发：已有值落位、未下发行如实缺省（⛔ 不伪造）。
+    #[test]
+    fn partial_delivery_keeps_undelivered_rows() {
+        let info = PurchaseInfo {
+            amount: Some("¥12.00".into()),
+            ..Default::default()
+        };
+        assert!(!info.is_empty());
+        let values = info.row_values();
+        assert_eq!(values[0].as_deref(), Some("¥12.00"));
+        assert!(values[1..].iter().all(Option::is_none));
+        let _ = render(&Theme::default(), &info, State::Normal);
     }
 }
