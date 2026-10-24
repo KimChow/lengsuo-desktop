@@ -366,16 +366,98 @@ fn render_details(theme: &Theme, details: &Details) -> Div {
 }
 #[cfg(test)]
 mod tests {
-    use super::{main_area, NOT_DELIVERED, TITLE};
+    use super::{
+        fill_updated_at_line, fill_workspace_line, main_area, render_details, Details,
+        TaskHoverCard, TaskKind, TaskStatus, COPY_WORKTREE_BRANCH, NOT_DELIVERED, TITLE,
+        UPDATED_AT_TEMPLATE, WORKSPACE_TEMPLATE,
+    };
     use gpui_kit::component::Theme;
+    use std::collections::HashSet;
+
     #[test]
-    fn title_is_taken_verbatim_and_not_blank() {
-        assert!(!TITLE.is_empty());
+    fn kind_and_status_cover_namespace_counts() {
+        assert_eq!(TaskKind::ALL.len(), 5);
+        assert_eq!(TaskStatus::ALL.len(), 7);
+        let kinds: HashSet<_> = TaskKind::ALL.iter().map(|k| k.label()).collect();
+        assert_eq!(kinds.len(), TaskKind::ALL.len());
+        let labels: HashSet<_> = TaskStatus::ALL.iter().map(|s| s.label()).collect();
+        assert_eq!(labels.len(), TaskStatus::ALL.len());
     }
+
     #[test]
-    fn not_delivered_text_is_honest_fail_closed() {
+    fn from_parts_maps_option_fields_to_details_states() {
+        let full = TaskHoverCard::from_parts(
+            TaskKind::Cloud,
+            TaskStatus::Working,
+            Some("研发空间"),
+            Some("12:05"),
+        );
+        assert!(matches!(full.details, Details::Filled(_)));
+        assert_eq!(full.detail_lines().len(), 2);
+        let bare = TaskHoverCard::from_parts(TaskKind::Local, TaskStatus::Pending, None, None);
+        assert!(matches!(bare.details, Details::Empty));
+        assert!(bare.detail_lines().is_empty());
+    }
+
+    #[test]
+    fn empty_input_is_explicit_empty_state_not_empty_list() {
+        let empty = TaskHoverCard::empty();
+        assert!(matches!(empty.details, Details::Empty));
+        assert!(empty.detail_lines().is_empty());
+        assert!(matches!(
+            TaskHoverCard::not_delivered().details,
+            Details::NotDelivered
+        ));
+    }
+
+    #[test]
+    fn hover_card_copy_is_verbatim() {
+        assert_eq!(TITLE, "任务悬停卡");
         assert_eq!(NOT_DELIVERED, "未下发");
+        assert_eq!(COPY_WORKTREE_BRANCH, "复制 Worktree 分支名");
     }
+
+    #[test]
+    fn kind_labels_are_verbatim() {
+        assert_eq!(TaskKind::Cloud.label(), "云电脑");
+        assert_eq!(TaskKind::Local.label(), "本地电脑");
+        assert_eq!(TaskKind::Code.label(), "代码开发");
+        assert_eq!(TaskKind::Design.label(), "设计创意");
+        assert_eq!(TaskKind::Work.label(), "日常办公");
+    }
+
+    #[test]
+    fn status_labels_and_descriptions_are_verbatim() {
+        assert_eq!(TaskStatus::Archived.label(), "已归档");
+        assert_eq!(TaskStatus::Archived.description(), "任务已被归档");
+        assert_eq!(TaskStatus::Completed.label(), "已完成");
+        assert_eq!(
+            TaskStatus::Completed.description(),
+            "任务已结束（成功完成或被用户终止）"
+        );
+        assert_eq!(TaskStatus::Error.label(), "执行失败");
+        assert_eq!(TaskStatus::Error.description(), "任务执行过程中发生错误");
+    }
+
+    #[test]
+    fn detail_templates_fill_verbatim() {
+        assert_eq!(WORKSPACE_TEMPLATE, "所属空间：{name}");
+        assert_eq!(UPDATED_AT_TEMPLATE, "更新于 {time}");
+        assert_eq!(fill_workspace_line("研发空间"), "所属空间：研发空间");
+        assert_eq!(fill_updated_at_line("12:05"), "更新于 12:05");
+    }
+
+    #[test]
+    fn render_details_all_branches_build_without_panic() {
+        let theme = Theme::default();
+        let _ = render_details(&theme, &Details::NotDelivered);
+        let _ = render_details(&theme, &Details::Empty);
+        let _ = render_details(
+            &theme,
+            &Details::Filled(vec![fill_workspace_line("研发空间")]),
+        );
+    }
+
     #[test]
     fn main_area_builds_without_panic() {
         let theme = Theme::default();
