@@ -132,6 +132,9 @@ pub fn demo() -> VoiceStatesModel {
 // —— GPUI 层 ——
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 结构：标题行（标题 + 识别中徽标）→ 内容区（[`overlay_body`] 三分支）
+/// → 操作文案行（仅复刻文案，不接交互）。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
     div()
@@ -142,23 +145,85 @@ pub fn main_area(theme: &Theme) -> Div {
         .flex_col()
         .child(
             div()
-                .px_4()
-                .py_2()
-                .text_sm()
-                .font_bold()
-                .text_color(theme.foreground)
-                .child(TITLE),
-        )
-        .child(
-            div()
-                .flex_1()
                 .flex()
                 .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .gap_2()
+                .px_4()
+                .py_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(TITLE),
+                )
+                .child(badge(theme, PROCESSING)),
         )
+        .child(overlay_body(theme, &demo()))
+        .child(action_row(theme))
+}
+
+/// 徽标：细边框小标签（识别中 / 错误态提示）。
+fn badge(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(theme.accent)
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md()
+        .child(text)
+}
+
+/// 内容区三分支：未下发（fail-closed）/ 空态 / 清单行。
+fn overlay_body(theme: &Theme, model: &VoiceStatesModel) -> Div {
+    if let Some(placeholder) = model.placeholder() {
+        return div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(placeholder);
+    }
+    div().flex_1().flex().flex_col().gap_1().py_2().children(
+        model
+            .rows()
+            .iter()
+            .copied()
+            .map(|state| branch_row(theme, state)),
+    )
+}
+
+/// 单条清单行：分支标记（错误分支高亮）+ 主文案。
+fn branch_row(theme: &Theme, state: VoiceState) -> Div {
+    let marker_color = if state.is_error() {
+        theme.accent
+    } else {
+        theme.muted_foreground
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_1()
+        .text_sm()
+        .child(div().text_xs().text_color(marker_color).child("•"))
+        .child(div().text_color(theme.foreground).child(state.label()))
+}
+
+/// 操作文案行（语音输入 / 停止录制 / 取消录制；界面卡不接交互）。
+fn action_row(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .children([BTN_START, BTN_STOP, BTN_CANCEL].map(|text| badge(theme, text)))
 }
 
 #[cfg(test)]
