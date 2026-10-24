@@ -299,8 +299,8 @@ fn render_activity(model: &CloudWelcome, theme: &Theme) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, Activity, CloudWelcome, DeliveryState, NAV_LINKS, ACTIVITY_ACTION,
-        ACTIVITY_LABEL, ACTIVITY_MODEL_SWITCHED, ACTIVITY_NOTICE, GROWTH_PLAN_ENTRY, LOGIN_LABEL,
+        main_area, Activity, CloudWelcome, DeliveryState, ACTIVITY_ACTION, ACTIVITY_LABEL,
+        ACTIVITY_MODEL_SWITCHED, ACTIVITY_NOTICE, GROWTH_PLAN_ENTRY, LOGIN_LABEL, NAV_LINKS,
         NOT_DELIVERED, TITLE,
     };
     use gpui_kit::component::Theme;
@@ -336,7 +336,16 @@ mod tests {
         assert_eq!(ACTIVITY_MODEL_SWITCHED, "已为你切换到活动指定模型");
         assert_eq!(NOT_DELIVERED, "未下发");
         let labels: Vec<&str> = NAV_LINKS.iter().map(|link| link.label).collect();
-        for expected in ["API文档", "博客", "CLI", "文档", "IDE", "插件", "定价", "活动"] {
+        for expected in [
+            "API文档",
+            "博客",
+            "CLI",
+            "文档",
+            "IDE",
+            "插件",
+            "定价",
+            "活动",
+        ] {
             assert!(labels.contains(&expected), "缺导航文案: {expected}");
         }
     }
@@ -352,6 +361,24 @@ mod tests {
         assert_eq!(model.activity_entry_label(), Some(GROWTH_PLAN_ENTRY));
         assert_eq!(model.activity_notice_label(), Some(ACTIVITY_NOTICE));
         assert_eq!(model.model_switched_hint(), Some(ACTIVITY_MODEL_SWITCHED));
+
+        let quiet = CloudWelcome::from_delivery(Some(Activity {
+            has_notice: false,
+            model_switched: false,
+        }));
+        assert_eq!(quiet.state, DeliveryState::Normal);
+        assert_eq!(quiet.activity_notice_label(), None);
+        assert_eq!(quiet.model_switched_hint(), None);
+    }
+
+    #[test]
+    fn empty_delivery_yields_not_delivered_empty_state() {
+        let model = CloudWelcome::from_delivery(None);
+        assert_eq!(model.state, DeliveryState::NotDelivered);
+        assert!(model.is_not_delivered());
+        assert_eq!(model.activity_entry_label(), None);
+        assert_eq!(model.activity_notice_label(), None);
+        assert_eq!(model.model_switched_hint(), None);
     }
 
     #[test]
