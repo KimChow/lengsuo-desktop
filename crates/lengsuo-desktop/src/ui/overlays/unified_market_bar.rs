@@ -143,17 +143,50 @@ pub fn action_label(tab: Tab) -> Option<&'static str> {
         Tab::Experts => None,
     }
 }
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；本卡负责补全真实视图）。
+/// 主区渲染（默认态 fail-closed 显示「未下发」；签名稳定，供浮层挂载点调用）。
 pub fn main_area(theme: &Theme) -> Div {
-    div()
+    render(&UnifiedMarketBar::default(), theme)
+}
+/// 浮层渲染：标题行 + 空态分支 / 内容节点（标签页 + 提示 + 搜索 + 列表标题 + 主操作）。
+/// 颜色一律取 `theme.*` token，⛔ 不硬编码色值。
+pub fn render(data: &UnifiedMarketBar, theme: &Theme) -> Div {
+    let foreground = theme.foreground;
+    let muted = theme.muted_foreground;
+    let column = div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
-        .child(
-            div()
-                .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+        .child(div().text_color(foreground).child(TITLE));
+    if let Some(empty) = data.empty_state() {
+        return column.child(div().text_color(muted).child(empty));
+    }
+    let items = tab_items();
+    let active = items
+        .iter()
+        .find(|item| item.tab == data.tab)
+        .expect("tab_items 覆盖所有 Tab 分支");
+    column
+        .child(div().flex().flex_row().gap_2().children(items.iter().map(
+            |item| {
+                let color = if item.tab == data.tab {
+                    foreground
+                } else {
+                    muted
+                };
+                div().text_color(color).child(item.label)
+            },
+        )))
+        .child(div().text_color(muted).child(active.tooltip))
+        .children(
+            search_placeholder(data.tab)
+                .map(|placeholder| div().text_color(muted).child(placeholder)),
+        )
+        .children(
+            list_heading(data.tab, data.scope)
+                .map(|heading| div().text_color(foreground).child(heading)),
+        )
+        .children(
+            action_label(data.tab).map(|action| div().text_color(foreground).child(action)),
         )
 }
 #[cfg(test)]
