@@ -3,6 +3,9 @@
 //! 分层约定（同 `background_task`）：文案表 / 状态机 / 分支选择是纯数据层，GPUI 层只做映射。
 //! fail-closed：拉取失败按「版本锁死」可见处理，不静默放行、不伪造配额。
 //! 文案逐字取自命名空间 `collab.quota`（全表 33 键；本卡落地任务书摘录的 12 键，未摘录键不自编）。
+#![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 界面文案（键与中文均逐字摘录自命名空间 `collab.quota`）。
 pub mod copy {
@@ -175,4 +178,109 @@ fn fill_quotas(template: &str, member_limit: u32, owner_name: &str, reach: &str)
         .replace("{memberLimit}", &member_limit.to_string())
         .replace("{ownerName}", owner_name)
         .replace("{reach}", reach)
+}
+
+// ── GPUI 层 ─────────────────────────────────────────────────────────
+
+/// 弹层入口；无数据源 ⇒ 默认 Loading 态（三态契约：未拉取过 ≠ 空态），不伪造配额。
+pub fn main_area(theme: &Theme) -> Div {
+    render(theme, &CollabQuotaState::default())
+}
+
+/// 状态分支渲染：Loading ⇒ 蒙层 + 无文案加载占位；Failed ⇒ 版本锁死弹层（fail-closed 可见，
+/// 不静默放行）；Empty ⇒ 不弹层；Ready ⇒ 按内容弹层。颜色一律取 theme token。
+fn render(theme: &Theme, state: &CollabQuotaState) -> Div {
+    match state {
+        CollabQuotaState::Loading => modal_frame(theme, loading_chip(theme)),
+        CollabQuotaState::Failed => content_overlay(theme, &CollabQuotaContent::ExclusiveBlocked),
+        CollabQuotaState::Empty => div(),
+        CollabQuotaState::Ready(content) => content_overlay(theme, content),
+    }
+}
+
+/// 全屏蒙层 + 居中内容；蒙层透明度只作用于遮罩本身（内容是独立子节点）。
+fn modal_frame(theme: &Theme, content: Div) -> Div {
+    div()
+        .absolute()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .absolute()
+                .size_full()
+                .bg(theme.background)
+                .opacity(0.72),
+        )
+        .child(content)
+}
+
+/// 加载占位：全表未含加载文案键，用主题色小圆片占位（不伪造文案）。
+fn loading_chip(theme: &Theme) -> Div {
+    div()
+        .w(px(16.))
+        .h(px(16.))
+        .rounded_md()
+        .bg(theme.muted_foreground)
+}
+
+/// 弹层卡片：横幅（仅成员达限）+ 正文 + 动作行；文案全部来自 copy 表。
+fn content_overlay(theme: &Theme, content: &CollabQuotaContent) -> Div {
+    let mut card = div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .p_5()
+        .w(px(420.))
+        .bg(theme.background)
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md();
+    if let Some(banner) = content.banner_text() {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(banner)),
+        );
+    }
+    card = card.child(
+        div()
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(SharedString::from(content.body_text())),
+    );
+    card = card.child(action_row(theme, content));
+    modal_frame(theme, card)
+}
+
+/// 动作行：非「我知道了」动作按主色描边（同 `delete` 弹层的描边 chip 习惯），其余次级描边；
+/// 触达高度 48px（无障碍下限）。点击接线随数据源/派发卡落地，本层只做展示映射。
+fn action_row(theme: &Theme, content: &CollabQuotaContent) -> Div {
+    let mut row = div().flex().flex_row().justify_end().gap_2();
+    for (key, text) in content.actions() {
+        let primary = *key != copy::ACTION_DISMISS.0;
+        let (border, label) = if primary {
+            (theme.accent, theme.accent)
+        } else {
+            (theme.border, theme.muted_foreground)
+        };
+        row = row.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .h(px(48.))
+                .min_w(px(96.))
+                .px_4()
+                .rounded_md()
+                .border_1()
+                .border_color(border)
+                .text_sm()
+                .text_color(label)
+                .child(*text),
+        );
+    }
+    row
 }
