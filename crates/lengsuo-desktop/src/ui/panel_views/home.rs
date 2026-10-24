@@ -12,6 +12,7 @@
 #![cfg(feature = "ui")]
 use std::rc::Rc;
 
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
@@ -103,58 +104,103 @@ pub fn main_area_with_intents(
     delivered: Option<&[&str]>,
     on_intent: IntentSink,
 ) -> Div {
-    let _ = theme;
-    let mut area = div().flex().flex_col().items_center();
+    let mut area = div().flex().flex_col().items_center().gap_6();
     area = area
-        .child(header(scene, on_intent.clone()))
-        .child(input_card_slot());
+        .child(header(theme, scene, on_intent.clone()))
+        .child(input_card_slot(theme));
     area = match delivered {
-        None => area.child(not_delivered()),
-        Some(items) => area.child(practice_cases(items, on_intent)),
+        None => area.child(not_delivered(theme)),
+        Some(items) => area.child(practice_cases(theme, items, on_intent)),
     };
-    area.child(footer_disclaimer())
+    area.child(footer_disclaimer(theme))
 }
 
 /// 居中标题区：标题 + 场景副标题 + 3 枚圆角场景徽章。
-fn header(scene: Scene, on_intent: IntentSink) -> AnyElement {
-    let mut badges = div().flex();
+fn header(theme: &Theme, scene: Scene, on_intent: IntentSink) -> AnyElement {
+    let mut badges = div().flex().items_center().gap_2();
     for candidate in SCENES {
-        badges = badges.child(badge(candidate, candidate == scene, on_intent.clone()));
+        badges = badges.child(badge(
+            theme,
+            candidate,
+            candidate == scene,
+            on_intent.clone(),
+        ));
     }
     div()
         .flex()
         .flex_col()
         .items_center()
-        .child(div().child(TITLE))
-        .child(div().child(scene.subtitle()))
+        .gap_3()
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .font_bold()
+                .text_2xl()
+                .child(TITLE),
+        )
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .text_base()
+                .child(scene.subtitle()),
+        )
         .child(badges)
         .into_any_element()
 }
 
-/// 场景徽章：点击只上报意图（选中态视觉属下一步）。
-fn badge(scene: Scene, selected: bool, on_intent: IntentSink) -> AnyElement {
-    let _ = selected;
+/// 场景徽章：选中 ⇒ 浅色底（`muted`）+ 描边；未选中 ⇒ 弱化文字。
+/// 触摸目标 ≥48dp（`min_h_12`）；点击只上报意图。
+fn badge(theme: &Theme, scene: Scene, selected: bool, on_intent: IntentSink) -> AnyElement {
     let sink = on_intent;
-    div()
+    let mut el = div()
         .id(scene.badge_label())
         .on_click(move |_, _, _| sink(badge_intent(scene)))
-        .child(scene.badge_label())
-        .into_any_element()
+        .px_4()
+        .min_h_12()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .cursor_pointer()
+        .text_sm();
+    if selected {
+        el = el
+            .bg(theme.muted)
+            .border_1()
+            .border_color(theme.border)
+            .text_color(theme.foreground);
+    } else {
+        el = el.text_color(theme.muted_foreground);
+    }
+    el.child(scene.badge_label()).into_any_element()
 }
 
-/// 大输入卡位（占位）：输入卡本体属 D4（`ui-input-card`），本卡只留位。
-fn input_card_slot() -> Div {
+/// 大输入卡位（占位）：输入卡本体属 D4（`ui-input-card`），本卡只留位（宽 ~70%）。
+fn input_card_slot(theme: &Theme) -> Div {
     div()
+        .w_3_4()
+        .min_h_12()
+        .h_40()
+        .rounded_lg()
+        .bg(theme.muted)
+        .border_1()
+        .border_color(theme.border)
 }
 
 /// 推荐问句区：标题 + 问句行 + 「更多」；数据缺失时由 [`not_delivered`] 顶替。
-fn practice_cases(items: &[&str], on_intent: IntentSink) -> AnyElement {
-    let mut list = div().flex().flex_col().items_center();
+fn practice_cases(theme: &Theme, items: &[&str], on_intent: IntentSink) -> AnyElement {
+    let mut list = div().flex().flex_col().items_center().gap_1();
     for (i, question) in items.iter().enumerate() {
         let sink = on_intent.clone();
         let row = div()
             .id(SharedString::from(format!("home-suggestion-{i}")))
             .on_click(move |_, _, _| sink(HomeIntent::AskSuggestion(i)))
+            .min_h_12()
+            .flex()
+            .items_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .cursor_pointer()
             .child(SharedString::from(*question));
         list = list.child(row);
     }
@@ -162,31 +208,60 @@ fn practice_cases(items: &[&str], on_intent: IntentSink) -> AnyElement {
     let more = div()
         .id("home-practice-more")
         .on_click(move |_, _, _| sink(HomeIntent::OpenPracticeCases))
+        .min_h_12()
+        .flex()
+        .items_center()
+        .text_sm()
+        .text_color(theme.accent)
+        .cursor_pointer()
         .child(PRACTICE_CASES_MORE);
     div()
         .flex()
         .flex_col()
         .items_center()
-        .child(div().child(PRACTICE_CASES_HEADING))
+        .gap_3()
+        .child(
+            div()
+                .text_base()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(PRACTICE_CASES_HEADING),
+        )
         .child(list)
         .child(more)
         .into_any_element()
 }
 
 /// fail-closed：推荐问句未下发 ⇒ 区块仍在、如实标注，不伪造列表。
-fn not_delivered() -> AnyElement {
+fn not_delivered(theme: &Theme) -> AnyElement {
     div()
         .flex()
         .flex_col()
         .items_center()
-        .child(div().child(PRACTICE_CASES_HEADING))
-        .child(div().child(NOT_DELIVERED))
+        .gap_3()
+        .child(
+            div()
+                .text_base()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(PRACTICE_CASES_HEADING),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(NOT_DELIVERED),
+        )
         .into_any_element()
 }
 
 /// 底部 AI 免责声明。
-fn footer_disclaimer() -> Div {
-    div().child(AI_DISCLAIMER)
+fn footer_disclaimer(theme: &Theme) -> Div {
+    div()
+        .py_4()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(AI_DISCLAIMER)
 }
 
 #[cfg(test)]
