@@ -693,6 +693,7 @@ fn office_content(path: &str, office: &OfficePayload, theme: &gpui_kit::componen
         .flex()
         .flex_col()
         .flex_1()
+        .w_full()
         .child(header_row(path, kind, theme))
         .child(toolbar_row(kind, theme))
         .child(list)
@@ -780,6 +781,7 @@ fn failed_content(path: &str, err: &DecodeError, theme: &gpui_kit::component::Th
         .flex()
         .flex_col()
         .flex_1()
+        .w_full()
         .child(header_row(path, kind, theme))
         .child(toolbar_row(kind, theme))
         .child(
@@ -800,10 +802,28 @@ fn failed_content(path: &str, err: &DecodeError, theme: &gpui_kit::component::Th
 
 #[cfg(all(test, feature = "ui"))]
 mod tests {
-    use super::{kind_label, office_kind, render, toolbar_items, OfficeKind};
+    use super::{
+        decode, kind_label, office_kind, render, render_with_payload, toolbar_items, OfficeKind,
+    };
+    use crate::state::preview_payload::{
+        DecodeError, OfficeBlockKind, OfficeKind as PayloadKind, PreviewPayload, MAX_LINES,
+    };
     use crate::ui::render_assert_tests::{assert_rendered, draw_probe};
     use gpui_kit::component::Theme;
     use gpui_kit::px;
+    use std::io::Write;
+
+    /// 测试用最小 zip 容器（存储不压缩，不依赖压缩特性）。只走 `bytes = Some` 路径。
+    fn zip_bytes(files: &[(&str, &str)]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, data) in files {
+            writer
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(data.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
 
     /// 断言③：三类子类型的渲染元素树非空（无窗口真实绘制一帧）。
     #[test]
@@ -863,5 +883,128 @@ mod tests {
             kind_label(OfficeKind::Slide),
         ];
         assert_eq!(labels, ["文档", "表格", "演示"]);
+    }
+
+    /// 断言①：docx 真解码——标题/段落/列表项三块，种类与文本一一对应。
+    #[test]
+    fn decode_docx_extracts_blocks_from_bytes() {
+        let xml = r#"<?xml version="1.0"?><w:document xmlns:w="w"><w:body>
+<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>标题</w:t></w:r></w:p>
+<w:p><w:r><w:t>普通段落</w:t></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>列表项</w:t></w:r></w:p>
+</w:body></w:document>"#;
+        let bytes = zip_bytes(&[("word/document.xml", xml)]);
+        let PreviewPayload::Office(p) = decode("计划.docx", Some(&bytes)) else {
+            panic!("docx 应解出 Office 载荷");
+        };
+        assert_eq!(p.kind, PayloadKind::Docx);
+        assert!(!p.truncated);
+        assert_eq!(p.blocks.len(), 3, "块数：{:?}", p.blocks);
+        let kinds: Vec<_> = p.blocks.iter().map(|b| b.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                OfficeBlockKind::Heading,
+                OfficeBlockKind::Paragraph,
+                OfficeBlockKind::Bullet
+            ]
+        );
+        let texts: Vec<_> = p.blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["标题", "普通段落", "列表项"]);
+    }
+
+    /// 断言①：pptx 真解码——slideN 按页号数值排序（10 排在 2 后）。
+    #[test]
+    fn decode_pptx_orders_slides_numerically() {
+        let slide = |text: &str| {
+            format!(r#"<p:sld xmlns:p="p"><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sld>"#)
+        };
+        let bytes = zip_bytes(&[
+            ("ppt/slides/slide10.xml", slide("十").as_str()),
+            ("ppt/slides/slide2.xml", slide("二").as_str()),
+            ("ppt/slides/slide1.xml", slide("一").as_str()),
+        ]);
+        let PreviewPayload::Office(p) = decode("路演.pptx", Some(&bytes)) else {
+            panic!("pptx 应解出 Office 载荷");
+        };
+        assert_eq!(p.kind, PayloadKind::Pptx);
+        assert_eq!(p.blocks.len(), 3);
+        assert!(p.blocks.iter().all(|b| b.kind == OfficeBlockKind::Slide));
+        let texts: Vec<_> = p.blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["一", "二", "十"], "页序应为 1、2、10");
+    }
+
+    /// 断言①：xlsx 真解码——共享字符串查表 + 数值原文 + 内联字符串。
+    #[test]
+    fn decode_xlsx_resolves_cells_from_bytes() {
+        let shared = r#"<sst xmlns="x"><si><t>你好</t></si><si><t>世界</t></si></sst>"#;
+        let sheet = r#"<worksheet xmlns="x"><sheetData><row>
+<c r="A1" t="s"><v>0</v></c><c r="B1"><v>42</v></c><c r="C1" t="inlineStr"><is><t>内联</t></is></c>
+</row></sheetData></worksheet>"#;
+        let bytes = zip_bytes(&[
+            ("xl/sharedStrings.xml", shared),
+            ("xl/worksheets/sheet1.xml", sheet),
+        ]);
+        let PreviewPayload::Office(p) = decode("预算.xlsx", Some(&bytes)) else {
+            panic!("xlsx 应解出 Office 载荷");
+        };
+        assert_eq!(p.kind, PayloadKind::Xlsx);
+        assert!(!p.truncated);
+        assert!(p.blocks.iter().all(|b| b.kind == OfficeBlockKind::Cell));
+        let texts: Vec<_> = p.blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["你好", "42", "内联"]);
+    }
+
+    /// 断言②：垃圾/缺条目/非 OOXML/路径读不到 ⇒ Failed（fail-closed，不 panic）。
+    #[test]
+    fn decode_garbage_fails_closed() {
+        assert!(matches!(
+            decode("a.docx", Some(b"not a zip at all")),
+            PreviewPayload::Failed(_)
+        ));
+        let empty = zip_bytes(&[("unrelated.txt", "hi")]);
+        assert!(
+            matches!(decode("a.docx", Some(&empty)), PreviewPayload::Failed(_)),
+            "缺 word/document.xml 应失败"
+        );
+        assert!(matches!(
+            decode("legacy.doc", Some(b"whatever")),
+            PreviewPayload::Failed(DecodeError::Unsupported(_))
+        ));
+        match decode("/nonexistent/不存在.docx", None) {
+            PreviewPayload::Failed(DecodeError::Io(_)) => {}
+            other => panic!("文件读不到应为 Io 失败：{other:?}"),
+        }
+    }
+
+    /// 断言③：块数超 [`MAX_LINES`] ⇒ 截断标注 + 恰好保留上限行。
+    #[test]
+    fn decode_truncates_over_max_lines() {
+        let mut xml = String::from(r#"<?xml version="1.0"?><w:document xmlns:w="w"><w:body>"#);
+        for i in 0..(MAX_LINES + 5) {
+            xml.push_str(&format!("<w:p><w:r><w:t>第{i}行</w:t></w:r></w:p>"));
+        }
+        xml.push_str("</w:body></w:document>");
+        let bytes = zip_bytes(&[("word/document.xml", xml.as_str())]);
+        let PreviewPayload::Office(p) = decode("大文档.docx", Some(&bytes)) else {
+            panic!("超限文档仍应解出 Office 载荷");
+        };
+        assert!(p.truncated, "超行数必须如实标注截断");
+        assert_eq!(p.blocks.len(), MAX_LINES);
+    }
+
+    /// 断言④：真载荷 / 失败态载荷渲染均不 panic 且元素树非空。
+    #[test]
+    fn render_with_payload_paints_office_and_failure() {
+        let bytes = zip_bytes(&[(
+            "word/document.xml",
+            r#"<?xml version="1.0"?><w:document xmlns:w="w"><w:body><w:p><w:r><w:t>标题甲</w:t></w:r></w:p></w:body></w:document>"#,
+        )]);
+        let payload = decode("计划.docx", Some(&bytes));
+        let bounds = draw_probe(|_| render_with_payload("计划.docx", &payload, &Theme::default()));
+        assert_rendered(bounds, "Office 载荷");
+        let failed = PreviewPayload::Failed(DecodeError::Parse("测试".into()));
+        let bounds = draw_probe(|_| render_with_payload("计划.docx", &failed, &Theme::default()));
+        assert_rendered(bounds, "失败态");
     }
 }
