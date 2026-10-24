@@ -132,8 +132,8 @@ pub fn binding_state(catalog: &[ShortcutGroup]) -> BindingState {
 
 /// 搜索结果：命中分组 + 命中总数 + 是否进入空态。
 pub struct SearchOutcome<'a> {
-    /// 命中分组（分组标题 + 命中条目）。
-    pub groups: Vec<(&'a str, Vec<&'a ShortcutEntry>)>,
+    /// 命中分组（分组引用 + 命中条目；标题经字段取回 `&'static str`）。
+    pub groups: Vec<(&'a ShortcutGroup, Vec<&'a ShortcutEntry>)>,
     /// 命中条目总数。
     pub total: usize,
     /// 空态标志：查询非空且零命中时为 `true`（渲染层须显式画空态，⛔ 不是空列表）。
@@ -154,13 +154,13 @@ pub fn search<'a>(catalog: &'a [ShortcutGroup], query: &str) -> SearchOutcome<'a
                 .iter()
                 .filter(|e| {
                     e.action.to_lowercase().contains(&q)
-                        || e.combo.map_or(false, |c| c.to_lowercase().contains(&q))
+                        || e.combo.is_some_and(|c| c.to_lowercase().contains(&q))
                 })
                 .collect()
         };
         total += hits.len();
         if !hits.is_empty() {
-            groups.push((group.title, hits));
+            groups.push((group, hits));
         }
     }
     let no_match = !q.is_empty() && total == 0;
@@ -304,7 +304,7 @@ fn render_list(theme: &Theme, outcome: &SearchOutcome<'_>) -> Div {
             .child(div().flex_1().child(COLUMN_COMMAND))
             .child(div().min_w(px(BINDING_MIN_WIDTH)).child(COLUMN_BINDING)),
     );
-    for (title, entries) in &outcome.groups {
+    for (group, entries) in &outcome.groups {
         list = list.child(
             div()
                 .px_4()
@@ -312,7 +312,7 @@ fn render_list(theme: &Theme, outcome: &SearchOutcome<'_>) -> Div {
                 .text_xs()
                 .font_medium()
                 .text_color(theme.muted_foreground)
-                .child(*title),
+                .child(group.title),
         );
         for e in entries {
             list = list.child(render_row(theme, e));
@@ -428,7 +428,7 @@ mod tests {
         let tasks = search(CATALOG, "任务");
         assert_eq!(tasks.total, 3);
         assert_eq!(tasks.groups.len(), 1);
-        assert_eq!(tasks.groups[0].0, "任务");
+        assert_eq!(tasks.groups[0].0.title, "任务");
     }
 
     #[test]
