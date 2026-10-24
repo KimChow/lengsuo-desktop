@@ -5,6 +5,7 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；界面文案逐字取自命名空间
 //! `cloudAssistantUpgrade`（14 键全量）。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
@@ -177,18 +178,174 @@ impl CloudUpgradeBanner {
 
 // ============ GPUI 渲染层 ============
 
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；下一步补全横幅/体验面板/状态行）。
+/// 浮层渲染（浮层不占主区，返回整层容器由调用方叠加）。
+///
+/// 当前无运行时数据源 ⇒ 恒为 [`CloudUpgradeBanner::not_delivered`] 的诚实渲染。
+#[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render(&CloudUpgradeBanner::not_delivered(), theme)
+}
+
+/// 按纯数据层渲染整层：标题行（含开启状态行）+ 面内容。
+fn render(model: &CloudUpgradeBanner, theme: &Theme) -> Div {
     div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .flex_col()
+        .child(render_header(model, theme))
+        .child(render_surface(model, theme))
+}
+
+/// 标题行 + 开启动作状态行。
+fn render_header(model: &CloudUpgradeBanner, theme: &Theme) -> Div {
+    let mut header = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(TITLE),
+        );
+    if let Some(hint) = model.open_team_hint() {
+        header = header.child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(hint),
+        );
+    }
+    header
+}
+
+/// 面内容分发：横幅 / 体验面板 / 空态「未下发」（fail-closed）。
+fn render_surface(model: &CloudUpgradeBanner, theme: &Theme) -> Div {
+    let surface = div()
+        .flex_1()
         .flex()
         .flex_col()
         .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
-        .child(
+        .px_4()
+        .py_3();
+    match model.surface_kind() {
+        SurfaceKind::Banner => render_banner(surface, theme),
+        SurfaceKind::Trial => render_trial(surface, theme),
+        // fail-closed：数据未到手时如实说明，不渲染任何条目。
+        SurfaceKind::NotDelivered => surface.child(
             div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_4()
+                .text_sm()
                 .text_color(theme.muted_foreground)
                 .child(NOT_DELIVERED),
+        ),
+    }
+}
+
+/// 常驻横幅面：主标题 + 副标题 + 双入口（限时体验/进入）。
+fn render_banner(surface: Div, theme: &Theme) -> Div {
+    surface
+        .child(
+            div()
+                .text_sm()
+                .font_bold()
+                .text_color(theme.foreground)
+                .child(BANNER_TITLE),
         )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(BANNER_SUBTITLE),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.accent)
+                        .text_sm()
+                        .text_color(theme.accent)
+                        .child(BANNER_ACTION_TRIAL),
+                )
+                .child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(theme.accent)
+                        .child(BANNER_ACTION_ENTER),
+                ),
+        )
+}
+
+/// 限时体验面板面：三段标题 + 副标题 + 特性行。
+fn render_trial(surface: Div, theme: &Theme) -> Div {
+    let panel = surface
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .flex_wrap()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(TRIAL_TITLE_LEAD),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.accent)
+                        .child(TRIAL_TITLE_HIGHLIGHT),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(TRIAL_TITLE_TAIL),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(TRIAL_SUBTITLE),
+        );
+    let mut features = div().flex().items_center().flex_wrap().gap_4();
+    for feature in TRIAL_FEATURES {
+        features = features.child(
+            div()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(feature.label),
+        );
+    }
+    panel.child(features)
 }
 #[cfg(test)]
 mod tests {
