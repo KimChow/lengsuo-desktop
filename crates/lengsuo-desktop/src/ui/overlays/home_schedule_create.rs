@@ -4,6 +4,7 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `home.schedule.create`。
 //! 数据源在运行时侧：当前按纯数据层逐分支呈现，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
+use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
@@ -20,8 +21,6 @@ pub const NS_KEY_COUNT: usize = 202;
 /// 文案表（key → 中文，逐字取自文案全表命名空间 `home.schedule.create`；⛔ 不自编中文）。
 pub const COPY: &[(&str, &str)] = &[
     ("home.schedule.create", "新建日程"),
-    ("home.schedule.create.editTitle", "编辑日程"),
-    ("home.schedule.create.untitled", "无主题"),
     ("home.schedule.create.start", "开始"),
     ("home.schedule.create.end", "结束"),
     ("home.schedule.create.timeTo", "至"),
@@ -49,17 +48,12 @@ pub const COPY: &[(&str, &str)] = &[
     ("home.schedule.create.field.meetingMinutes", "纪要"),
     ("home.schedule.create.field.attachment", "附件"),
     ("home.schedule.create.placeholder.title", "添加主题"),
-    ("home.schedule.create.placeholder.location", "添加地点"),
-    ("home.schedule.create.placeholder.description", "添加描述"),
     (
         "home.schedule.create.placeholder.participants",
         "添加联系人、邮件地址",
     ),
     ("home.schedule.create.addParticipants", "添加参会人"),
-    ("home.schedule.create.addInvitee", "添加联系人"),
     ("home.schedule.create.batchAdd", "批量添加"),
-    ("home.schedule.create.removeParticipant", "移除 {name}"),
-    ("home.schedule.create.noParticipantMatch", "没有匹配的人员"),
     (
         "home.schedule.create.error.participantsRequired",
         "至少邀请一位参与人",
@@ -73,7 +67,6 @@ pub const COPY: &[(&str, &str)] = &[
         "频道可见 · {count} 人正式受邀",
     ),
     ("home.schedule.create.addAttachment", "添加附件"),
-    ("home.schedule.create.attachment.removeAria", "移除附件"),
     (
         "home.schedule.create.attachment.tooMany",
         "最多添加 {count} 个附件",
@@ -94,9 +87,6 @@ pub const COPY: &[(&str, &str)] = &[
         "home.schedule.create.busy.date",
         "{month} 月 {day} 日 · {weekday}",
     ),
-    ("home.schedule.create.busy.available", "可用"),
-    ("home.schedule.create.busy.conflict", "此时段忙碌"),
-    ("home.schedule.create.busy.free", "此时段空闲"),
     ("home.schedule.create.busy.everyoneFree", "所有人都有空"),
     ("home.schedule.create.busy.me", "我"),
     (
@@ -109,10 +99,6 @@ pub const COPY: &[(&str, &str)] = &[
     (
         "home.schedule.create.error.invalidRange",
         "结束时间需晚于开始时间",
-    ),
-    (
-        "home.schedule.create.error.titleTooLong",
-        "标题不能超过 512 字",
     ),
     ("home.schedule.create.mode.form", "表单模式"),
     ("home.schedule.create.mode.switchToNl", "切换到自然语言"),
@@ -148,7 +134,6 @@ pub const COPY: &[(&str, &str)] = &[
         "切换到表单创建",
     ),
     ("home.schedule.create.submit", "创建日程"),
-    ("home.schedule.create.submitSave", "保存日程"),
 ];
 
 /// 浮层状态机（默认 `NotDelivered`：数据未拉取过 ≠ 空集，⛔ 不伪造）。
@@ -381,7 +366,7 @@ pub fn natural_placeholder() -> String {
     )
 }
 
-/// 时间选择骨架（`start`/`timeTo`/`end` 组合，均为逐字文案）。
+/// 时间选择骨架（`start`/`timeTo`/`end` 逐字文案组合）。
 fn time_range_label() -> String {
     format!(
         "{} {} {}",
@@ -400,68 +385,39 @@ fn draft_title_row(draft: &Draft) -> Row {
     }
 }
 
+/// 「更多设置」分区：重复/提醒/会议/纪要——设置数据未接线，如实标「未下发」。
+fn settings_section() -> Section {
+    let c = |key: &str| copy(key).expect("missing copy key");
+    Section {
+        label: c("home.schedule.create.quick.expand"),
+        rows: vec![
+            (
+                c("home.schedule.create.field.recurrence"),
+                Row::NotDelivered,
+            ),
+            (c("home.schedule.create.field.reminder"), Row::NotDelivered),
+            (
+                c("home.schedule.create.field.onlineMeeting"),
+                Row::NotDelivered,
+            ),
+            (
+                c("home.schedule.create.field.meetingMinutes"),
+                Row::NotDelivered,
+            ),
+        ],
+    }
+}
+
 /// 状态 → 渲染模型（纯函数；GPUI 层唯一输入）。
 pub fn view_model(state: &State) -> ViewModel {
     let c = |key: &str| copy(key).expect("missing copy key");
     match state {
-        // 未下发/拉取失败：fail-closed，依赖数据的字段如实标「未下发」，⛔ 不伪造条目/数值。
-        State::NotDelivered | State::LoadFailed => ViewModel {
-            title: TITLE,
-            mode_switch: c("home.schedule.create.mode.switchToNl"),
-            sections: vec![
-                Section {
-                    label: c("home.schedule.create.quick.title"),
-                    rows: vec![
-                        ("", Row::Empty(c("home.schedule.create.placeholder.title"))),
-                        ("", Row::Value(time_range_label())),
-                        (c("home.schedule.create.duration"), Row::NotDelivered),
-                    ],
-                },
-                Section {
-                    label: c("home.schedule.create.field.participants"),
-                    rows: vec![
-                        ("", Row::Empty(c("home.schedule.create.addParticipants"))),
-                        (
-                            "",
-                            Row::Value(
-                                c("home.schedule.create.placeholder.participants").to_string(),
-                            ),
-                        ),
-                        (
-                            "",
-                            Row::Value(c("home.schedule.create.batchAdd").to_string()),
-                        ),
-                    ],
-                },
-                Section {
-                    label: c("home.schedule.create.field.attachment"),
-                    rows: vec![("", attachment_row(AttachmentGate::Unsupported, &[]))],
-                },
-                Section {
-                    label: c("home.schedule.create.quick.expand"),
-                    rows: vec![
-                        (
-                            c("home.schedule.create.field.recurrence"),
-                            Row::NotDelivered,
-                        ),
-                        (c("home.schedule.create.field.reminder"), Row::NotDelivered),
-                        (
-                            c("home.schedule.create.field.onlineMeeting"),
-                            Row::NotDelivered,
-                        ),
-                        (
-                            c("home.schedule.create.field.meetingMinutes"),
-                            Row::NotDelivered,
-                        ),
-                    ],
-                },
-            ],
-            footnotes: vec![
-                c("home.schedule.create.kindHint"),
-                c("home.schedule.create.formHint"),
-            ],
-            submit: c("home.schedule.create.submit"),
-        },
+        // 未下发/拉取失败：fail-closed。诚实呈现 = 空草稿表单骨架，
+        // 数据位（时长/忙闲/更多设置）一律标「未下发」，⛔ 不伪造条目/数值。
+        State::NotDelivered | State::LoadFailed => view_model(&State::Ready {
+            mode: Mode::Form,
+            draft: Draft::default(),
+        }),
         State::Ready { mode, draft } => match mode {
             Mode::Form => {
                 let mut participant_rows = vec![
@@ -508,24 +464,7 @@ pub fn view_model(state: &State) -> ViewModel {
                                 attachment_row(draft.attachment_gate, &draft.attachments),
                             )],
                         },
-                        Section {
-                            label: c("home.schedule.create.quick.expand"),
-                            rows: vec![
-                                (
-                                    c("home.schedule.create.field.recurrence"),
-                                    Row::NotDelivered,
-                                ),
-                                (c("home.schedule.create.field.reminder"), Row::NotDelivered),
-                                (
-                                    c("home.schedule.create.field.onlineMeeting"),
-                                    Row::NotDelivered,
-                                ),
-                                (
-                                    c("home.schedule.create.field.meetingMinutes"),
-                                    Row::NotDelivered,
-                                ),
-                            ],
-                        },
+                        settings_section(),
                     ],
                     footnotes: vec![
                         c("home.schedule.create.kindHint"),
@@ -534,60 +473,133 @@ pub fn view_model(state: &State) -> ViewModel {
                     submit: c("home.schedule.create.submit"),
                 }
             }
-            Mode::Natural => ViewModel {
-                title: TITLE,
-                mode_switch: c("home.schedule.create.natural.switchToForm"),
-                sections: vec![Section {
-                    label: c("home.schedule.create.natural.heading"),
-                    rows: vec![
-                        (
-                            "",
-                            Row::Value(c("home.schedule.create.natural.description").to_string()),
-                        ),
-                        ("", Row::Value(natural_placeholder())),
-                        (
-                            "",
-                            Row::Value(c("home.schedule.create.natural.trySay").to_string()),
-                        ),
-                        (
-                            "",
-                            Row::Value(c("home.schedule.create.natural.footerHint").to_string()),
-                        ),
-                        (
-                            "",
-                            Row::Value(c("home.schedule.create.natural.openForm").to_string()),
-                        ),
-                    ],
-                }],
-                footnotes: vec![c("home.schedule.create.mode.formHint")],
-                submit: c("home.schedule.create.natural.continue"),
-            },
+            Mode::Natural => {
+                let (desc, try_say, footer, open_form) = (
+                    c("home.schedule.create.natural.description"),
+                    c("home.schedule.create.natural.trySay"),
+                    c("home.schedule.create.natural.footerHint"),
+                    c("home.schedule.create.natural.openForm"),
+                );
+                ViewModel {
+                    title: TITLE,
+                    mode_switch: c("home.schedule.create.natural.switchToForm"),
+                    sections: vec![Section {
+                        label: c("home.schedule.create.natural.heading"),
+                        rows: vec![
+                            ("", Row::Value(desc.to_string())),
+                            ("", Row::Value(natural_placeholder())),
+                            ("", Row::Value(try_say.to_string())),
+                            ("", Row::Value(footer.to_string())),
+                            ("", Row::Value(open_form.to_string())),
+                        ],
+                    }],
+                    footnotes: vec![c("home.schedule.create.mode.formHint")],
+                    submit: c("home.schedule.create.natural.continue"),
+                }
+            }
         },
     }
 }
 
 // ===== GPUI 层 =====
 
-/// 主区/浮层呈现入口（诚实占位：完整渲染层下一提交落）。
+/// 主区/浮层呈现入口。无数据源 ⇒ `resolve(None)` 如实落到未下发（fail-closed，⛔ 不伪造条目）。
 pub fn main_area(theme: &Theme) -> AnyElement {
-    let vm = view_model(&resolve(None));
-    div()
+    render(theme, &view_model(&resolve(None)))
+}
+
+/// 渲染模型 → 元素树（纯构建，不持实体/凭据；颜色一律主题 token，⛔ 不硬编码色值）。
+fn render(theme: &Theme, vm: &ViewModel) -> AnyElement {
+    let mut col = div()
         .flex()
         .flex_col()
         .gap_2()
-        .text_color(theme.muted_foreground)
-        .child(vm.title)
-        .child(NOT_DELIVERED)
-        .into_any_element()
+        // 标题行：标题 + 模式切换入口（文案即无障碍标签）。
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px_4()
+                .py_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_bold()
+                        .text_color(theme.foreground)
+                        .child(vm.title),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(vm.mode_switch),
+                ),
+        );
+    for section in &vm.sections {
+        let mut sec = div().flex().flex_col().gap_1().px_4().child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(section.label),
+        );
+        for (label, row) in &section.rows {
+            sec = sec.child(row_view(theme, label, row));
+        }
+        col = col.child(sec);
+    }
+    for note in &vm.footnotes {
+        col = col.child(
+            div()
+                .px_4()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(*note),
+        );
+    }
+    col.child(
+        div().flex().flex_row().justify_end().px_4().py_2().child(
+            div()
+                .px_4()
+                .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.accent)
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(vm.submit),
+        ),
+    )
+    .into_any_element()
+}
+
+/// 单行（行标签 + 内容）：`Value` 前景 / `Empty` 弱化占位 / `NotDelivered` 以警示色如实标出。
+fn row_view(theme: &Theme, label: &str, row: &Row) -> Div {
+    let (text, color) = match row {
+        Row::Value(v) => (v.clone(), theme.foreground),
+        Row::Empty(hint) => ((*hint).to_string(), theme.muted_foreground),
+        Row::NotDelivered => (NOT_DELIVERED.to_string(), theme.danger),
+    };
+    div()
+        .flex()
+        .flex_row()
+        .justify_between()
+        .gap_2()
+        .text_sm()
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(label.to_string()),
+        )
+        .child(div().text_color(color).child(text))
 }
 
 #[cfg(test)]
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{
-        copy, resolve, view_model, Draft, Mode, Row, State, NS_KEY_COUNT, NS_PREFIX, TITLE,
-    };
+    use super::{copy, resolve, view_model, State, NS_KEY_COUNT, NS_PREFIX, TITLE};
 
     #[test]
     fn title_is_verbatim() {
