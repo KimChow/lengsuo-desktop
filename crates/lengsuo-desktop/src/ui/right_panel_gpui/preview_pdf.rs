@@ -58,23 +58,27 @@ fn zoom_label(zoom: f32) -> String {
     format!("{}%", (zoom * 100.0).round() as u32)
 }
 
-/// 渲染 PDF 预览面板：页工具栏 + 页面占位区（当前未下发）。
+/// 渲染 PDF 预览面板：页工具栏 + 页面占位区（未下发态）。
 pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
-    render_panel(path, &PdfPanelState::undelivered(), theme)
+    render_panel(
+        &PdfPanelState::undelivered(),
+        theme,
+        render_page_area(path, theme),
+    )
 }
 
-/// 面板主体：工具栏在上，页面占位区撑满余下空间。
+/// 面板主体：工具栏在上，正文区（`body`）撑满余下空间。
 fn render_panel(
-    path: &str,
     state: &PdfPanelState,
     theme: &gpui_kit::component::Theme,
+    body: AnyElement,
 ) -> AnyElement {
     div()
         .flex()
         .flex_col()
         .size_full()
         .child(render_toolbar(state, theme))
-        .child(render_page_area(path, theme))
+        .child(body)
         .into_any_element()
 }
 
@@ -170,8 +174,17 @@ fn metric_label(text: String, theme: &gpui_kit::component::Theme) -> AnyElement 
         .into_any_element()
 }
 
-/// 页面占位区：`theme.muted` 底 + `theme.border` 描边；未下发态诚实占位，⛔ 不伪造页内容。
+/// 页面占位区（未下发）：`theme.muted` 底 + `theme.border` 描边，诚实占位不伪造页内容。
 fn render_page_area(path: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
+    render_page_area_note(path, theme, "PDF 未下发（等运行时契约）")
+}
+
+/// 占位区变体：`note` 为诚实说明（未下发原因 / 解码失败原因）。
+fn render_page_area_note(
+    path: &str,
+    theme: &gpui_kit::component::Theme,
+    note: &str,
+) -> AnyElement {
     div()
         .flex_1()
         .m_3()
@@ -189,7 +202,7 @@ fn render_page_area(path: &str, theme: &gpui_kit::component::Theme) -> AnyElemen
                 .items_center()
                 .gap_2()
                 .text_color(theme.muted_foreground)
-                .child(div().text_sm().child("PDF 未下发（等运行时契约）"))
+                .child(div().text_sm().child(note.to_string()))
                 .child(
                     div()
                         .text_xs()
@@ -481,14 +494,106 @@ fn skip_inline_dict(b: &[u8], mut i: usize) -> usize {
     i
 }
 
-/// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
+/// A14：带载荷渲染。`Pdf` ⇒ 工具栏页码接真页数 + 文本摘录正文；`NotDelivered` /
+/// `Failed` ⇒ 诚实占位 / 失败说明行；其余载荷形态退回占位视图（外壳行为不变）。
 pub(super) fn render_with_payload(
     path: &str,
-    payload: &crate::state::preview_payload::PreviewPayload,
+    payload: &PreviewPayload,
     theme: &gpui_kit::component::Theme,
 ) -> AnyElement {
-    let _ = payload;
-    render(path, theme)
+    let state = match payload {
+        PreviewPayload::Pdf(p) => PdfPanelState {
+            page: 1,
+            total: p.pages as usize,
+            zoom: 1.0,
+        },
+        _ => PdfPanelState::undelivered(),
+    };
+    let body = match payload {
+        PreviewPayload::Pdf(p) => render_pdf_body(p, theme),
+        PreviewPayload::NotDelivered { reason } => render_page_area_note(path, theme, reason),
+        PreviewPayload::Failed(err) => render_page_area_note(path, theme, &err.line()),
+        _ => return render(path, theme),
+    };
+    render_panel(&state, theme, body)
+}
+
+/// 摘录正文显示的页数 / 单页行数上限（载荷本身仍受 [`MAX_LINES`] 有界约束）。
+const EXCERPT_PAGES: usize = 3;
+const EXCERPT_LINES: usize = 60;
+
+/// 载荷正文：`theme.muted` 底卡片内自上而下排元信息 + 前 [`EXCERPT_PAGES`] 页文本摘录。
+/// ⛔ 像素渲染未接入（需 pdfium/mupdf），文案如实标注。
+fn render_pdf_body(payload: &PdfPayload, theme: &gpui_kit::component::Theme) -> AnyElement {
+    let mut meta = format!(
+        "{} 页 · 像素渲染未接入（需 pdfium/mupdf），以下为文本抽取摘录",
+        payload.pages
+    );
+    if payload.truncated {
+        meta.push_str(&format!(" · 内容超上限，仅保留前 {MAX_LINES} 行"));
+    }
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .w_full()
+        .text_color(theme.muted_foreground)
+        .child(div().text_sm().child(meta));
+    if let Some(title) = &payload.title {
+        col = col.child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .child(format!("标题：{title}")),
+        );
+    }
+    for (idx, text) in payload.page_text.iter().take(EXCERPT_PAGES).enumerate() {
+        col = col.child(render_page_excerpt(idx + 1, text, theme));
+    }
+    if payload.page_text.len() > EXCERPT_PAGES {
+        col = col.child(div().text_xs().child(format!("……仅显示前 {EXCERPT_PAGES} 页摘录")));
+    }
+    div()
+        .id("preview-pdf-body")
+        .flex_1()
+        .m_3()
+        .p_3()
+        .flex()
+        .overflow_y_scroll()
+        .rounded_md()
+        .bg(theme.muted)
+        .border_1()
+        .border_color(theme.border)
+        .child(col)
+        .into_any_element()
+}
+
+/// 单页摘录：页号行 + 等宽正文；空页如实标注无可抽取文本，超行数如实标注摘录。
+fn render_page_excerpt(no: usize, text: &str, theme: &gpui_kit::component::Theme) -> AnyElement {
+    let total = text.lines().count();
+    let shown: Vec<&str> = text.lines().take(EXCERPT_LINES).collect();
+    let label = if total == 0 {
+        format!("第 {no} 页（无可抽取文本）")
+    } else if total > EXCERPT_LINES {
+        format!("第 {no} 页（仅摘录前 {EXCERPT_LINES} 行）")
+    } else {
+        format!("第 {no} 页")
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w_full()
+        .child(div().text_xs().child(label))
+        .child(
+            div()
+                .w_full()
+                .text_xs()
+                .font_family(theme.mono_font_family.clone())
+                .text_color(theme.foreground)
+                .child(shown.join("\n")),
+        )
+        .into_any_element()
 }
 
 #[cfg(test)]
