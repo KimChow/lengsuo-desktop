@@ -167,39 +167,146 @@ pub fn overall_badge(rows: &[CheckRow]) -> Badge {
 // ─────────── GPUI 层 ───────────
 
 /// 浮层渲染（波次 6：浮层不占主区，返回整层容器由调用方叠加）。
+/// 无数据源接线 ⇒ 按 fail-closed 渲染「未下发」。
 #[must_use]
 pub fn main_area(theme: &Theme) -> Div {
+    render_overlay(theme, &OverlayState::not_delivered())
+}
+
+/// 按纯数据层状态渲染整层：标题行 + 三分支内容区。
+fn render_overlay(theme: &Theme, state: &OverlayState) -> Div {
     div()
         .flex_1()
         .min_w(px(crate::ui::layout::STREAM_MIN_WIDTH))
         .h_full()
         .flex()
         .flex_col()
+        .child(header_row(theme, state))
+        .child(body(theme, state))
+}
+
+/// 标题行：标题 + （清单态）汇总徽标。
+fn header_row(theme: &Theme, state: &OverlayState) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
         .child(
             div()
-                .px_4()
-                .py_2()
                 .text_sm()
                 .font_bold()
                 .text_color(theme.foreground)
                 .child(TITLE),
+        );
+    if let OverlayState::Checks(rows) = state {
+        row = row.child(badge_chip(theme, overall_badge(rows)));
+    }
+    row
+}
+
+/// 内容区三分支：未下发（fail-closed）/ 空态 / 检测项清单。
+fn body(theme: &Theme, state: &OverlayState) -> Div {
+    match state {
+        OverlayState::NotDelivered => centered_note(theme, NOT_DELIVERED),
+        OverlayState::Empty => centered_note(theme, EMPTY_HINT),
+        OverlayState::Checks(rows) => checks_list(theme, rows),
+    }
+}
+
+/// 居中说明（未下发/空态共用）。
+fn centered_note(theme: &Theme, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(text)
+}
+
+/// 检测项清单：区块标题 +（进行中）状态行 + 逐行 条目标题/徽标/说明。
+fn checks_list(theme: &Theme, rows: &[CheckRow]) -> Div {
+    let overall = overall_badge(rows);
+    let mut list = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .pb_4()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(CHECKS_TITLE),
+        );
+    if overall.in_progress() {
+        list = list.child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(CHECKING),
+        );
+    }
+    for row in rows {
+        list = list.child(check_row(theme, row));
+    }
+    list
+}
+
+/// 单个检测项行：标题 + 徽标 / 说明。
+fn check_row(theme: &Theme, row: &CheckRow) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .child(row.item.title),
+                )
+                .child(badge_chip(theme, row.badge)),
         )
         .child(
             div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
+                .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(row.item.description),
         )
+}
+
+/// 徽标 chip；颜色一律主题 token，⛔ 不硬编码色值。
+fn badge_chip(theme: &Theme, badge: Badge) -> Div {
+    let color = match badge {
+        Badge::Error => theme.danger,
+        Badge::Warning => theme.warning,
+        Badge::Success => theme.success,
+        Badge::Running => theme.accent,
+        Badge::Pending | Badge::Unsupported => theme.muted_foreground,
+    };
+    div()
+        .px_2()
+        .border_1()
+        .border_color(color)
+        .rounded_sm()
+        .text_xs()
+        .text_color(color)
+        .child(badge.label())
 }
 #[cfg(test)]
 mod tests {
     use super::{
-        main_area, overall_badge, Badge, CHECK_ITEMS, CheckRow, OverlayState, NOT_DELIVERED,
-        TITLE,
+        main_area, overall_badge, Badge, CheckRow, OverlayState, CHECK_ITEMS, NOT_DELIVERED, TITLE,
     };
     use gpui_kit::component::Theme;
     #[test]
@@ -225,7 +332,8 @@ mod tests {
         };
         assert_eq!(rows[0].badge, Badge::Success);
         assert_eq!(rows[3].badge, Badge::Error);
-        assert_eq!(rows[2].item.title, "服务连通性");
+        assert_eq!(rows[2].item.title, "代理检测");
+        assert_eq!(rows[3].item.title, "服务连通性");
     }
     #[test]
     fn empty_input_normalizes_to_empty_state_not_checks() {
@@ -290,7 +398,10 @@ mod tests {
             "解析本地 Hosts 文件并与当前系统解析结果进行对比。"
         );
         assert_eq!(CHECK_ITEMS[1].title, "丢包率");
-        assert_eq!(CHECK_ITEMS[2].description, "检测有效的代理配置并验证其可达性。");
+        assert_eq!(
+            CHECK_ITEMS[2].description,
+            "检测有效的代理配置并验证其可达性。"
+        );
         assert_eq!(CHECK_ITEMS[4].title, "TCP 连接延迟");
     }
     #[test]
