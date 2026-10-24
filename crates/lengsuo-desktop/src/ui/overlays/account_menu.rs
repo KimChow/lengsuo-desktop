@@ -6,6 +6,8 @@
 //! `account.menu` 摘录全表（⛔ 不得增删改）。
 //! 数据源在运行时侧：当前按纯数据层逐分支呈现，等跨线契约就绪后换源。
 #![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 命名空间前缀。
 pub const NS_PREFIX: &str = "account.menu";
@@ -111,4 +113,78 @@ impl State {
     pub fn is_fail_closed(&self) -> bool {
         matches!(self, State::Failed)
     }
+}
+
+// ===== GPUI 层 =====
+/// 浮层呈现入口（无数据源 ⇒ 诚实默认态 `Loading` 骨架，⛔ 不伪造条目）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render(&resolve(None), theme).into_any_element()
+}
+
+/// 整棵树渲染（视图是状态的纯函数；颜色一律 `theme.*`，⛔ 不硬编码色值）。
+pub fn render(state: &State, theme: &Theme) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w_full()
+        .p_1()
+        .text_sm()
+        .text_color(theme.foreground)
+        .border_1()
+        .border_color(theme.border)
+        .rounded_lg()
+        .children(state_rows(state, theme))
+}
+
+/// 分支渲染：`Loading` 骨架 / `Failed`「未下发」/ `Empty` 空框 / `Ready` 条目行。
+fn state_rows(state: &State, theme: &Theme) -> Vec<AnyElement> {
+    match state {
+        State::Loading => (0..4)
+            .map(|_| skeleton_row(theme).into_any_element())
+            .collect(),
+        State::Failed => vec![not_delivered_row(theme).into_any_element()],
+        State::Empty => Vec::new(),
+        State::Ready(items) => items
+            .iter()
+            .map(|item| menu_row(item).into_any_element())
+            .collect(),
+    }
+}
+
+/// 骨架行（加载中不下发任何条目文案，只给占位块）。
+fn skeleton_row(theme: &Theme) -> impl IntoElement {
+    div()
+        .h_12()
+        .w_full()
+        .flex()
+        .items_center()
+        .px_3()
+        .rounded_sm()
+        .child(div().h_4().w_24().rounded_sm().bg(theme.border))
+}
+
+/// 「未下发」行（fail-closed；⛔ 不是空列表）。
+fn not_delivered_row(theme: &Theme) -> impl IntoElement {
+    div()
+        .h_12()
+        .w_full()
+        .flex()
+        .items_center()
+        .px_3()
+        .rounded_sm()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(NOT_DELIVERED))
+}
+
+/// 条目行（`h_12` = 48px 触达目标；文案逐字取自文案表）。
+fn menu_row(item: &MenuItem) -> impl IntoElement {
+    div()
+        .h_12()
+        .w_full()
+        .flex()
+        .items_center()
+        .px_3()
+        .rounded_sm()
+        .child(SharedString::from(item.text()))
 }
