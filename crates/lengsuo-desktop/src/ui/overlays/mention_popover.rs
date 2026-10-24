@@ -165,17 +165,104 @@ impl MentionPopover {
 
 // ---------- GPUI 层 ----------
 
-/// 主区渲染（诚实占位：仅标题 + 未下发说明；本卡负责补全真实视图）。
+/// 主区渲染：默认模型（数据未下发 ⇒ fail-closed 显示「未下发」）。
 pub fn main_area(theme: &Theme) -> Div {
+    popover_area(theme, &MentionPopover::default(), &[])
+}
+
+/// 浮层整体：标题行 + 页签行 + 页签头（描述/搜索占位）+ 内容区。
+fn popover_area(theme: &Theme, model: &MentionPopover, entries: &[ColleagueEntry]) -> Div {
     div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(div().text_color(theme.foreground).child(TITLE))
+        .child(title_row(theme))
+        .child(category_tabs(theme, model))
+        .child(category_header(theme, model))
+        .child(content_area(theme, model, entries))
+}
+
+/// 标题行。
+fn title_row(theme: &Theme) -> Div {
+    div().text_color(theme.foreground).child(TITLE)
+}
+
+/// 页签行：当前页签高亮，其余弱化；颜色一律取主题 token。
+fn category_tabs(theme: &Theme, model: &MentionPopover) -> Div {
+    div().flex().flex_row().gap_3().children(
+        Category::ALL.iter().map(|&category| {
+            let color = if category == model.category {
+                theme.accent
+            } else {
+                theme.muted_foreground
+            };
+            div().text_color(color).child(category.label())
+        }),
+    )
+}
+
+/// 页签头：描述一行 + 搜索占位一行（无下发文案的页签如实省略）。
+fn category_header(theme: &Theme, model: &MentionPopover) -> Div {
+    let mut header = div().flex().flex_col().gap_1();
+    if let Some(description) = model.category.description() {
+        header = header.child(div().text_color(theme.muted_foreground).child(description));
+    }
+    if let Some(placeholder) = model.category.placeholder() {
+        header = header.child(
+            div()
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.border)
+                .text_color(theme.muted_foreground)
+                .child(placeholder),
+        );
+    }
+    header
+}
+
+/// 内容区：未下发 ⇒ 「未下发」；有匹配 ⇒ 条目行；否则空态文案（不是空列表）。
+fn content_area(theme: &Theme, model: &MentionPopover, entries: &[ColleagueEntry]) -> Div {
+    if model.is_not_delivered() {
+        return not_delivered_line(theme);
+    }
+    let visible = match model.category {
+        Category::Colleague => model.colleague_matches(entries),
+        _ => Vec::new(),
+    };
+    match (visible.is_empty(), model.empty_label()) {
+        (true, Some(label)) => div().text_color(theme.muted_foreground).child(label),
+        (true, None) => div(),
+        (false, _) => div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .children(visible.iter().map(|&entry| colleague_row(theme, entry))),
+    }
+}
+
+/// 「未下发」一行（fail-closed 分支）。
+fn not_delivered_line(theme: &Theme) -> Div {
+    div().text_color(theme.muted_foreground).child(NOT_DELIVERED)
+}
+
+/// 单条助理行：名称 + 忙闲状态。
+fn colleague_row(theme: &Theme, entry: &ColleagueEntry) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .justify_between()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .child(div().text_color(theme.foreground).child(entry.name.clone()))
         .child(
             div()
                 .text_color(theme.muted_foreground)
-                .child(NOT_DELIVERED),
+                .child(entry.availability.label()),
         )
 }
 #[cfg(test)]
