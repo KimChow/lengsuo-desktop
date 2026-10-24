@@ -145,7 +145,7 @@ impl ArchiveOverlay {
     /// 归档页是否渲染空态：已下发且为空集才算空态；
     /// 未下发 ≠ 空集（三态契约），走 fail-closed 提示而不是空态。
     pub fn archived_page_empty(&self) -> bool {
-        self.state != State::NotDelivered && self.archived_tasks.is_empty()
+        self.state == State::Normal && self.archived_tasks.is_empty()
     }
 }
 
