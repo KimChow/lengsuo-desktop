@@ -4,6 +4,8 @@
 //! 硬约束：fail-closed；⛔ 不伪造服务端数据；文案逐字取自命名空间 `collab.connectors`。
 //! 全表 140 键未随卡下发：[`TEXTS`] 先落任务书逐字摘录 12 条，其余键待全表下发后补（⛔ 不自编中文）。
 #![cfg(feature = "ui")]
+use gpui_kit::component::Theme;
+use gpui_kit::*;
 
 /// 面板标题（逐字取自文案全表，占位卡沿用）。
 pub const PANEL_TITLE: &str = "协作·连接器";
@@ -134,6 +136,98 @@ pub fn resolve(delivered: Option<Vec<Connector>>) -> State {
         Some(items) if items.is_empty() => State::Empty,
         Some(items) => State::Ready(items),
     }
+}
+
+// ===== GPUI 层 =====
+/// 主区/浮层呈现入口（签名固定；无数据源 ⇒ fail-closed 默认 `NotDelivered`，显示「未下发」）。
+pub fn main_area(theme: &Theme) -> AnyElement {
+    render(theme, &State::default())
+}
+
+/// 按状态渲染整棵树（只构造元素，不触实体/上下文；测试逐分支调用防 panic）。
+pub fn render(theme: &Theme, state: &State) -> AnyElement {
+    let frame = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_sm()
+        .text_color(theme.muted_foreground)
+        .child(header_row(theme));
+    match state {
+        State::Ready(items) => frame
+            .children(items.iter().map(|c| item_card(theme, c)))
+            .into_any_element(),
+        State::Empty | State::Loading | State::NotDelivered => frame
+            .child(status_block(theme, state.status_text()))
+            .into_any_element(),
+    }
+}
+
+/// 标题行：面板名（前景色）+「+ 添加」。
+fn header_row(theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_4()
+        .py_2()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .text_color(theme.foreground)
+                .child(SharedString::from(PANEL_TITLE)),
+        )
+        .child(SharedString::from(t("collab.connectors.addWithPlus")))
+        .into_any_element()
+}
+
+/// 非就绪分支的提示块（加载中/空态/未下发共用，文案由 [`State::status_text`] 给出）。
+fn status_block(theme: &Theme, text: &str) -> AnyElement {
+    div()
+        .px_4()
+        .py_2()
+        .text_color(theme.foreground)
+        .child(SharedString::from(text))
+        .into_any_element()
+}
+
+/// 单条连接器卡（值全部来自 [`Connector`] 纯函数，⛔ 不伪造）。
+fn item_card(theme: &Theme, c: &Connector) -> AnyElement {
+    let mut card = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .border_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(c.name.as_str())),
+                )
+                .child(SharedString::from(c.action_label()))
+                .child(SharedString::from(c.secondary_label()))
+                .child(SharedString::from(t("collab.connectors.action.moreLabel"))),
+        );
+    if let Some(d) = c.desc.as_deref() {
+        card = card.child(div().text_xs().child(SharedString::from(d)));
+    }
+    card = card.child(
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .text_xs()
+            .children(c.credential_labels().iter().map(|l| SharedString::from(*l))),
+    );
+    card.into_any_element()
 }
 
 #[cfg(test)]
