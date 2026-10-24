@@ -6,6 +6,7 @@
 //!
 //! 纯函数层（本段）无 GPUI 依赖，可无窗口测试。
 use std::io::{Cursor, Read as _};
+use std::sync::Arc;
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::*;
@@ -53,16 +54,25 @@ pub(super) fn render(path: &str, theme: &gpui_kit::component::Theme) -> AnyEleme
 
 /// 带显式状态的纯视图函数：渲染结果只依赖参数，不依赖 GPUI 侧可变状态。
 fn render_with(path: &str, fit: bool, zoom: f32, theme: &gpui_kit::component::Theme) -> AnyElement {
-    // 视图边界把传入缩放归一到合法档位（非法值落 1.0）；
-    // 点击步进接线后，同一函数承担 +1/-1 步进。
-    let zoom = next_zoom(zoom, 0);
+    render_shell(path, fit, zoom, IMAGE_NOT_DELIVERED, theme)
+}
+
+/// 外壳底座：元信息行 + 占位容器（提示文案可换）+ 缩放行。
+/// 视图边界把传入缩放归一到合法档位（非法值落 1.0）；点击步进接线后同一函数承担步进。
+fn render_shell(
+    path: &str,
+    fit: bool,
+    zoom: f32,
+    note: &str,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
     div()
         .flex()
         .flex_col()
         .gap_2()
         .child(meta_row(path, theme))
-        .child(image_container(theme))
-        .child(zoom_row(fit, zoom, theme))
+        .child(image_container(note, theme))
+        .child(zoom_row(fit, next_zoom(zoom, 0), theme))
         .into_any_element()
 }
 
@@ -89,8 +99,8 @@ fn meta_row(path: &str, theme: &gpui_kit::component::Theme) -> Div {
         )
 }
 
-/// 图片容器：`muted` 底 + `border` 描边 + 居中占位图记号；未下发时诚实占位。
-fn image_container(theme: &gpui_kit::component::Theme) -> Div {
+/// 图片容器：`muted` 底 + `border` 描边 + 居中占位图记号 + 一行如实提示（文案由调用方给）。
+fn image_container(note: &str, theme: &gpui_kit::component::Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -108,7 +118,7 @@ fn image_container(theme: &gpui_kit::component::Theme) -> Div {
             div()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(IMAGE_NOT_DELIVERED),
+                .child(note.to_string()),
         )
 }
 
@@ -244,14 +254,84 @@ pub(super) fn decode(path: &str, bytes: Option<&[u8]>) -> PreviewPayload {
     })
 }
 
-/// A14：带载荷渲染。默认退回既有占位视图（外壳不变）。
+/// 载荷的元信息行：宽×高 · 格式 · 字节数（截断时如实标注原大小）。
+fn info_line(p: &ImagePayload) -> String {
+    if p.source_len > p.bytes.len() {
+        format!(
+            "{} × {} · {} · 已截断（原 {} 字节，预览 {} 字节）",
+            p.width,
+            p.height,
+            p.format,
+            p.source_len,
+            p.bytes.len()
+        )
+    } else {
+        format!(
+            "{} × {} · {} · {} 字节",
+            p.width,
+            p.height,
+            p.format,
+            p.bytes.len()
+        )
+    }
+}
+
+/// A14：带载荷渲染。图片载荷 ⇒ 真像素（整图解码成功时，适应窗口夹紧）；
+/// 其余态（未下发 / 失败 / 非图片载荷）如实说明，⛔ 不伪造图像。
 pub(super) fn render_with_payload(
     path: &str,
-    payload: &crate::state::preview_payload::PreviewPayload,
+    payload: &PreviewPayload,
     theme: &gpui_kit::component::Theme,
 ) -> AnyElement {
-    let _ = payload;
-    render(path, theme)
+    match payload {
+        PreviewPayload::Image(p) => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(meta_row(path, theme))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(info_line(p)),
+            )
+            .child(image_view(p, theme))
+            .child(zoom_row(true, zoom_steps()[2], theme))
+            .into_any_element(),
+        PreviewPayload::NotDelivered { .. } => render(path, theme),
+        PreviewPayload::Failed(err) => render_shell(path, true, 1.0, &err.line(), theme),
+        _ => render_shell(path, true, 1.0, "载荷不是图片（类型不匹配）", theme),
+    }
+}
+
+/// 图片视图：整图解码成功 ⇒ `img()` 真像素；失败（如截断字节解不出整图）⇒ 如实占位。
+fn image_view(p: &ImagePayload, theme: &gpui_kit::component::Theme) -> Div {
+    let container = div()
+        .flex()
+        .w_full()
+        .min_h_48()
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.muted);
+    match image::load_from_memory(&p.bytes) {
+        Ok(decoded) => container.child(
+            img(Arc::new(RenderImage::new(vec![image::Frame::new(
+                decoded.to_rgba8(),
+            )])))
+            .object_fit(ObjectFit::Contain)
+            .w_full(),
+        ),
+        Err(_) => container.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child("像素渲染不可用（字节不完整，无法整图解码）"),
+        ),
+    }
 }
 
 #[cfg(test)]
