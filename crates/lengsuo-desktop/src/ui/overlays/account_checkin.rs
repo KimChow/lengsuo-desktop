@@ -21,18 +21,30 @@ pub const NS_KEY_COUNT: usize = 39;
 /// 文案全表：命名空间 `account.checkin` 共 [`NS_KEY_COUNT`] 键（逐字；⛔ 不得增删改）。
 pub const COPY: &[(&str, &str)] = &[
     ("account.checkin.alreadyClaimed", "今日已领取"),
-    ("account.checkin.available.description", "每日免费领取 {credits} Credits"),
-    ("account.checkin.available.descriptionStreak", "今日免费领取 {credits} Credits"),
+    (
+        "account.checkin.available.description",
+        "每日免费领取 {credits} Credits",
+    ),
+    (
+        "account.checkin.available.descriptionStreak",
+        "今日免费领取 {credits} Credits",
+    ),
     ("account.checkin.available.title", "🎁 今日礼包"),
     ("account.checkin.bubble.claimCredits", "领取 {credits} 积分"),
     ("account.checkin.claim", "立即领取"),
-    ("account.checkin.claimed.rewardTip", "🎁 连续签到{days}天，{credits}积分等你拿。"),
+    (
+        "account.checkin.claimed.rewardTip",
+        "🎁 连续签到{days}天，{credits}积分等你拿。",
+    ),
     ("account.checkin.claimed.title", "今日礼包已到账"),
     ("account.checkin.claimedToday", "今日已领"),
     ("account.checkin.claimFailed", "领取失败，请稍后重试"),
     ("account.checkin.claiming", "领取中..."),
     ("account.checkin.claimNow", "立即领取 →"),
-    ("account.checkin.claimSuccess", "领取成功！获得 {credits} Credits"),
+    (
+        "account.checkin.claimSuccess",
+        "领取成功！获得 {credits} Credits",
+    ),
     ("account.checkin.claimSuccessBtn", "+{credits} ✓"),
     ("account.checkin.creditValue", "{credits} 通用积分"),
     ("account.checkin.dailyClaimPrefix", "每日可领 "),
@@ -40,11 +52,20 @@ pub const COPY: &[(&str, &str)] = &[
     ("account.checkin.indicator", "你有 {credits} 积分待领取"),
     ("account.checkin.offlineCountdown", "⏳ 签到倒计时"),
     ("account.checkin.offlineCountdownDesc.date", "5 月 10 日"),
-    ("account.checkin.offlineCountdownDesc.prefix", "签到功能将于 "),
-    ("account.checkin.offlineCountdownDesc.suffix", " 下线，更丰富的积分玩法即将上线，敬请期待"),
+    (
+        "account.checkin.offlineCountdownDesc.prefix",
+        "签到功能将于 ",
+    ),
+    (
+        "account.checkin.offlineCountdownDesc.suffix",
+        " 下线，更丰富的积分玩法即将上线，敬请期待",
+    ),
     ("account.checkin.offlineReminder.date", "5 月 10 日"),
     ("account.checkin.offlineReminder.prefix", "签到将于 "),
-    ("account.checkin.offlineReminder.suffix", " 下线，更多赚积分玩法已在路上！"),
+    (
+        "account.checkin.offlineReminder.suffix",
+        " 下线，更多赚积分玩法已在路上！",
+    ),
     ("account.checkin.offlineTag", "5/10 结束"),
     ("account.checkin.periodSummaryMiddle", " · 累计 "),
     ("account.checkin.periodSummaryPrefix", "本期已领 "),
@@ -55,7 +76,10 @@ pub const COPY: &[(&str, &str)] = &[
     ("account.checkin.progress.distancePrefix", "距离大奖还差"),
     ("account.checkin.progress.distanceSuffix", "天"),
     ("account.checkin.reward.arrived", "{credits} Pts 大奖已到账"),
-    ("account.checkin.reward.description", "连续签到 · 领 10 倍大奖"),
+    (
+        "account.checkin.reward.description",
+        "连续签到 · 领 10 倍大奖",
+    ),
     ("account.checkin.title", "Buddy 加油站"),
     ("account.checkin.tomorrow", "明日再来"),
     ("account.checkin.tryExperts", "体验专家团 →"),
@@ -343,7 +367,11 @@ fn footer_strip(theme: &Theme) -> impl IntoElement {
 mod tests {
     // ⛔ 不用 `use super::*`：父模块的 `use gpui_kit::*` 会把 GPUI 的 `test`
     // 属性宏带进来遮蔽 `#[test]` ⇒ "recursion limit reached"。显式列符号。
-    use super::{copy, resolve, State, COPY, NS_KEY_COUNT, TITLE};
+    use super::{
+        copy, main_area, render, resolve, DailyData, State, COPY, NOT_DELIVERED, NS_KEY_COUNT,
+        TITLE,
+    };
+    use gpui_kit::component::Theme;
 
     #[test]
     fn title_is_verbatim() {
@@ -352,17 +380,189 @@ mod tests {
 
     #[test]
     fn fail_closed_default() {
+        // 空输入 ⇒ 空态（NotDelivered），不是空列表；fail-closed 标记成立。
         assert_eq!(State::default(), State::NotDelivered);
         assert_eq!(resolve(None), State::NotDelivered);
+        assert!(State::NotDelivered.is_fail_closed());
+        assert_eq!(State::NotDelivered.card_title(), NOT_DELIVERED);
+        assert_eq!(State::NotDelivered.description(), NOT_DELIVERED);
     }
 
     #[test]
     fn copy_table_verbatim() {
-        // 逐字抽查 ≥3 键 + 全表键数与声明一致。
+        // 逐字抽查 ≥3 键（含 emoji、模板占位符与首尾空格）+ 全表键数与声明一致。
         assert_eq!(copy("account.checkin.claim"), Some("立即领取"));
-        assert_eq!(copy("account.checkin.claimed.title"), Some("今日礼包已到账"));
+        assert_eq!(
+            copy("account.checkin.claimed.title"),
+            Some("今日礼包已到账")
+        );
         assert_eq!(copy("account.checkin.offlineTag"), Some("5/10 结束"));
+        assert_eq!(copy("account.checkin.available.title"), Some("🎁 今日礼包"));
+        assert_eq!(
+            copy("account.checkin.claimed.rewardTip"),
+            Some("🎁 连续签到{days}天，{credits}积分等你拿。")
+        );
+        assert_eq!(copy("account.checkin.dailyClaimPrefix"), Some("每日可领 "));
+        assert_eq!(
+            copy("account.checkin.periodSummaryMiddle"),
+            Some(" · 累计 ")
+        );
         let count = COPY.len();
         assert_eq!(count, NS_KEY_COUNT);
+    }
+
+    #[test]
+    fn copy_missing_key_fails_closed() {
+        // 未收录 key ⇒ None（不编文案）；全表无重复键。
+        assert_eq!(copy("account.checkin.notAKey"), None);
+        let mut seen: Vec<&str> = COPY.iter().map(|(k, _)| *k).collect();
+        seen.sort_unstable();
+        let unique = seen.iter().collect::<std::collections::BTreeSet<_>>().len();
+        assert_eq!(seen.len(), unique);
+    }
+
+    #[test]
+    fn state_transitions_and_counts() {
+        // 下发数据解析：未领 ⇒ Available；已领 ⇒ Claimed（数值原样透传）。
+        let unclaimed = DailyData {
+            credits: 5,
+            streak_days: 2,
+            claimed: false,
+        };
+        assert_eq!(
+            resolve(Some(&unclaimed)),
+            State::Available {
+                credits: 5,
+                streak_days: 2
+            }
+        );
+        let claimed = DailyData {
+            credits: 9,
+            streak_days: 4,
+            claimed: true,
+        };
+        assert_eq!(
+            resolve(Some(&claimed)),
+            State::Claimed {
+                credits: 9,
+                streak_days: 4
+            }
+        );
+        // 转移：仅 Available 可发起；成功后连续天数含今日 +1；失败转 ClaimFailed。
+        let s = State::Available {
+            credits: 5,
+            streak_days: 2,
+        };
+        assert!(s.can_claim());
+        assert_eq!(
+            s.begin_claim(),
+            State::Claiming {
+                credits: 5,
+                streak_days: 2
+            }
+        );
+        let claiming = s.begin_claim();
+        assert!(!claiming.can_claim());
+        assert_eq!(
+            claiming.claim_result(true),
+            State::Claimed {
+                credits: 5,
+                streak_days: 3
+            }
+        );
+        assert_eq!(s.begin_claim().claim_result(false), State::ClaimFailed);
+        // 非 Available 上点击领取：状态不动。
+        assert_eq!(State::ClaimFailed.begin_claim(), State::ClaimFailed);
+        assert_eq!(State::NotDelivered.begin_claim(), State::NotDelivered);
+    }
+
+    #[test]
+    fn description_fills_placeholders() {
+        // {credits}/{days} 填充；连续 >1 天走 descriptionStreak 文案。
+        let first = State::Available {
+            credits: 5,
+            streak_days: 1,
+        };
+        assert_eq!(first.description(), "每日免费领取 5 Credits");
+        let streak = State::Available {
+            credits: 5,
+            streak_days: 2,
+        };
+        assert_eq!(streak.description(), "今日免费领取 5 Credits");
+        let claiming = State::Claiming {
+            credits: 7,
+            streak_days: 2,
+        };
+        assert_eq!(claiming.description(), "领取 7 积分");
+        let claimed = State::Claimed {
+            credits: 10,
+            streak_days: 3,
+        };
+        assert_eq!(claimed.description(), "🎁 连续签到3天，10积分等你拿。");
+    }
+
+    #[test]
+    fn branch_render_texts() {
+        // 每个分支一条：card_title / primary_label 全枚举（逐字）。
+        let cases: [(State, &str, &str); 5] = [
+            (
+                State::Available {
+                    credits: 5,
+                    streak_days: 2,
+                },
+                "🎁 今日礼包",
+                "立即领取 →",
+            ),
+            (
+                State::Claiming {
+                    credits: 5,
+                    streak_days: 2,
+                },
+                "🎁 今日礼包",
+                "领取中...",
+            ),
+            (
+                State::Claimed {
+                    credits: 9,
+                    streak_days: 4,
+                },
+                "今日礼包已到账",
+                "明日再来",
+            ),
+            (State::ClaimFailed, "🎁 今日礼包", "立即领取"),
+            (State::NotDelivered, NOT_DELIVERED, NOT_DELIVERED),
+        ];
+        for (state, title, label) in cases {
+            assert_eq!(state.card_title(), title, "card_title for {state:?}");
+            assert_eq!(state.primary_label(), label, "primary_label for {state:?}");
+        }
+        assert_eq!(State::ClaimFailed.description(), "领取失败，请稍后重试");
+        assert!(State::ClaimFailed.is_fail_closed());
+    }
+
+    #[test]
+    fn main_area_builds_without_panic() {
+        // 只构造元素树，不渲染；五个分支都建一遍。
+        let theme = Theme::default();
+        let _ = main_area(&theme);
+        let states = [
+            State::Available {
+                credits: 5,
+                streak_days: 2,
+            },
+            State::Claiming {
+                credits: 5,
+                streak_days: 2,
+            },
+            State::Claimed {
+                credits: 9,
+                streak_days: 4,
+            },
+            State::ClaimFailed,
+            State::NotDelivered,
+        ];
+        for state in states {
+            let _ = render(&state, &theme);
+        }
     }
 }
